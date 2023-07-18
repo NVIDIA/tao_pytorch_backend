@@ -1,0 +1,21 @@
+encryption_key: "???"
+results_dir: "???"
+evaluate:
+  num_gpus: 1
+  checkpoint: "???"
+  conf_threshold: 0.0
+dataset:
+  test_data_sources:
+    image_dir: "???"
+    json_file: "???"
+  num_classes: 91
+  batch_size: 8
+  workers: 8
+model:
+  backbone: resnet_50
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 300
+  with_box_refine: True
+  dropout_ratio: 0.3

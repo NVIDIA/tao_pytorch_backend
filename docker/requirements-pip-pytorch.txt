@@ -1,0 +1,11 @@
+fairscale==0.4.12
+lpips==0.1.4
+lightning-utilities==0.8.0
+mmcls==0.25.0
+mmcv-full -f https://download.openmmlab.com/mmcv/dist/11.4/torch1.11.0/index.htmlninja
+pytorch-lightning==1.8.5
+pytorch_metric_learning==1.7.1
+pytorch-msssim
+thop
+timm==0.6.11
+torchmetrics==0.10.3
