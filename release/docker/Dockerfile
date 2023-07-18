@@ -52,17 +52,8 @@ RUN rm -rf /usr/local/lib/python3.8/dist-packages/mpmath-1.2.1.dist-info
 RUN rm -rf /opt/nvidia/entrypoint.d/*.txt
 COPY release/docker/entrypoint.d/* /opt/nvidia/entrypoint.d/
 
-# Copying tlt-converter and building it in the docker.
-ENV TRT_LIB_PATH="/usr/lib/x86_64-linux-gnu"
-ENV TRT_INCLUDE_PATH="/usr/include/x86_64-linux-gnu"
-COPY tao-converter /opt/nvidia/tools
-WORKDIR /opt/nvidia/tools
-RUN make \
-    && rm -rf Makefile *.cc *.h *.o
-RUN ln -s tao-converter converter
-
 ENV NVIDIA_PRODUCT_NAME "TAO Toolkit"
-ENV TAO_TOOLKIT_VERSION="4.0.0"
+ENV TAO_TOOLKIT_VERSION="5.0.0"
 ENV NVIDIA_TAO_TOOLKIT_VERSION="${TAO_TOOLKIT_VERSION}-PyTorch"
 
 ENV NVM_DIR=/usr/local/nvm
