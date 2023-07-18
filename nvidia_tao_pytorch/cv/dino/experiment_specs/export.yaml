@@ -1,0 +1,18 @@
+results_dir: "???"
+encryption_key: "???"
+export:
+  gpu_id: 0
+  checkpoint: "???"
+  onnx_file: "???"
+  input_width: 960
+  input_height: 544
+dataset:
+  num_classes: 91
+model:
+  backbone: fan_small
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 900
+  dim_feedforward: 2048
+  aux_loss: False

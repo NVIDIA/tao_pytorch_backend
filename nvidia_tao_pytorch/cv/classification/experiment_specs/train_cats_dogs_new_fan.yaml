@@ -1,0 +1,45 @@
+results_dir: ???
+dataset:
+  data:
+    samples_per_gpu: 8
+    train:
+      data_prefix: ???
+      pipeline: # Augmentations alone
+        - type: RandomResizedCrop
+          size: 224
+        - type: RandomFlip
+          flip_prob: 0.5
+          direction: "horizontal"
+      classes: ???
+    val:
+      data_prefix: ???
+      classes: ???
+    test:
+      data_prefix: ???
+      classes: ???
+
+train:
+  exp_config:
+    manual_seed: 49
+  train_config:
+    runner:
+      max_epochs: 40
+    checkpoint_config:
+      interval: 1
+    logging:
+      interval: 500
+    validate: True
+    evaluation:
+      interval: 1
+
+model:
+  backbone:
+    type: "fan_base_18_p16_224"
+    custom_args:
+      drop_path: 0.1
+  init_cfg:
+    checkpoint: ???
+  head:
+    type: "FANLinearClsHead"
+    custom_args:
+      head_init_scale: 1
