@@ -3,11 +3,10 @@
 set -eo pipefail
 cd "$( dirname "${BASH_SOURCE[0]}" )"
 
-registry="nvcr.io"
-repository="nvidia/tao/tao-toolkit"
-
-tag="5.0.0-pyt-base"
-local_tag="$USER"
+# Read parameters from manifest.json
+registry=`jq -r '.registry' $NV_TAO_PYTORCH_TOP/docker/manifest.json`
+repository=`jq -r '.repository' $NV_TAO_PYTORCH_TOP/docker/manifest.json`
+tag=`jq -r '.tag' $NV_TAO_PYTORCH_TOP/docker/manifest.json`
 
 # Build parameters.
 BUILD_DOCKER="0"
@@ -55,11 +54,10 @@ if [ $BUILD_DOCKER = "1" ]; then
     else
         NO_CACHE=""
     fi
-    DOCKER_BUILDKIT=1 docker build --pull -f $NV_TAO_PYTORCH_TOP/docker/Dockerfile -t $registry/$repository:$local_tag $NO_CACHE \
+    DOCKER_BUILDKIT=1 docker build --pull -f $NV_TAO_PYTORCH_TOP/docker/Dockerfile -t $registry/$repository:$tag $NO_CACHE \
         --network=host $NV_TAO_PYTORCH_TOP/.
     if [ $PUSH_DOCKER = "1" ]; then
         echo "Pusing docker ..."
-        docker tag $registry/$repository:$local_tag $registry/$repository:$tag
         docker push $registry/$repository:$tag
         digest=$(docker inspect --format='{{index .RepoDigests 0}}' $registry/$repository:$tag)
         echo -e "\033[1;33mUpdate the digest in the manifest.json file to:\033[0m"
