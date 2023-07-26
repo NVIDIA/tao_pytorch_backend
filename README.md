@@ -25,9 +25,7 @@
 
 TAO Toolkit is a Python package hosted on the NVIDIA Python Package Index. It interacts with lower-level TAO dockers available from the NVIDIA GPU Accelerated Container Registry (NGC). The TAO containers come pre-installed with all dependencies required for training. The output of the TAO workflow is a trained model that can be deployed for inference on NVIDIA devices using DeepStream, TensorRT and Triton.
 
-This repository contains the required implementation for the all the deep learning components and networks using the TensorFlow backend. These routines are packaged as part of the TAO Toolkit TensorFlow container in the Toolkit package. These source code here is compatible with TensorFlow version <= 1.15
-
-> TAO Toolkit will be deprecating this backend after 5.0.0. No more fixes, and newer releases will be supported.
+This repository contains the required implementation for the all the deep learning components and networks using the PyTorch backend. These routines are packaged as part of the TAO Toolkit PyTorch container in the Toolkit package.
 
 ## <a name='GettingStarted'></a>Getting Started
 
