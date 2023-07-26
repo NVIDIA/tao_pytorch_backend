@@ -61,8 +61,5 @@ RUN source "$NVM_DIR/nvm.sh" \
     && nvm install 20.2.0 --reinstall-packages-from=16.15.1 node \
     && nvm uninstall 16.15.1
 
-# Defining the telemetry URL.
-ENV TAO_TELEMETRY_SERVER="https://sqa-telemetry.metropolis.nvidia.com:443/api/v1/telemetry"
-
 # Include NGC CLI as an entrypoint.
 CMD [ "/bin/bash" ]
