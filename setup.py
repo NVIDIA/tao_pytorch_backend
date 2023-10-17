@@ -72,6 +72,7 @@ setuptools.setup(
             # Pointpillars entry point
             'optical_inspection=nvidia_tao_pytorch.cv.optical_inspection.entrypoint.optical_inspection:main',
             'pointpillars=nvidia_tao_pytorch.pointcloud.pointpillars.entrypoint.pointpillars:main',
+            'visual_changenet=nvidia_tao_pytorch.cv.visual_changenet.entrypoint.visual_changenet:main'
         ]
     },
     cmdclass={'build_ext': BuildExtension},

@@ -28,6 +28,9 @@ RUN apt-get install --upgrade libpython3.8-minimal -y && \
     apt-get install --upgrade git -y && \
     apt-get install --upgrade libcurl3-gnutls -y
 
+# Removing libwebp6 due to CVE-2023-5217 
+RUN apt-get remove -y libwebp6
+
 # Updated python packages for critical vulnerabilities.
 RUN pip install --upgrade pip && \
     python -m pip install --upgrade notebook==6.4.10 && \
@@ -45,7 +48,8 @@ RUN pip install --upgrade pip && \
     python -m pip uninstall codecov -y && \
     python -m pip install --upgrade werkzeug && \
     python -m pip install --upgrade opencv-python && \
-    python -m pip install --upgrade scikit-learn
+    python -m pip install --upgrade scikit-learn && \
+    python -m pip install --upgrade grpcio
     
 RUN rm -rf /usr/local/lib/python3.8/dist-packages/mpmath-1.2.1.dist-info
 
@@ -53,12 +57,12 @@ RUN rm -rf /opt/nvidia/entrypoint.d/*.txt
 COPY release/docker/entrypoint.d/* /opt/nvidia/entrypoint.d/
 
 ENV NVIDIA_PRODUCT_NAME "TAO Toolkit"
-ENV TAO_TOOLKIT_VERSION="5.0.0"
+ENV TAO_TOOLKIT_VERSION="4.0.0"
 ENV NVIDIA_TAO_TOOLKIT_VERSION="${TAO_TOOLKIT_VERSION}-PyTorch"
 
 ENV NVM_DIR=/usr/local/nvm
 RUN source "$NVM_DIR/nvm.sh" \
-    && nvm install 20.2.0 --reinstall-packages-from=16.15.1 node \
+    && nvm install 20.8.0 --reinstall-packages-from=16.15.1 node \
     && nvm uninstall 16.15.1
 
 # Include NGC CLI as an entrypoint.

@@ -30,7 +30,7 @@ from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.cv.deformable_detr.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.od_data_module import ODDataModule
 from nvidia_tao_pytorch.cv.deformable_detr.model.pl_dd_model import DeformableDETRModel
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import check_and_create
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import check_and_create, load_pretrained_weights
 
 
 def run_experiment(experiment_config,
@@ -57,9 +57,25 @@ def run_experiment(experiment_config,
     # Load pretrained model as starting point if pretrained path is provided,
     pretrained_path = experiment_config.train.pretrained_model_path
     if pretrained_path is not None:
-        pt_model = DeformableDETRModel.load_from_checkpoint(pretrained_path,
-                                                            map_location="cpu",
-                                                            experiment_spec=experiment_config)
+        # Ignore backbone weights if we get pretrained path for the entire detector
+        experiment_config.model.pretrained_backbone_path = None
+        pt_model = DeformableDETRModel(experiment_config)
+        current_model_dict = pt_model.model.state_dict()
+        checkpoint = load_pretrained_weights(pretrained_path)
+        new_checkpoint = {}
+        for k, k_ckpt in zip(sorted(current_model_dict.keys()), sorted(checkpoint.keys())):
+            v = checkpoint[k_ckpt]
+            # Handle PTL format
+            k = k.replace("model.model.", "model.")
+            if v.size() == current_model_dict[k].size():
+                new_checkpoint[k] = v
+            else:
+                # Skip layers that mismatch
+                print(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
+                      f"current model layer size: {list(current_model_dict[k].size())}")
+                new_checkpoint[k] = current_model_dict[k]
+        # Load pretrained weights
+        pt_model.model.load_state_dict(new_checkpoint, strict=False)
     else:
         pt_model = DeformableDETRModel(experiment_config)
 

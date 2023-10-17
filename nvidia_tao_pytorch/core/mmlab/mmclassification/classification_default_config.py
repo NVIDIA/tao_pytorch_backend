@@ -265,6 +265,8 @@ class BackboneConfig:
 
     type: str = "fan_tiny_8_p4_hybrid"
     custom_args: Optional[Dict[Any, Any]] = None
+    freeze: bool = False
+    pretrained: Optional[str] = None
 
 
 @dataclass

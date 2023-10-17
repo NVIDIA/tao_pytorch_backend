@@ -1,0 +1,77 @@
+encryption_key: tlt_encode
+task: classify
+train:
+  resume_training_checkpoint_path: null
+  classify:
+    loss: "ce"
+    cls_weight: [1.0, 10.0]
+  num_epochs: 30
+  num_nodes: 1
+  val_interval: 1
+  checkpoint_interval: 1
+  optim:
+    lr: 0.00005
+    optim: "adamw"
+    policy: "linear" 
+    momentum: 0.9
+    weight_decay: 0.01
+  results_dir: "${results_dir}/train"
+  tensorboard:
+    enabled: True
+results_dir: "???"
+model:
+  backbone:
+    type: "fan_small_12_p4_hybrid"
+    pretrained_backbone_path: null
+  classify:
+    train_margin_euclid: 2.0
+    eval_margin: 0.005
+    embedding_vectors: 5
+    embed_dec: 30
+    difference_module: 'learnable'
+    learnable_difference_modules: 4
+dataset:
+  classify:
+    train_dataset:
+      csv_path: /path/to/train.csv
+      images_dir: /path/to/img_dir
+    validation_dataset:
+      csv_path: /path/to/val.csv
+      images_dir: /path/to/img_dir
+    test_dataset:
+      csv_path: /path/to/test.csv
+      images_dir: /path/to/img_dir
+    infer_dataset:
+      csv_path: /path/to/infer.csv
+      images_dir: /path/to/img_dir
+    image_ext: .jpg
+    batch_size: 16
+    workers: 2
+    fpratio_sampling: 0.2
+    num_input: 4
+    input_map:
+      LowAngleLight: 0
+      SolderLight: 1
+      UniformLight: 2
+      WhiteLight: 3
+    concat_type: linear
+    grid_map:
+      x: 2
+      y: 2
+    output_shape:
+      - 128
+      - 128
+    augmentation_config:
+      rgb_input_mean: [0.485, 0.456, 0.406]
+      rgb_input_std: [0.229, 0.224, 0.225]
+    num_classes: 2
+evaluate: 
+  checkpoint: "???"
+inference:
+  checkpoint: "???"
+export:
+  gpu_id: 0
+  checkpoint: "${results_dir}/train/changenet_classifier_epoch=004.pth"
+  onnx_file: "${export.results_dir}/changenet_classifier.onnx"
+  input_width: 128
+  input_height: 512

@@ -74,7 +74,10 @@ def run_experiment(experiment_config, results_dir):
 
     model = build_classifier(
         mmcls_config["model"])
-    model.init_weights()
+
+    if mmcls_config["model"].get("backbone", {}).get("pretrained", None) is None:
+        model.init_weights()
+
     status_logger.write(message="Model Classifier Construction", status_level=status_logging.Status.RUNNING)
     exp_params_file = os.path.join(results_dir, "experiment_params.json")
     try:

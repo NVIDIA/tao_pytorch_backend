@@ -12,11 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Model Init Module."""
+"""Utils for Visual ChangeNet"""
 
-from nvidia_tao_pytorch.cv.classification.models.fan import FAN
-from nvidia_tao_pytorch.cv.classification.models.gc_vit import GCViT
-from nvidia_tao_pytorch.cv.classification.models.dinov2_vit import DinoV2ViT
-from nvidia_tao_pytorch.cv.classification.models.clip import open_clip
+import os
+import shutil
 
-__all__ = ["FAN", "GCViT", "DinoV2ViT", "open_clip"]
+
+def check_and_create(d):
+    """Create a directory."""
+    if not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+
+
+def check_and_delete(d):
+    """Delete a directory."""
+    if os.path.isdir(d):
+        shutil.rmtree(d)
