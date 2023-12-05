@@ -17,7 +17,7 @@
 from typing import Optional, List
 from dataclasses import dataclass, field
 from omegaconf import MISSING
-from nvidia_tao_pytorch.pruning.torch_pruning.prune_config import PruneConfig
+from nvidia_tao_pytorch.pruning.prune_config import PruneConfig
 
 
 @dataclass
@@ -59,6 +59,12 @@ class OCRNetAugmentationConfig:
     """Augmentation config."""
 
     keep_aspect_ratio: bool = False
+    aug_prob: float = 0.0
+    reverse_color_prob: float = 0.5
+    rotate_prob: float = 0.5
+    max_rotation_degree: int = 5
+    blur_prob: float = 0.5
+    gaussian_radius_list: Optional[List[int]] = field(default_factory=lambda: [1, 2, 3, 4])
 
 
 @dataclass
@@ -123,6 +129,7 @@ class OCRNetTrainExpConfig:
     seed: int = 1111
     # TODO(tylerz): Update to use torch.distributed.launch for multi gpu training.
     gpu_ids: List[int] = field(default_factory=lambda: [0])
+    num_gpus: int = 1
     resume_training_checkpoint_path: Optional[str] = None
     pretrained_model_path: Optional[str] = None
     quantize_model_path: Optional[str] = None
@@ -132,6 +139,7 @@ class OCRNetTrainExpConfig:
     checkpoint_interval: int = 2
     validation_interval: int = 1
     distributed_strategy: str = "ddp"
+    model_ema: bool = False
 
 
 @dataclass

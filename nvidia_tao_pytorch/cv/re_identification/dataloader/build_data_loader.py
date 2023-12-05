@@ -111,7 +111,7 @@ def build_dataloader(cfg, is_train):
             train_dataset, batch_size=cfg["dataset"]["batch_size"] * num_gpus,
             sampler=RandomIdentitySampler(dataset.train, cfg["dataset"]["batch_size"] * num_gpus,
                                           cfg["dataset"]["num_instances"] * num_gpus),
-            num_workers=num_workers, collate_fn=train_collate_fn
+            num_workers=num_workers, collate_fn=train_collate_fn, drop_last=True
         )
         enumerate(train_loader)
     else:
@@ -121,4 +121,5 @@ def build_dataloader(cfg, is_train):
         val_dataset, batch_size=cfg["dataset"]["val_batch_size"] * num_gpus, shuffle=False,
         num_workers=num_workers, collate_fn=val_collate_fn
     )
+    enumerate(val_loader)
     return train_loader, val_loader, len(dataset.query), num_classes

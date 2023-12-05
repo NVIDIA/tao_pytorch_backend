@@ -53,7 +53,7 @@ def run_experiment(experiment_config, model_path, key, results_dir=None):
     # tlt inference
     if model_path.endswith('.tlt') or model_path.endswith('.pth'):
         # build dataloader
-        dm = ODDataModule(experiment_config.dataset)
+        dm = ODDataModule(experiment_config.dataset, subtask_config=experiment_config.evaluate)
         dm.setup(stage="test")
 
         # build model and load from the given checkpoint

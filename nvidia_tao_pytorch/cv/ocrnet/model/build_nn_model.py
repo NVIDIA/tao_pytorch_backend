@@ -112,11 +112,20 @@ def load_for_finetune(model, state_dict):
     try:
         model.load_state_dict(state_dict, strict=False)
     except RuntimeError as e:
-        # ignore the prediction layer weights when finetune
         if "size mismatch" in str(e):
-            state_dict.pop("Prediction.weight")
-            state_dict.pop("Prediction.bias")
-            model.load_state_dict(state_dict, strict=False)
+            if "initial_prob" in str(e):
+                # ignore the constant variable in Attention:
+                state_dict.pop("Prediction.initial_prob")
+                state_dict.pop("Prediction.one_hot")
+            # ignore the prediction layer weights when finetune
+            if "weight" in str(e):
+                if "generator" in str(e):
+                    state_dict.pop("Prediction.generator.weight")
+                    state_dict.pop("Prediction.generator.bias")
+                    state_dict.pop("Prediction.attention_cell.rnn.weight_ih_l0")
+                else:
+                    state_dict.pop("Prediction.weight")
+                    state_dict.pop("Prediction.bias")
         else:
             raise e
 
@@ -185,8 +194,23 @@ def build_ocrnet_model(experiment_spec, num_class):
                                key=experiment_spec.encryption_key,
                                to_cpu=True)
         if not isinstance(ckpt, Model):
-            # The public state_dict are with DP module
-            ckpt = {key.replace("module.", ""): value for key, value in ckpt.items()}
+            if opt.FeatureExtraction == "FAN_tiny_2X":
+                # For loading FAN_tiny imagenet pretrained
+                ckpt = ckpt["state_dict"]
+                new_ckpt = {}
+                for key, val in ckpt.items():
+                    if "patch_embed.backbone.stem.0" in key:
+                        # For loading FAN_tiny model with input_channel==1
+                        if opt.input_channel == 1:
+                            new_ckpt[key] = val
+                            continue
+                    new_key = "FeatureExtraction." + ".".join(key.split(".")[1:])
+                    new_ckpt[new_key] = val
+                ckpt = new_ckpt
+            else:
+                # The public state_dict are with DP module
+                ckpt = {key.replace("module.", ""): value for key, value in ckpt.items()}
+
             state_dict = ckpt
             if finetune:
                 load_for_finetune(model, state_dict)

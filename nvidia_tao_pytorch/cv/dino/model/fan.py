@@ -23,7 +23,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 
-from timm.models.layers import DropPath, trunc_normal_, to_2tuple
+from timm.layers import DropPath, trunc_normal_, to_2tuple
 
 from nvidia_tao_pytorch.cv.backbone.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.fan import (PositionalEncodingFourier, Mlp, ConvPatchEmbed,
@@ -176,7 +176,7 @@ class TokenMixing(nn.Module):
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
-        self.fast_attn = hasattr(torch._C._nn, '_scaled_dot_product_attention')  # pylint:disable=I1101
+        self.fast_attn = hasattr(torch.nn.functional, 'scaled_dot_product_attention')  # pylint:disable=I1101
 
         cha_sr = 1
         self.q = nn.Linear(dim, dim // cha_sr, bias=qkv_bias)
@@ -217,7 +217,7 @@ class TokenMixing(nn.Module):
             x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         else:
             # Since Torch 1.14, scaled_dot_product_attention has been optimized for performance
-            x, attn = F._scaled_dot_product_attention(
+            x = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.attn_drop.p,
             )
@@ -226,7 +226,7 @@ class TokenMixing(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x)
 
-        return x, attn
+        return x
 
 
 class FANBlock(nn.Module):
@@ -253,7 +253,7 @@ class FANBlock(nn.Module):
     def forward(self, x, attn=None, return_attention=False):
         """Forward function"""
         H, W = self.H, self.W
-        x_new, attn = self.attn(self.norm1(x))
+        x_new = self.attn(self.norm1(x))
         x = x + self.drop_path(self.gamma1 * x_new)
         x_new, attn = self.mlp(self.norm2(x), H, W)
         x = x + self.drop_path(self.gamma2 * x_new)

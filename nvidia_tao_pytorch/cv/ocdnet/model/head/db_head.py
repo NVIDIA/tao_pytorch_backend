@@ -26,19 +26,29 @@ from torch import nn
 class DBHead(nn.Module):
     """DBHead class."""
 
-    def __init__(self, in_channels, out_channels, k=50):
+    def __init__(self, in_channels, enlarge_feature_map_size=False, k=50, **kwargs):
         """Initialize."""
         super().__init__()
         self.k = k
-        self.binarize = nn.Sequential(
+        self.enlarge_feature_map_size = enlarge_feature_map_size
+
+        binarize = []
+        binarize += [
             nn.Conv2d(in_channels, in_channels // 4, 3, padding=1, bias=False),
             nn.BatchNorm2d(in_channels // 4),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(in_channels // 4, in_channels // 4, 2, 2),
-            nn.BatchNorm2d(in_channels // 4),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=True)
+        ]
+        if not self.enlarge_feature_map_size:
+            binarize += [
+                nn.ConvTranspose2d(in_channels // 4, in_channels // 4, 2, 2),
+                nn.BatchNorm2d(in_channels // 4),
+                nn.ReLU(inplace=True)
+            ]
+        binarize += [
             nn.ConvTranspose2d(in_channels // 4, 1, 2, 2),
-            nn.Sigmoid())
+            nn.Sigmoid()
+        ]
+        self.binarize = nn.Sequential(*binarize)
         self.binarize.apply(self.weights_init)
 
         self.thresh = self._init_thresh(in_channels)
@@ -46,16 +56,15 @@ class DBHead(nn.Module):
 
     def forward(self, x):
         """Forward."""
-        # Compute the probability(shrink) map
-        shrink_maps = self.binarize(x)
-        # If not during training, return shrink map directly
+        shrink_logits = self.binarize[:-1](x)
+        # probability map
+        shrink_maps = self.binarize[-1](shrink_logits)
+
         if not self.training:
             return shrink_maps
-        # Compute threshold map
         threshold_maps = self.thresh(x)
-        # Compute approximate binary map
         binary_maps = self.step_function(shrink_maps, threshold_maps)
-        y = torch.cat((shrink_maps, threshold_maps, binary_maps), dim=1)
+        y = torch.cat((shrink_logits, threshold_maps, binary_maps), dim=1)
         return y
 
     def weights_init(self, m):
@@ -71,16 +80,24 @@ class DBHead(nn.Module):
         in_channels = inner_channels
         if serial:
             in_channels += 1
-        self.thresh = nn.Sequential(
+
+        thresh = []
+        thresh += [
             nn.Conv2d(in_channels, inner_channels // 4, 3, padding=1, bias=bias),
             nn.BatchNorm2d(inner_channels // 4),
             nn.ReLU(inplace=True),
-            self._init_upsample(inner_channels // 4, inner_channels // 4, smooth=smooth, bias=bias),
-            nn.BatchNorm2d(inner_channels // 4),
-            nn.ReLU(inplace=True),
+        ]
+        if not self.enlarge_feature_map_size:
+            thresh += [
+                self._init_upsample(inner_channels // 4, inner_channels // 4, smooth=smooth, bias=bias),
+                nn.BatchNorm2d(inner_channels // 4),
+                nn.ReLU(inplace=True),
+            ]
+        thresh += [
             self._init_upsample(inner_channels // 4, 1, smooth=smooth, bias=bias),
-            nn.Sigmoid())
-        return self.thresh
+            nn.Sigmoid()
+        ]
+        return nn.Sequential(*thresh)
 
     def _init_upsample(self, in_channels, out_channels, smooth=False, bias=False):
         if smooth:

@@ -27,7 +27,7 @@ from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
 
 from nvidia_tao_pytorch.cv.metric_learning_recognition.model.build_nn_model import build_model
 from nvidia_tao_pytorch.cv.metric_learning_recognition.dataloader.build_data_loader import build_dataloader
-from nvidia_tao_pytorch.cv.re_identification.utils.scheduler import WarmupMultiStepLR
+from nvidia_tao_pytorch.cv.re_identification.lr_schedulers.warmup_multi_step_lr import WarmupMultiStepLR
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 

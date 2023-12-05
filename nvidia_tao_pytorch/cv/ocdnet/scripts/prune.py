@@ -16,95 +16,80 @@
 import os
 import torch
 from torch import nn
+import torch_pruning as tp
 from typing import Sequence
-from functools import reduce
-from operator import mul
 from omegaconf import OmegaConf
-
 from torchvision.ops import DeformConv2d
 
 from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.model.model import Model
 from nvidia_tao_pytorch.cv.ocdnet.data_loader.build_dataloader import get_dataloader
-from nvidia_tao_pytorch.cv.ocdnet.utils import mkdir
+from nvidia_tao_pytorch.cv.ocdnet.utils.util import mkdir, load_checkpoint
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
-import nvidia_tao_pytorch.cv.ocdnet.pruning.torch_pruning as tp
+from nvidia_tao_pytorch.cv.ocdnet.model.backbone.fan import TokenMixing, ChannelProcessing
+from nvidia_tao_pytorch.cv.backbone.fan import ClassAttn
+from nvidia_tao_pytorch.cv.ocdnet.pruning.dependency import TAO_DependencyGraph
 
 # force pycuda on primary context before using TensorRT
 import pycuda
 import pycuda.autoinit
 pyc_dev = pycuda.autoinit.device
 pyc_ctx = pyc_dev.retain_primary_context()
+tp.dependency.DependencyGraph.update_index_mapping = TAO_DependencyGraph.update_index_mapping
 
 
-class DCNv2OutputPruning(tp.functional.structured.BasePruner):
+class DeformConv2dPruner(tp.function.ConvPruner):
     """DCNv2 Pruning."""
 
-    def prune(self, layer: nn.Module, idxs: Sequence[int]) -> nn.Module:
-        """Prune parameters."""
+    def prune_out_channels(self, layer: nn.Module, idxs: Sequence[int]) -> nn.Module:
+        """Prune out channels parameters."""
         keep_idxs = list(set(range(layer.out_channels)) - set(idxs))
+        keep_idxs.sort()
         layer.out_channels = layer.out_channels - len(idxs)
-        layer.weight = torch.nn.Parameter(layer.weight.data.clone()[keep_idxs])
+        layer.weight = self._prune_parameter_and_grad(layer.weight, keep_idxs, 0)
         if layer.bias is not None:
-            layer.bias = torch.nn.Parameter(layer.bias.data.clone()[keep_idxs])
+            layer.bias = self._prune_parameter_and_grad(layer.bias, keep_idxs, 0)
         return layer
 
-    @staticmethod
-    def calc_nparams_to_prune(layer: nn.Module, idxs: Sequence[int]) -> int:
-        """Compute number of parameters to prune."""
-        nparams_to_prune = len(idxs) * reduce(mul, layer.weight.shape[1:]) + (len(idxs) if layer.bias is not None else 0)
-        return nparams_to_prune
-
-
-class DCNv2InputPruning(tp.functional.structured.BasePruner):
-    """DCNv2 Pruning."""
-
-    def prune(self, layer: nn.Module, idxs: Sequence[int]) -> nn.Module:
-        """Prune parameters."""
+    def prune_in_channels(self, layer: nn.Linear, idxs: Sequence[int]) -> nn.Module:
+        """Prune in channels parameters."""
         keep_idxs = list(set(range(layer.in_channels)) - set(idxs))
+        keep_idxs.sort()
         layer.in_channels = layer.in_channels - len(idxs)
-        layer.weight = torch.nn.Parameter(layer.weight.data.clone()[:, keep_idxs])
+        if layer.groups > 1:
+            keep_idxs = keep_idxs[:len(keep_idxs) // layer.groups]
+        layer.weight = self._prune_parameter_and_grad(layer.weight, keep_idxs, 1)
+        # no bias pruning because it does not change the output channels
         return layer
-
-    @staticmethod
-    def calc_nparams_to_prune(layer: nn.Module, idxs: Sequence[int]) -> int:
-        """Compute number of parameters to prune."""
-        nparams_to_prune = len(idxs) * layer.weight.shape[0] * reduce(mul, layer.weight.shape[2:])
-        return nparams_to_prune
 
 
 class Prune():
     """Prune."""
 
-    def __init__(
-        self,
-        model_path,
-        config,
-        pruning_thresh,
-        output_dir,
-        gpu_id=0
-    ):
+    def __init__(self, config):
         """Initialize."""
         config['model']['pretrained'] = False
+        self.activate_checkpoint = config['model']['activation_checkpoint']
+        config['model']['activation_checkpoint'] = False
         self.validate_loader = get_dataloader(config['dataset']['validate_dataset'], False)
         self.model = None
-        self.pruning_thresh = pruning_thresh
-        self.output_dir = output_dir
-        self.gpu_id = gpu_id
+        self.ch_sparsity = config['prune']['ch_sparsity']
+        self.p = config['prune']['p']
+        self.round_to = config['prune']['round_to']
+        self.output_dir = config['prune']['results_dir']
+        self.gpu_id = config['prune']['gpu_id']
+        self.verbose = config['prune']['verbose']
         if self.gpu_id is not None and isinstance(self.gpu_id, int) and torch.cuda.is_available():
             self.device = torch.device("cuda:%s" % self.gpu_id)
             torch.backends.cudnn.benchmark = True
         else:
             self.device = torch.device("cpu")
+        checkpoint = load_checkpoint(config['prune']['checkpoint'], to_cpu=True)
 
-        checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-
-        if "state_dict" in checkpoint.keys():
-            checkpoint = checkpoint["state_dict"]
-            checkpoint = {key.replace("model.", ""): value for key, value in checkpoint.items()}
         self.model = Model(config['model'])
+        self.model_backbone = config['model']['backbone']
         layers = checkpoint.keys()
         ckpt = dict()
         # Support loading official pretrained weights for eval
@@ -186,6 +171,16 @@ class Prune():
                 continue
             elif "backbone.smooth" in new_layer:
                 continue
+            elif "kv.weight" in new_layer:
+                dim = checkpoint[layer].shape[-1]
+                ckpt[new_layer.replace('kv', 'k')] = checkpoint[layer][:dim, :]
+                ckpt[new_layer.replace('kv', 'v')] = checkpoint[layer][dim:, :]
+                continue
+            elif "kv.bias" in new_layer:
+                dim = checkpoint[layer].shape[-1] // 2
+                ckpt[new_layer.replace('kv', 'k')] = checkpoint[layer][:dim]
+                ckpt[new_layer.replace('kv', 'v')] = checkpoint[layer][dim:]
+                continue
             ckpt[new_layer] = checkpoint[layer]
         self.model.load_state_dict(ckpt)
         self.model.to(self.device)
@@ -193,71 +188,97 @@ class Prune():
     def prune(self):
         """Prune function."""
         input_dict = next(iter(self.validate_loader))
-        if self.model is not None:
-            self.model.eval()
-        print(self.model)
+        if self.verbose:
+            print('---------------- original model ----------------')
+            print(self.model)
         with torch.no_grad():
             if self.model is not None:
                 for key, value in input_dict.items():
                     if value is not None:
                         if isinstance(value, torch.Tensor):
                             input_dict[key] = value.to(self.device)
-        unpruned_total_params = sum(p.numel() for p in self.model.parameters())
-        strategy = tp.strategy.L1Strategy()  # or tp.strategy.RandomStrategy()
-        DG = tp.DependencyGraph()
 
-        DG.register_customized_layer(
-            DeformConv2d,
-            in_ch_pruning_fn=DCNv2InputPruning(),  # A function to prune channels/dimensions of input tensor
-            out_ch_pruning_fn=DCNv2OutputPruning(),  # A function to prune channels/dimensions of output tensor
-            get_in_ch_fn=lambda n: n.in_channels,  # estimate the n_channel of layer input. Return None if the layer does not change tensor shape.
-            get_out_ch_fn=lambda n: n.out_channels)  # estimate the n_channel of layer output. Return None if the layer does not change tensor shape.
+        example_inputs = input_dict["img"]
+        imp = tp.importance.MagnitudeImportance(p=self.p, group_reduction="mean")
+        base_flops, base_params = tp.utils.count_ops_and_params(self.model, example_inputs)
+        channel_groups = {}
 
-        DG.build_dependency(self.model, example_inputs=input_dict["img"])
-        for m in DG.module2node:
-            _inputs = DG.module2node[m].inputs
-            _deps = DG.module2node[m].dependencies
-            if isinstance(m, DeformConv2d):
-                DG.module2node[m].inputs = [_inputs[0]]
-                DG.module2node[m].dependencies = [_deps[0], _deps[3]]
-        # Prune Conv2d, DeformConv2d will be pruned indirectly by coupled pruning
-        layers = [module for module in self.model.modules() if isinstance(module, torch.nn.Conv2d)]
-        # Exclude DCNv2 conv2_offset layer
-        black_list = []
-        for layer in layers:
-            if layer.out_channels == 27:
-                black_list.append(layer)
-        count = 0
-        for layer in layers:
-            # skip black list layers
-            if layer in black_list:
-                continue
-            # Skip thresh module(not used in eval mode)
-            if layer not in DG.module2node:
-                continue
-            threshold_run = self.pruning_thresh
-            pruning_idxs = strategy(layer.weight, amount=threshold_run, round_to=64)
-            pruning_plan = DG.get_pruning_plan(layer, tp.prune_conv_out_channel, idxs=pruning_idxs)
-            if pruning_plan is not None:
-                pruning_plan.exec()
-            else:
-                continue
-            count += 1
-        pruned_total_params = sum(p.numel() for p in self.model.parameters())
-        print("Pruning ratio: {}".format(
-            pruned_total_params / unpruned_total_params)
-        )
+        # All heads should be pruned simultaneously, so we group channels by head.
+        for m in self.model.modules():
+            if isinstance(m, TokenMixing):
+                channel_groups[m.q] = m.num_heads
+                channel_groups[m.k] = m.num_heads
+                channel_groups[m.v] = m.num_heads
+
+            if isinstance(m, ChannelProcessing):
+                channel_groups[m.q] = m.num_heads
+
+            if isinstance(m, ClassAttn):
+                channel_groups[m.q] = m.num_heads
+                channel_groups[m.k] = m.num_heads
+                channel_groups[m.v] = m.num_heads
+
+        ignored_layers = []
+        for name, module in self.model.named_modules():
+            if 'head' in name:
+                ignored_layers.append(module)
+            if 'fan' in self.model_backbone and 'linear_fuse' in name:
+                ignored_layers.append(module)
+            if 'resnet' in self.model_backbone:
+                if 'conv2_offset' in name:
+                    ignored_layers.append(module)
+                if 'neck.out' in name:
+                    ignored_layers.append(module)
+
+        pruner = tp.pruner.MagnitudePruner(self.model,
+                                           example_inputs,
+                                           importance=imp,
+                                           ch_sparsity=self.ch_sparsity,
+                                           channel_groups=channel_groups,
+                                           ignored_layers=ignored_layers,
+                                           round_to=self.round_to,
+                                           root_module_types=[nn.Conv2d, nn.Linear, DeformConv2d],
+                                           customized_pruners={DeformConv2d: DeformConv2dPruner()})
+
+        for g in pruner.step(interactive=True):
+            if self.verbose:
+                print(g)
+            g.prune()
+
+        for m in self.model.modules():
+            if isinstance(m, TokenMixing):
+                m.head_dim = m.q.out_features // m.num_heads
+                m.dim = m.q.out_features
+
+            if isinstance(m, ClassAttn):
+                m.head_dim = m.q.out_features // m.num_heads
+                m.dim = m.q.out_features
+
+            if isinstance(m, ChannelProcessing):
+                m.head_dim = m.q.out_features // m.num_heads
+                m.dim = m.q.out_features
+
         # Do inference to sanity check the pruned model
-        self.model(input_dict["img"])
+        with torch.no_grad():
+            self.model(input_dict["img"])
+        if 'fan' in self.model_backbone and self.activate_checkpoint:
+            self.model.backbone.use_checkpoint = True
+        if self.verbose:
+            print(self.model)
         # Save pruned model
+        pruned_flops, pruned_params = tp.utils.count_ops_and_params(self.model, example_inputs)
+        print("Base FLOPs: %d G, Pruned FLOPs: %d G" % (base_flops / 1e9, pruned_flops / 1e9))
+        print("Base Params: %d M, Pruned Params: %d M" % (base_params / 1e6, pruned_params / 1e6))
+        print(f"Pruning ratio: {pruned_params / base_params}")
         if not os.path.exists(self.output_dir):
             mkdir(self.output_dir)
         assert os.path.exists(self.output_dir) and os.path.isdir(self.output_dir), "The output_folder should exist."
-        save_path = os.path.join(self.output_dir, f"pruned_{self.pruning_thresh}.pth")
+        save_path = os.path.join(self.output_dir, f"pruned_{self.ch_sparsity}.pth")
         torch.save(self.model, save_path)
+        print(f'Pruned model save to {save_path}')
 
 
-def run_experiment(experiment_config, model_path, pruning_thresh):
+def run_experiment(experiment_config):
     """Run experiment."""
     gpu_id = experiment_config.prune.gpu_id
     torch.cuda.set_device(gpu_id)
@@ -285,12 +306,7 @@ def run_experiment(experiment_config, model_path, pruning_thresh):
         message="Starting OCDNet pruning"
     )
 
-    pruner = Prune(
-        model_path,
-        experiment_config,
-        pruning_thresh,
-        output_dir=results_dir
-    )
+    pruner = Prune(experiment_config)
     pruner.prune()
 
     pyc_ctx.pop()
@@ -310,10 +326,7 @@ def main(cfg: ExperimentConfig) -> None:
     pyc_ctx.push()
 
     try:
-        run_experiment(experiment_config=cfg,
-                       model_path=cfg.prune.checkpoint,
-                       pruning_thresh=cfg.prune.pruning_thresh
-                       )
+        run_experiment(experiment_config=cfg)
         status_logging.get_status_logger().write(
             status_level=status_logging.Status.SUCCESS,
             message="Pruning finished successfully."

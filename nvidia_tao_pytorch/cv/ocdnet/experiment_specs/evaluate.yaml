@@ -1,6 +1,7 @@
 model:
   load_pruned_graph: False
   pruned_graph_path: '/results/prune/pruned_0.1.pth'
+  backbone: deformable_resnet18
 
 evaluate:
   results_dir: /results/evaluate
@@ -18,7 +19,6 @@ evaluate:
     type: QuadMetric
     args:
       is_output_polygon: false
-
 
 dataset:
   validate_dataset:

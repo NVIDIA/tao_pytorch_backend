@@ -17,6 +17,7 @@
 """Builds Transforms based on training and validation."""
 
 import torchvision.transforms as T
+from timm.data import random_erasing
 import random
 import math
 
@@ -38,15 +39,26 @@ def build_transforms(model_config, is_train=True):
     """
     normalize_transform = T.Normalize(mean=model_config['dataset']['pixel_mean'], std=model_config['dataset']['pixel_std'])
     if is_train:
-        transform = T.Compose([
-            T.Resize([model_config['model']['input_height'], model_config['model']['input_width']]),
-            T.RandomHorizontalFlip(p=model_config['dataset']['prob']),
-            T.Pad(model_config['dataset']['padding']),
-            T.RandomCrop([model_config['model']['input_height'], model_config['model']['input_width']]),
-            T.ToTensor(),
-            normalize_transform,
-            RandomErasing(probability=model_config['dataset']['re_prob'], mean=model_config['dataset']['pixel_mean'])
-        ])
+        if "resnet" in model_config["model"]["backbone"]:
+            transform = T.Compose([
+                T.Resize([model_config['model']['input_height'], model_config['model']['input_width']]),
+                T.RandomHorizontalFlip(p=model_config['dataset']['prob']),
+                T.Pad(model_config['dataset']['padding']),
+                T.RandomCrop([model_config['model']['input_height'], model_config['model']['input_width']]),
+                T.ToTensor(),
+                normalize_transform,
+                RandomErasing(probability=model_config['dataset']['re_prob'], mean=model_config['dataset']['pixel_mean'])
+            ])
+        elif "swin" in model_config["model"]["backbone"]:
+            transform = T.Compose([
+                T.Resize([model_config['model']['input_height'], model_config['model']['input_width']], interpolation=3),
+                T.RandomHorizontalFlip(p=model_config['dataset']['prob']),
+                T.Pad(model_config['dataset']['padding']),
+                T.RandomCrop([model_config['model']['input_height'], model_config['model']['input_width']]),
+                T.ToTensor(),
+                normalize_transform,
+                random_erasing.RandomErasing(probability=model_config['dataset']['re_prob'], mode='pixel', max_count=1, device='cpu'),
+            ])
     else:
         transform = T.Compose([
             T.Resize([model_config['model']['input_height'], model_config['model']['input_width']]),

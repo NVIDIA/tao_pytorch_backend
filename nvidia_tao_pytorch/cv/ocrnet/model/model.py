@@ -23,6 +23,7 @@ from .transformation import TPS_SpatialTransformerNetwork
 from .feature_extraction import VGG_FeatureExtractor, RCNN_FeatureExtractor, ResNet_FeatureExtractor
 from .sequence_modeling import BidirectionalLSTM
 from .prediction import Attention
+from nvidia_tao_pytorch.cv.ocrnet.model.fan import fan_tiny_8_p2_hybrid
 
 
 class Model(nn.Module):
@@ -50,6 +51,11 @@ class Model(nn.Module):
             self.FeatureExtraction = RCNN_FeatureExtractor(opt.input_channel, opt.output_channel)
         elif opt.FeatureExtraction == 'ResNet':
             self.FeatureExtraction = ResNet_FeatureExtractor(opt.input_channel, opt.output_channel, opt.quantize)
+        elif opt.FeatureExtraction == 'ResNet2X':
+            self.FeatureExtraction = ResNet_FeatureExtractor(opt.input_channel, opt.output_channel, opt.quantize, no_maxpool1=True)
+        elif opt.FeatureExtraction == "FAN_tiny_2X":
+            self.FeatureExtraction = fan_tiny_8_p2_hybrid(in_chans=opt.input_channel, in_height=opt.imgH, in_width=opt.imgW)
+            opt.output_channel = 192
         else:
             raise Exception('No FeatureExtraction module specified')
         self.FeatureExtraction_output = opt.output_channel  # int(imgH/16-1) * 512
@@ -69,7 +75,7 @@ class Model(nn.Module):
         if opt.Prediction == 'CTC':
             self.Prediction = nn.Linear(self.SequenceModeling_output, opt.num_class)
         elif opt.Prediction == 'Attn':
-            self.Prediction = Attention(self.SequenceModeling_output, opt.hidden_size, opt.num_class)
+            self.Prediction = Attention(self.SequenceModeling_output, opt.hidden_size, opt.num_class, batch_max_length=opt.batch_max_length)
         else:
             raise Exception('Prediction is neither CTC or Attn')
 
@@ -105,14 +111,14 @@ class Model(nn.Module):
         return prediction
 
 
-class CTCPostProcessor(nn.Module):
+class PostProcessor(nn.Module):
     """CTC postprocessor to convert raw ctc output to sequence_id and seqence_probablity"""
 
     def forward(self, prediction):
         """Forward."""
         prediction = nn.functional.softmax(prediction, dim=2)
-        sequence_id = torch.argmax(prediction, dim=2)
-        sequence_prob = torch.max(prediction, dim=2)
+        # sequence_id = torch.argmax(prediction, dim=2)
+        sequence_prob, sequence_id = torch.max(prediction, dim=2)
 
         return sequence_id, sequence_prob
 
@@ -124,10 +130,7 @@ class ExportModel(nn.Module):
         """Init."""
         super(ExportModel, self).__init__()
         self.ocr_model = ocr_model
-        if prediction_type == "CTC":
-            self.post_processor = CTCPostProcessor()
-        else:
-            self.post_processor = None
+        self.post_processor = PostProcessor()
 
     def forward(self, input, text):  # pylint: disable=redefined-builtin
         """Forward with post-process."""

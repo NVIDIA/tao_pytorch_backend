@@ -201,7 +201,11 @@ def load_model(model_path, mmcls_config=None, return_ckpt=False):
     Returns:
         Returns the loaded model instance.
     """
-    temp = tempfile.NamedTemporaryFile(suffix='.pth', delete=False)
+    # Forcing delete to close.
+    temp = tempfile.NamedTemporaryFile(
+        suffix='.pth',
+        delete=True
+    )
     tmp_model_path = temp.name
 
     # Remove EMA related items from the state_dict

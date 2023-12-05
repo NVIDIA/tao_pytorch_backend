@@ -32,7 +32,7 @@ def test(opt):
     from nvidia_tao_pytorch.cv.ocrnet.utils.utils import (CTCLabelConverter,
                                                           AttnLabelConverter,
                                                           validation, load_checkpoint)
-    from nvidia_tao_pytorch.cv.ocrnet.dataloader.ocr_dataset import LmdbDataset, RawGTDataset, AlignCollate
+    from nvidia_tao_pytorch.cv.ocrnet.dataloader.ocr_dataset import LmdbDataset, RawGTDataset, AlignCollateVal
     from nvidia_tao_pytorch.cv.ocrnet.model.model import Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -68,7 +68,7 @@ def test(opt):
     model.eval()
     with torch.no_grad():
         log = open(f'{opt.exp_name}/log_evaluation.txt', 'a')
-        AlignCollate_evaluation = AlignCollate(imgH=opt.imgH, imgW=opt.imgW, keep_ratio_with_pad=opt.PAD)
+        AlignCollate_evaluation = AlignCollateVal(imgH=opt.imgH, imgW=opt.imgW, keep_ratio_with_pad=opt.PAD)
         if opt.eval_gt_file is None:
             eval_data = LmdbDataset(opt.eval_data, opt)
         else:

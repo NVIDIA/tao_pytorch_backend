@@ -15,3 +15,4 @@
 """Root module for PyTorch model pruning."""
 
 from nvidia_tao_pytorch.pruning.version import __version__  # noqa: F401
+from nvidia_tao_pytorch.pruning.prune_config import PruneConfig  # noqa: F401

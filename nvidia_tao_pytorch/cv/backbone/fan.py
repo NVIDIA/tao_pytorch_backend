@@ -17,8 +17,7 @@ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.helpers import build_model_with_cfg
 from timm.models.vision_transformer import Mlp as MlpOri
 from timm.models.registry import register_model
-from timm.models.layers import DropPath, trunc_normal_, to_2tuple
-# from timm.models.cait import  ClassAttn
+from timm.layers import DropPath, trunc_normal_, to_2tuple
 
 from nvidia_tao_pytorch.cv.backbone.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.swin_utils import _create_fan_swin_transformer
@@ -53,8 +52,9 @@ class ClassAttn(nn.Module):
         """Initialize ClassAttn class"""
         super().__init__()
         self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim ** -0.5
+        self.dim = dim
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
         self.fast_attn = hasattr(torch._C._nn, '_scaled_dot_product_attention')  # pylint:disable=I1101
 
         self.q = nn.Linear(dim, dim, bias=qkv_bias)
@@ -68,11 +68,11 @@ class ClassAttn(nn.Module):
         """Taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
         with slight modifications to do CA
         """
-        B, N, C = x.shape
-        q = self.q(x[:, 0]).unsqueeze(1).reshape(B, 1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-        k = self.k(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        B, N, _ = x.shape
+        q = self.q(x[:, 0]).unsqueeze(1).reshape(B, 1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
-        v = self.v(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
         if torch.onnx.is_in_onnx_export() or not self.fast_attn:
             q = q * self.scale
@@ -81,14 +81,14 @@ class ClassAttn(nn.Module):
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
 
-            x_cls = (attn @ v).transpose(1, 2).reshape(B, 1, C)
+            x_cls = (attn @ v).transpose(1, 2).reshape(B, 1, self.dim)
         else:
             # Since Torch 1.14, scaled_dot_product_attention has been optimized for performance
-            x, _ = F._scaled_dot_product_attention(
+            x = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.attn_drop.p,
             )
-            x_cls = x.transpose(1, 2).reshape(B, 1, C)
+            x_cls = x.transpose(1, 2).reshape(B, 1, self.dim)
 
         x_cls = self.proj(x_cls)
         x_cls = self.proj_drop(x_cls)

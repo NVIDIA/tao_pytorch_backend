@@ -69,6 +69,9 @@ def run_experiment(experiment_config, results_dir, key):
                                                        experiment_spec=experiment_config,
                                                        prepare_for_training=False)
 
+    if "swin" in experiment_config.model.backbone:
+        model.model.load_param(experiment_config["evaluate"]["checkpoint"])
+
     infer = Inferencer(model)
     # do inference
     progress = tqdm(dataloader)
@@ -81,10 +84,16 @@ def run_experiment(experiment_config, results_dir, key):
         metrics = R1_mAP(len(query_dict), experiment_config, False, feat_norm=True)
     metrics.reset()
 
-    for data, pids, camids, img_paths in progress:
-        with torch.no_grad():
-            output = infer.inference(data)
-            metrics.update(output, pids, camids, img_paths)
+    if "swin" in experiment_config.model.backbone:
+        for data, pids, camids, img_paths in progress:
+            with torch.no_grad():
+                output, _ = infer.inference(data)
+                metrics.update(output, pids, camids, img_paths)
+    elif "resnet" in experiment_config.model.backbone:
+        for data, pids, camids, img_paths in progress:
+            with torch.no_grad():
+                output = infer.inference(data)
+                metrics.update(output, pids, camids, img_paths)
     cmc, mAP = metrics.compute()
 
     table = []

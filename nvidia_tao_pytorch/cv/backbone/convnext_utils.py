@@ -28,7 +28,7 @@ import torch.nn.functional as F
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.fx_features import register_notrace_module
 from timm.models.helpers import named_apply, build_model_with_cfg
-from timm.models.layers import trunc_normal_, ClassifierHead, SelectAdaptivePool2d, DropPath, Mlp
+from timm.layers import trunc_normal_, ClassifierHead, SelectAdaptivePool2d, DropPath, Mlp
 
 
 def _cfg(url='', **kwargs):
@@ -51,8 +51,7 @@ default_cfgs = dict(
     convnext_tiny_hnf=_cfg(url=''),
 
     convnext_base_in22k=_cfg(
-        # url="https://dl.fbaipublicfiles.com/convnext/convnext_base_22k_224.pth", num_classes=80),
-        url="pretrained/convnext_base_22k_224.pth", num_classes=80),
+        url="https://dl.fbaipublicfiles.com/convnext/convnext_base_22k_224.pth", num_classes=80),
     convnext_large_in22k=_cfg(
         url="https://dl.fbaipublicfiles.com/convnext/convnext_large_22k_224.pth", num_classes=80),
     convnext_xlarge_in22k=_cfg(

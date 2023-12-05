@@ -113,9 +113,3 @@ class Market1501(BaseImageDataset):
                 pid = pid2label[pid]
             dataset.append((img_path, pid, camid))
         return dataset
-
-    def __len__(self):
-        """Return the length of the training dataset if it's prepared for training, otherwise None."""
-        if self.prepare_for_training:
-            return self.num_train_pids
-        return None

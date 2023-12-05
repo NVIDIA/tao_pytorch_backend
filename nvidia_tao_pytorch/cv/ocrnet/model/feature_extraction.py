@@ -84,7 +84,7 @@ class RCNN_FeatureExtractor(nn.Module):
 class ResNet_FeatureExtractor(nn.Module):
     """ FeatureExtractor of FAN (http://openaccess.thecvf.com/content_ICCV_2017/papers/Cheng_Focusing_Attention_Towards_ICCV_2017_paper.pdf) """
 
-    def __init__(self, input_channel, output_channel=512, quantize=False):
+    def __init__(self, input_channel, output_channel=512, quantize=False, no_maxpool1=False):
         """Init.
 
         Args:
@@ -93,7 +93,7 @@ class ResNet_FeatureExtractor(nn.Module):
             quantize (bool, optional): Whether to use quantization. Default is False.
         """
         super(ResNet_FeatureExtractor, self).__init__()
-        self.ConvNet = ResNet(input_channel, output_channel, BasicBlock, [1, 2, 5, 3], quantize=quantize)
+        self.ConvNet = ResNet(input_channel, output_channel, BasicBlock, [1, 2, 5, 3], quantize=quantize, no_maxpool1=no_maxpool1)
 
     def forward(self, input):  # pylint: disable=redefined-builtin
         """Forward."""
@@ -239,7 +239,7 @@ def get_conv2d(quantize=False):
 class ResNet(nn.Module):
     """ResNet module."""
 
-    def __init__(self, input_channel, output_channel, block, layers, quantize=False):
+    def __init__(self, input_channel, output_channel, block, layers, quantize=False, no_maxpool1=False):
         """Init.
 
         Args:
@@ -251,6 +251,7 @@ class ResNet(nn.Module):
         """
         super(ResNet, self).__init__()
         self.quantize = quantize
+        self.no_maxpool1 = no_maxpool1
         self.output_channel_block = [int(output_channel / 4), int(output_channel / 2), output_channel, output_channel]
 
         self.inplanes = int(output_channel / 8)
@@ -262,7 +263,9 @@ class ResNet(nn.Module):
         self.bn0_2 = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
 
-        self.maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        if not self.no_maxpool1:
+            self.maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+
         self.layer1 = self._make_layer(block, self.output_channel_block[0], layers[0])
         self.conv1 = get_conv2d(self.quantize)(self.output_channel_block[0], self.output_channel_block[
                                                0], kernel_size=3, stride=1, padding=1, bias=False)
@@ -329,7 +332,8 @@ class ResNet(nn.Module):
         x = self.bn0_2(x)
         x = self.relu(x)
 
-        x = self.maxpool1(x)
+        if not self.no_maxpool1:
+            x = self.maxpool1(x)
         x = self.layer1(x)
         x = self.conv1(x)
         x = self.bn1(x)

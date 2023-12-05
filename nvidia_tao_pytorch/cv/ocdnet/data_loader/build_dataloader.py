@@ -32,8 +32,8 @@ def get_dataset(data_path, module_name, transform, dataset_args):
     """Get dataset.
 
     Args:
-        data_path (list): dataset file list.
-        module_name: custom dataset name，Supports data_loaders.ImageDataset
+        data_path: dataset file list.
+        module_name: custom dataset name, Supports data_loaders.ImageDataset
 
     Returns:
         ConcatDataset object

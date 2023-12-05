@@ -18,5 +18,12 @@ from nvidia_tao_pytorch.cv.classification.models.fan import FAN
 from nvidia_tao_pytorch.cv.classification.models.gc_vit import GCViT
 from nvidia_tao_pytorch.cv.classification.models.dinov2_vit import DinoV2ViT
 from nvidia_tao_pytorch.cv.classification.models.clip import open_clip
+from nvidia_tao_pytorch.cv.classification.models.faster_vit import FasterViT
 
-__all__ = ["FAN", "GCViT", "DinoV2ViT", "open_clip"]
+
+__all__ = ["FAN",
+           "GCViT",
+           "DinoV2ViT",
+           "open_clip",
+           "FasterViT",
+           ]

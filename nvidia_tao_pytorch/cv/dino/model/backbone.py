@@ -28,12 +28,20 @@ from nvidia_tao_pytorch.cv.deformable_detr.model.resnet import resnet50
 from nvidia_tao_pytorch.cv.deformable_detr.model.backbone import FrozenBatchNorm2d
 from nvidia_tao_pytorch.cv.deformable_detr.model.gc_vit import gc_vit_model_dict
 from nvidia_tao_pytorch.cv.dino.model.fan import fan_model_dict
+from nvidia_tao_pytorch.cv.dino.model.vision_transformer.vit_adapter import vit_model_dict
 
 
 class BackboneBase(nn.Module):
     """BackboneBase class."""
 
-    def __init__(self, model_name, backbone: nn.Module, train_backbone: bool, num_channels: int, return_interm_indices: list, export: bool):
+    def __init__(self,
+                 model_name,
+                 backbone: nn.Module,
+                 train_backbone: bool,
+                 num_channels: int,
+                 return_interm_indices: list,
+                 export: bool,
+                 missing_keys: list):
         """Initialize the Backbone Base Class.
 
         Args:
@@ -48,7 +56,7 @@ class BackboneBase(nn.Module):
         self.export = export
         self.model_name = model_name
 
-        if 'resnet' in model_name:
+        if model_name.startswith('resnet'):
             for name, parameter in backbone.named_parameters():
                 if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
                     parameter.requires_grad_(False)
@@ -59,7 +67,7 @@ class BackboneBase(nn.Module):
             for layer_index in return_interm_indices:
                 return_layers.update({"layer{}".format(layer_index + 1): "{}".format(layer_index)})
             self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
-        elif 'fan' in model_name or 'gc_vit' in model_name:
+        elif model_name.startswith(('fan', 'gc_vit')):
             for name, parameter in backbone.named_parameters():
                 if not train_backbone:
                     parameter.requires_grad_(False)
@@ -67,6 +75,14 @@ class BackboneBase(nn.Module):
             # FAN Small case
             # 4 scale: {'patch_embed.backbone.stages.1': 'p1', 'blocks.9': 'p2', 'learnable_downsample': 'p4'}
             # 5 scale: {'patch_embed.backbone.stages.0': 'p0', 'patch_embed.backbone.stages.1': 'p1', 'blocks.9': 'p2', 'learnable_downsample': 'p4'}
+            self.body = backbone
+        elif model_name.startswith(('vit')):
+            # These params are still part of backbone but trainable
+            if not missing_keys:
+                missing_keys = []
+            for name, parameter in backbone.named_parameters():
+                if not any(p in name for p in missing_keys) and not train_backbone:
+                    parameter.requires_grad_(False)
             self.body = backbone
         self.num_channels = num_channels
         self.return_interm_indices = return_interm_indices
@@ -107,6 +123,7 @@ class Backbone(BackboneBase):
     def __init__(self, name: str,
                  pretrained_backbone_path: Optional[str],
                  train_backbone: bool,
+                 resolution: int,
                  return_interm_indices: list,
                  dilation: bool,
                  export: bool,
@@ -116,6 +133,7 @@ class Backbone(BackboneBase):
         Args:
             pretrained_backbone_path (str): optional path to the pretrained backbone.
             train_backbone (bool): flag whether we want to train the backbone or not.
+            resolution (int): input resolution for ViT models.
             return_interm_indices (list): list of layer indices to reutrn as backbone features.
             dilation (bool): flag whether we can to use dilation or not.
             export (bool): flag to indicate whehter exporting to onnx or not.
@@ -131,6 +149,11 @@ class Backbone(BackboneBase):
                              f"Provided return_interm_indices is {return_interm_indices}.")
         if len(np.unique(return_interm_indices)) != len(return_interm_indices):
             raise ValueError(f"Duplicate index in the provided return_interm_indices: {return_interm_indices}")
+
+        supported_arch = list(fan_model_dict.keys()) + \
+            list(gc_vit_model_dict.keys()) + \
+            list(vit_model_dict.keys()) + \
+            ["resnet_50"]
 
         if name == 'resnet_50':
             if export:
@@ -158,18 +181,27 @@ class Backbone(BackboneBase):
                                                activation_checkpoint=activation_checkpoint)
             num_channels_all = np.array(backbone.num_features)
             num_channels = num_channels_all[return_interm_indices]
+        elif 'vit' in name:
+            if name not in vit_model_dict:
+                raise NotImplementedError(f"{name} is not supported ViT-Adapter backbone. "
+                                          f"Supported architecutres: {vit_model_dict.keys()}")
+            backbone = vit_model_dict[name](out_indices=return_interm_indices,
+                                            resolution=resolution,
+                                            activation_checkpoint=activation_checkpoint)
+            num_channels = np.array([backbone.embed_dim] * len(return_interm_indices))
         else:
-            supported_arch = list(fan_model_dict.keys()) + list(gc_vit_model_dict.keys()) + ["resnet_50"]
             raise NotImplementedError(f"Backbone {name} is not implemented. Supported architectures {supported_arch}")
 
+        missing_keys = None
         if pretrained_backbone_path:
             checkpoint = load_pretrained_weights(pretrained_backbone_path)
             _tmp_st_output = backbone.load_state_dict(checkpoint, strict=False)
+            missing_keys = list(_tmp_st_output[0])
             if get_global_rank() == 0:
                 print(f"Loaded pretrained weights from {pretrained_backbone_path}")
                 print(f"{_tmp_st_output}")
 
-        super().__init__(name, backbone, train_backbone, num_channels, return_interm_indices, export)
+        super().__init__(name, backbone, train_backbone, num_channels, return_interm_indices, export, missing_keys)
 
 
 class Joiner(nn.Sequential):

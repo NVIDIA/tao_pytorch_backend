@@ -102,37 +102,16 @@ class DINO(nn.Module):
         self.dn_label_noise_ratio = dn_label_noise_ratio
         self.dn_labelbook_size = dn_labelbook_size
 
+        self.backbone = backbone
+
         # prepare input projection layers
-        if num_feature_levels > 1:
-            num_backbone_outs = len(backbone.num_channels)
-            input_proj_list = []
-            for _ in range(num_backbone_outs):
-                in_channels = backbone.num_channels[_]
-                input_proj_list.append(nn.Sequential(
-                    nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
-                ))
-            for _ in range(num_feature_levels - num_backbone_outs):
-                input_proj_list.append(nn.Sequential(
-                    nn.Conv2d(in_channels, hidden_dim, kernel_size=3, stride=2, padding=1),
-                    nn.GroupNorm(32, hidden_dim),
-                ))
-                in_channels = hidden_dim
-            self.input_proj = nn.ModuleList(input_proj_list)
-        else:
-            assert two_stage_type == 'no', "two_stage_type should be no if num_feature_levels=1 !!!"
-            self.input_proj = nn.ModuleList([
-                nn.Sequential(
-                    nn.Conv2d(backbone.num_channels[-1], hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
-                )])
+        self.input_proj = self.prepare_channel_mapper(num_feature_levels, hidden_dim, two_stage_type)
 
         self.position_embedding = position_embedding
         self.export = export
 
-        self.backbone = backbone
         self.aux_loss = aux_loss
-        self.export = export
+
         if self.export:
             warnings.warn("Setting aux_loss to be False for export")
             self.aux_loss = False
@@ -203,6 +182,41 @@ class DINO(nn.Module):
             self.label_embedding = None
 
         self._reset_parameters()
+
+    def prepare_channel_mapper(self, num_feature_levels, hidden_dim, two_stage_type):
+        """Create Channel Mapper style for DETR-based model.
+
+        Args:
+            num_feature_levels (int): Number of levels to extract from the backbone feature maps.
+            two_stage_type (str): type of two stage in DINO.
+            hidden_dim (int): size of the hidden dimension.
+
+        Returns:
+            nn.ModuleList of input projection.
+        """
+        if num_feature_levels > 1:
+            num_backbone_outs = len(self.backbone.num_channels)
+            input_proj_list = []
+            for _ in range(num_backbone_outs):
+                in_channels = self.backbone.num_channels[_]
+                input_proj_list.append(nn.Sequential(
+                    nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
+                    nn.GroupNorm(32, hidden_dim),
+                ))
+            for _ in range(num_feature_levels - num_backbone_outs):
+                input_proj_list.append(nn.Sequential(
+                    nn.Conv2d(in_channels, hidden_dim, kernel_size=3, stride=2, padding=1),
+                    nn.GroupNorm(32, hidden_dim),
+                ))
+                in_channels = hidden_dim
+            return nn.ModuleList(input_proj_list)
+
+        assert two_stage_type == 'no', "two_stage_type should be no if num_feature_levels=1 !!!"
+        return nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(self.backbone.num_channels[-1], hidden_dim, kernel_size=1),
+                nn.GroupNorm(32, hidden_dim),
+            )])
 
     def _reset_parameters(self):
         # init input_proj

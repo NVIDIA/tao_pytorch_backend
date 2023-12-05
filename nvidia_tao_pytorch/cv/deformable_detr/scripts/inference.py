@@ -55,7 +55,7 @@ def run_experiment(experiment_config, model_path, key, results_dir=None):
         num_gpus = experiment_config.inference.num_gpus
 
         # build data module
-        dm = ODDataModule(experiment_config.dataset)
+        dm = ODDataModule(experiment_config.dataset, subtask_config=experiment_config.inference)
         dm.setup(stage="predict")
 
         # Run inference using tlt model

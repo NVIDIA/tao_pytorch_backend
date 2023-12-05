@@ -51,7 +51,24 @@ def run_experiment(experiment_config,
 
     total_epochs = experiment_config['train']['num_epochs']
     clip_grad = experiment_config['train']['clip_grad_norm']
-    gpus_ids = experiment_config['train']['gpu_ids']
+    gpu_idx = experiment_config['train']['gpu_ids']
+    num_gpus = experiment_config['train']['num_gpus']
+    # Handling multiGPU with num_gpus.
+    if num_gpus != len(gpu_idx):
+        logging.warning(
+            "Number of gpus [{num_gpus}] != [{gpu_ids}].".format(
+                num_gpus=num_gpus,
+                gpu_ids=gpu_idx
+            )
+        )
+        num_gpus = max(num_gpus, len(gpu_idx))
+        gpu_idx = range(num_gpus) if len(gpu_idx) != num_gpus else gpu_idx
+        logging.info(
+            "Setting the num_gpus: {num_gpus} and train.gpu_ids: {gpu_ids}".format(
+                gpu_ids=experiment_config['train']['gpu_ids'],
+                num_gpus=gpu_idx
+            )
+        )
     validation_interval = experiment_config.train.validation_interval
     checkpoint_interval = experiment_config.train.checkpoint_interval
     enable_tensorboard = experiment_config.train.tensorboard.enabled
@@ -80,10 +97,11 @@ def run_experiment(experiment_config,
     else:
         logging.info("Tensorboard logging disabled.")
     acc_flag = None
-    if len(gpus_ids) > 1:
+    if num_gpus > 1:
         acc_flag = "ddp"
     trainer = Trainer(
-        gpus=gpus_ids,
+        devices=num_gpus,
+        gpus=gpu_idx,
         max_epochs=total_epochs,
         check_val_every_n_epoch=validation_interval,
         default_root_dir=results_dir,

@@ -1,8 +1,13 @@
 prune:
   checkpoint: /results/train/model_best.pth
-  pruning_thresh: 0.1
+  ch_sparsity: 0.1
+  round_to: 32
+  p: 2
   results_dir: /results/prune
+  verbose: True
 
+model:
+  backbone: deformable_resnet18
 dataset:
   validate_dataset:
       data_path: ['/data/ocdnet/test']
@@ -11,8 +16,8 @@ dataset:
           - type: Resize2D
             args:
               short_size:
-                - 1280
-                - 736
+                - 640
+                - 640
               resize_text_polys: false
         img_mode: BGR
         filter_keys: []

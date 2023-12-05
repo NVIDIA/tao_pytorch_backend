@@ -14,7 +14,10 @@
 
 # This file is modified from https://github.com/traveller59/second.pytorch
 """FastAI optimizer."""
-from collections import Iterable
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
 
 import torch
 from torch import nn
@@ -181,7 +184,7 @@ class OptimWrapper():
 
     def clear(self):
         """Reset the state of the inner optimizer."""
-        sd = self.state_dict()
+        sd = self.state_dict()  # noqa # pylint: disable=missing-kwoa
         sd['state'] = {}
         self.load_state_dict(sd)
 

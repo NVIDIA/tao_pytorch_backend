@@ -16,6 +16,9 @@
 
 import os
 import torch
+import onnx
+from onnxsim import simplify
+import onnx_graphsurgeon as gs
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.cv.action_recognition.config.default_config import ExperimentConfig
@@ -140,17 +143,17 @@ def run_export(args, output_dir):
     input_type = experiment_config['model']['input_type']
     if input_type == "2d":
         if model_type == "of":
-            dummy_input = torch.randn(1, 2 * of_seq_length,
+            dummy_input = torch.randn(3, 2 * of_seq_length,
                                       output_shape[0], output_shape[1]).cuda()
             dynamic_axes = {"input_of": {0: "batch"}, "fc_pred": {0: "batch"}}
         elif model_type == "rgb":
-            dummy_input = torch.randn(1, 3 * rgb_seq_length,
+            dummy_input = torch.randn(3, 3 * rgb_seq_length,
                                       output_shape[0], output_shape[1]).cuda()
             dynamic_axes = {"input_rgb": {0: "batch"}, "fc_pred": {0: "batch"}}
         elif model_type == "joint":
-            dummy_input = (torch.randn(1, 3 * rgb_seq_length,
+            dummy_input = (torch.randn(3, 3 * rgb_seq_length,
                                        output_shape[0], output_shape[1]).cuda(),
-                           torch.randn(1, 2 * of_seq_length,
+                           torch.randn(3, 2 * of_seq_length,
                                        output_shape[0], output_shape[1]).cuda())
             dynamic_axes = {"input_rgb": {0: "batch"}, "input_of": {0: "batch"},
                             "fc_pred": {0: "batch"}}
@@ -158,17 +161,17 @@ def run_export(args, output_dir):
             raise ValueError("Wrong model type in the config")
     elif input_type == "3d":
         if model_type == "of":
-            dummy_input = torch.randn(1, 2, of_seq_length,
+            dummy_input = torch.randn(3, 2, of_seq_length,
                                       output_shape[0], output_shape[1]).cuda()
             dynamic_axes = {"input_of": {0: "batch"}, "fc_pred": {0: "batch"}}
         elif model_type == "rgb":
-            dummy_input = torch.randn(1, 3, rgb_seq_length,
+            dummy_input = torch.randn(3, 3, rgb_seq_length,
                                       output_shape[0], output_shape[1]).cuda()
             dynamic_axes = {"input_rgb": {0: "batch"}, "fc_pred": {0: "batch"}}
         elif model_type == "joint":
-            dummy_input = (torch.randn(1, 3, rgb_seq_length,
+            dummy_input = (torch.randn(3, 3, rgb_seq_length,
                                        output_shape[0], output_shape[1]).cuda(),
-                           torch.randn(1, 2, of_seq_length,
+                           torch.randn(3, 2, of_seq_length,
                                        output_shape[0], output_shape[1]).cuda())
             dynamic_axes = {"input_rgb": {0: "batch"}, "input_of": {0: "batch"},
                             "fc_pred": {0: "batch"}}
@@ -182,7 +185,13 @@ def run_export(args, output_dir):
                       input_names=input_names,
                       output_names=output_names,
                       dynamic_axes=dynamic_axes,
+                      opset_version=17,
                       verbose=True)
+
+    optimized_model, _ = simplify(onnx.load(output_file))
+    graph = gs.import_onnx(optimized_model)
+    graph.cleanup()
+    onnx.save(gs.export_onnx(graph), output_file)
 
 
 if __name__ == "__main__":

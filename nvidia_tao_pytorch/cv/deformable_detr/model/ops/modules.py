@@ -47,7 +47,7 @@ def _is_power_of_2(n):
 class MSDeformAttn(nn.Module):
     """Multi-Scale Deformable Attention Module."""
 
-    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
+    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4, ratio=1.0):
         """Multi-Scale Deformable Attention Constructor.
 
         Args:
@@ -55,6 +55,7 @@ class MSDeformAttn(nn.Module):
             n_levels (int): number of feature levels
             n_heads (int): number of attention heads
             n_points (int): number of sampling points per attention head per feature level
+            ratio (float): deformable ratio
         """
         super().__init__()
         if d_model % n_heads != 0:
@@ -70,16 +71,17 @@ class MSDeformAttn(nn.Module):
         self.n_levels = n_levels
         self.n_heads = n_heads
         self.n_points = n_points
+        self.ratio = ratio
 
         self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
         self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
-        self.value_proj = nn.Linear(d_model, d_model)
-        self.output_proj = nn.Linear(d_model, d_model)
+        self.value_proj = nn.Linear(d_model, int(d_model * ratio))
+        self.output_proj = nn.Linear(int(d_model * ratio), d_model)
 
         self._reset_parameters()
         # load custom ops
         ops_dir = os.path.dirname(os.path.abspath(__file__))
-        lib_name = "MultiScaleDeformableAttention.cpython-38-x86_64-linux-gnu.so"
+        lib_name = "MultiScaleDeformableAttention.cpython-310-x86_64-linux-gnu.so"
         load_ops(ops_dir, lib_name)
 
     def _reset_parameters(self):
@@ -117,12 +119,14 @@ class MSDeformAttn(nn.Module):
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
 
-        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
+        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in, \
+            f"{(input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()} {Len_in}"
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
-        value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
+        value = value.view(N, Len_in, self.n_heads,
+                           int(self.ratio * self.d_model) // self.n_heads)
         sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
         attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
         attention_weights = F.softmax(attention_weights, -1).view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
@@ -171,6 +175,6 @@ class MSDeformAttn(nn.Module):
                 # CPU implementation of multi-scale deformable attention
                 output = multi_scale_deformable_attn_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
 
-        output = output.view(N, Len_q, self.d_model)
+        output = output.view(N, Len_q, int(self.d_model * self.ratio))
         output = self.output_proj(output)
         return output

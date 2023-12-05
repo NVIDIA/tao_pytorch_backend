@@ -21,7 +21,7 @@ import tempfile
 import torch
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.path_utils import expand_path
-import nvidia_tao_pytorch.pruning.torch_pruning as tp
+import nvidia_tao_pytorch.pruning.torch_pruning_v0 as tp
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.config import (
     cfg, cfg_from_yaml_file
 )

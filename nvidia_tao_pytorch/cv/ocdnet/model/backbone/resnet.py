@@ -176,7 +176,7 @@ class Bottleneck(nn.Module):
 class ResNet(nn.Module):
     """ResNet class."""
 
-    def __init__(self, block, layers, in_channels=3, dcn=None):
+    def __init__(self, block, layers, in_channels=3, dcn=None, **kwargs):
         """Initialize."""
         self.dcn = dcn
         self.inplanes = 64

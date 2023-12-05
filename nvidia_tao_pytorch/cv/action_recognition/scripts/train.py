@@ -48,16 +48,27 @@ def run_experiment(experiment_config,
 
     clip_grad = experiment_config['train']['clip_grad_norm']
     gpus_ids = experiment_config['train']["gpu_ids"]
+    num_gpus = experiment_config['train']['num_gpus']
     acc_flag = None
-    if len(gpus_ids) > 1:
+    if num_gpus > 1 or len(gpus_ids) > 1:
         acc_flag = "ddp"
-    trainer = Trainer(gpus=gpus_ids,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=experiment_config['train']['checkpoint_interval'],
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy=acc_flag,
-                      gradient_clip_val=clip_grad)
+
+    if num_gpus > 1:
+        trainer = Trainer(devices=num_gpus,
+                          max_epochs=total_epochs,
+                          check_val_every_n_epoch=experiment_config['train']['checkpoint_interval'],
+                          default_root_dir=results_dir,
+                          accelerator='gpu',
+                          strategy=acc_flag,
+                          gradient_clip_val=clip_grad)
+    else:
+        trainer = Trainer(gpus=gpus_ids,
+                          max_epochs=total_epochs,
+                          check_val_every_n_epoch=experiment_config['train']['checkpoint_interval'],
+                          default_root_dir=results_dir,
+                          accelerator='gpu',
+                          strategy=acc_flag,
+                          gradient_clip_val=clip_grad)
 
     # Overload connector to enable intermediate ckpt encryption & decryption.
     resume_ckpt = experiment_config['train']['resume_training_checkpoint_path']

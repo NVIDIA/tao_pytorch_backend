@@ -132,8 +132,8 @@ def run_experiment(experiment_config, key, results_dir=None):
                                                             )
 
             acc_flag = None
-            # if num_gpus > 1:
-            #     acc_flag = "ddp"
+            if num_gpus > 1:
+                acc_flag = "ddp"
 
             trainer = Trainer(gpus=num_gpus,
                               default_root_dir=results_dir,

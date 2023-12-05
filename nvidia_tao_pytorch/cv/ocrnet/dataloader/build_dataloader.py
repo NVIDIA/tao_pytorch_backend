@@ -18,7 +18,8 @@ import argparse
 import torch
 from nvidia_tao_pytorch.cv.ocrnet.dataloader.ocr_dataset import (LmdbDataset,
                                                                  RawGTDataset,
-                                                                 AlignCollate)
+                                                                 AlignCollate,
+                                                                 AlignCollateVal)
 
 
 def translate_dataset_config(experiment_spec):
@@ -77,7 +78,11 @@ def build_dataloader(experiment_spec, data_path, shuffle=True, gt_file=None):
     """
     opt = translate_dataset_config(experiment_spec)
 
-    AlignCollate_func = AlignCollate(imgH=opt.imgH, imgW=opt.imgW, keep_ratio_with_pad=opt.PAD)
+    if shuffle:
+        AlignCollate_func = AlignCollate(experiment_spec=experiment_spec, imgH=opt.imgH, imgW=opt.imgW,
+                                         keep_ratio_with_pad=opt.PAD)
+    else:
+        AlignCollate_func = AlignCollateVal(imgH=opt.imgH, imgW=opt.imgW, keep_ratio_with_pad=opt.PAD)
 
     if gt_file is not None:
         dataset = RawGTDataset(gt_file, data_path, opt)

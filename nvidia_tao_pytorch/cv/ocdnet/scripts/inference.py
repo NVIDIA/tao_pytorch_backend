@@ -30,7 +30,7 @@ from omegaconf import OmegaConf
 from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.post_processing.seg_detector_representer import get_post_processing
 from nvidia_tao_pytorch.cv.ocdnet.model.pl_ocd_model import OCDnetModel
-from nvidia_tao_pytorch.cv.ocdnet.utils.util import show_img, draw_bbox, save_result, get_file_list
+from nvidia_tao_pytorch.cv.ocdnet.utils.util import show_img, draw_bbox, save_result, get_file_list, load_checkpoint
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
@@ -67,10 +67,9 @@ class Inference:
         if model_path.split(".")[-1] in ["trt", "engine"]:
             raise Exception("Please use tao_deploy to run inference against tensorrt engine.")
         else:
-            checkpoint = torch.load(model_path, map_location=self.device)
+            checkpoint = load_checkpoint(model_path, to_cpu=True)
             self.model = OCDnetModel(config)
-            checkpoint['state_dict'] = {key.replace("model.", ""): value for key, value in checkpoint['state_dict'].items()}
-            self.model.model.load_state_dict(checkpoint['state_dict'])
+            self.model.model.load_state_dict(checkpoint)
             self.model.to(self.device)
             self.model.eval()
             self.is_trt = False

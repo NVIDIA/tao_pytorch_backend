@@ -54,6 +54,7 @@ class DINOAugmentationConfig:
     random_resize_max_size: int = 1333
     test_random_resize: int = 800
     fixed_padding: bool = True
+    fixed_random_crop: Optional[int] = None
 
 
 @dataclass
@@ -145,12 +146,14 @@ class OptimConfig:
                                 metadata={"description": "learning rate decay steps"})
     lr_step_size: int = 11
     lr_decay: float = 0.1
+    layer_decay_rate: float = 0.65  # Only applicable to ViT backbones
 
 
 @dataclass
 class DINOTrainExpConfig:
     """Train experiment config."""
 
+    freeze: Optional[List[str]] = field(default_factory=lambda: [])  # ["backbone", "input_proj", "transformer"] or ["transformer.encoder", "transformer.decoder"]
     num_gpus: int = 1
     num_nodes: int = 1
     resume_training_checkpoint_path: Optional[str] = None
@@ -167,6 +170,7 @@ class DINOTrainExpConfig:
     precision: str = "fp32"
     distributed_strategy: str = "ddp"
     activation_checkpoint: bool = True
+    verbose: bool = False
 
 
 @dataclass
@@ -177,7 +181,7 @@ class DINOInferenceExpConfig:
     results_dir: Optional[str] = None
     checkpoint: Optional[str] = None
     trt_engine: Optional[str] = None
-    color_map: Dict[str, str] = MISSING
+    color_map: Optional[Dict[str, str]] = None
     conf_threshold: float = 0.5
     is_internal: bool = False
     input_width: Optional[int] = None

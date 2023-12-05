@@ -14,4 +14,4 @@
 
 """Version string for the PyTorch pruning."""
 
-__version__ = "0.2.7"
+__version__ = "1.2.2"

@@ -222,7 +222,7 @@ class R1_mAP_reranking():
         #           torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
         # distmat.addmm_(1, -2, qf, gf.t())
         # distmat = distmat.cpu().numpy()
-        print("The distance matrix is processed by re-ranking.")
+        print("The distance matrix is computed using euclidean distance. It is then processed by re-ranking.")
         distmat = re_rank(qf, gf, k1=self.cfg["re_ranking"]["k1"], k2=self.cfg["re_ranking"]["k2"], lambda_value=self.cfg["re_ranking"]["lambda_value"])
         cmc, mAP = eval_func(self.cfg, distmat, q_pids, g_pids, q_camids, g_camids, q_img_paths, g_img_paths, self.prepare_for_training)
 

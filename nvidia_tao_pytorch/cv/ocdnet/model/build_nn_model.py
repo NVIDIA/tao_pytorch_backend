@@ -20,15 +20,9 @@ from nvidia_tao_pytorch.cv.ocdnet.model.model import Model
 
 def build_ocd_model(experiment_config,
                     export=False):
-    """Build ocdnet model according to config
-
-    Args:
-        experiment_config (dict): Configuration File.
-        export (bool): Whether to build the model that can be exported to ONNX format. Defaults to False.
-
-    """
+    """Build ocdnet model according to config."""
     model_config = experiment_config["model"]
-
+    model_config['activation_checkpoint'] = False if experiment_config["train"]['model_ema'] else model_config['activation_checkpoint']
     load_pruned_graph = model_config['load_pruned_graph']
 
     if load_pruned_graph:
@@ -37,7 +31,8 @@ def build_ocd_model(experiment_config,
             "Please set the pruned_graph_path in the spec file."
             "If you are resuming training, please set resume_training_checkpoint_path as well.")
         pruned_graph_path = model_config['pruned_graph_path']
-        model = load_checkpoint(pruned_graph_path)
+        model = load_checkpoint(pruned_graph_path, only_state_dict=False)
+        print(f'loading pruned model from {pruned_graph_path}')
     else:
         model_config['pruned_graph_path'] = None
         model = Model(model_config)
@@ -56,14 +51,7 @@ def build_ocd_model(experiment_config,
             finetune = False
 
         if finetune:
-            ckpt = load_checkpoint(model_path)
-
-            if not isinstance(ckpt, Model):
-                ckpt["state_dict"] = {key.replace("model.", ""): value for key, value in ckpt["state_dict"].items()}
-                state_dict = ckpt["state_dict"]
-                model.load_state_dict(state_dict, strict=False)
-            else:
-                state_dict = ckpt.state_dict()
-                model.load_state_dict(state_dict, strict=False)
+            state_dict = load_checkpoint(model_path, to_cpu=True)
+            model.load_state_dict(state_dict, strict=False)
 
     return model

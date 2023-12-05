@@ -1,5 +1,5 @@
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:23.02-py3
-FROM ${BASE_IMAGE}
+ARG PYTORCH_BASE_IMAGE=nvcr.io/nvidia/pytorch:23.08-py3
+FROM ${PYTORCH_BASE_IMAGE}
 
 # Ensure apt-get won't prompt for selecting options
 ENV DEBIAN_FRONTEND=noninteractive
@@ -16,8 +16,8 @@ RUN pip install parametrized ninja
 WORKDIR /opt
 
 # Clone and checkout TensorRT OSS
-# Moving TensorRT to 8.5 branch.
-ENV TRT_TAG "release/8.5"
+# Moving TensorRT to 8.6 branch.
+ENV TRT_TAG "release/8.6"
 ENV TRT_INCLUDE_DIR="/usr/include/x86_64-linux-gnu"
 # Install TRT OSS
 RUN mkdir trt_oss_src && \
@@ -27,20 +27,40 @@ RUN mkdir trt_oss_src && \
   cd TensorRT && \
   git submodule update --init --recursive && \
   mkdir -p build && cd build  && \
-  cmake .. -DGPU_ARCHS="53 60 61 70 75 80 86 90" -DTRT_LIB_DIR=/usr/lib/x86_64-linux-gnu -DTRT_BIN_DIR=`pwd`/out -DCUDA_VERSION=11.8 -DCUDNN_VERSION=8.7 && \
+  cmake .. \
+    -DGPU_ARCHS="53;60;61;70;75;80;86;90" \
+    -DCMAKE_CUDA_ARCHITECTURES="53;60;61;70;75;80;86;90" \
+    -DTRT_LIB_DIR=/usr/lib/x86_64-linux-gnu \
+    -DTRT_BIN_DIR=`pwd`/out \
+    -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.2/bin/nvcc \
+    -DCUDNN_VERSION=8.9 && \
   make -j16 nvinfer_plugin nvinfer_plugin_static && \
-  cp libnvinfer_plugin.so.8.5.3 /usr/lib/x86_64-linux-gnu/libnvinfer_plugin.so.8.5.3 && \
+  cp libnvinfer_plugin.so.8.6.1 /usr/lib/x86_64-linux-gnu/libnvinfer_plugin.so.8.6.1 && \
   cp libnvinfer_plugin_static.a /usr/lib/x86_64-linux-gnu/libnvinfer_plugin_static.a && \
   cd ../../../ && \
   rm -rf trt_oss_src
 
 COPY docker/requirements-pip.txt requirements-pip.txt
-RUN pip install --ignore-installed -r requirements-pip.txt \
+# Forcing cython==0.29.36 for pycocotools-fix with python3.10.
+RUN pip install Cython==0.29.36 \
+  && pip install --ignore-installed -r requirements-pip.txt \
   && rm requirements-pip.txt
 
 COPY docker/requirements-pip-pytorch.txt requirements-pip-pytorch.txt
 RUN pip install --ignore-installed --no-deps -r requirements-pip-pytorch.txt \
   && rm requirements-pip-pytorch.txt
+
+COPY docker/requirements-pip-odise.txt requirements-pip-odise.txt
+RUN pip install --ignore-installed --no-deps -r requirements-pip-odise.txt \
+  && rm requirements-pip-odise.txt
+
+# Install mmcv from source for our cuda versions.
+COPY third_party/mmcv/mmcv.patch mmcv.patch
+RUN git clone https://github.com/open-mmlab/mmcv.git \
+  && cd mmcv && git checkout v1.7.1 \
+  && git apply /opt/mmcv.patch \
+  && pip install -r requirements/optional.txt --ignore-installed \
+  && FORCE_CUDA=1 MMCV_WITH_OPS=1 python setup.py install
 
 # Setup user account
 ARG uid=1000

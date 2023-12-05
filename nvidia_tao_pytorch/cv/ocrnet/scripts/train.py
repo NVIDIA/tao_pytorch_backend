@@ -60,20 +60,32 @@ def run_experiment(experiment_spec: ExperimentConfig):
     ocrnet_model = OCRNetModel(experiment_spec)
     clip_grad = experiment_spec.train.clip_grad_norm
     gpus_ids = experiment_spec.train.gpu_ids
+    num_gpus = experiment_spec.train.num_gpus
     distributed_strategy = None
-    if len(gpus_ids) > 1:
+    if num_gpus > 1 or len(gpus_ids) > 1:
         distributed_strategy = experiment_spec.train.distributed_strategy
 
     val_inter = experiment_spec.train.validation_interval
-    trainer = Trainer(gpus=gpus_ids,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=val_inter,
-                      default_root_dir=results_dir,
-                      enable_checkpointing=False,
-                      strategy=distributed_strategy,
-                      accelerator='gpu',
-                      num_sanity_val_steps=0,
-                      gradient_clip_val=clip_grad)
+    if num_gpus > 1:
+        trainer = Trainer(devices=num_gpus,
+                          max_epochs=total_epochs,
+                          check_val_every_n_epoch=val_inter,
+                          default_root_dir=results_dir,
+                          enable_checkpointing=False,
+                          strategy=distributed_strategy,
+                          accelerator='gpu',
+                          num_sanity_val_steps=0,
+                          gradient_clip_val=clip_grad)
+    else:
+        trainer = Trainer(gpus=gpus_ids,
+                          max_epochs=total_epochs,
+                          check_val_every_n_epoch=val_inter,
+                          default_root_dir=results_dir,
+                          enable_checkpointing=False,
+                          strategy=distributed_strategy,
+                          accelerator='gpu',
+                          num_sanity_val_steps=0,
+                          gradient_clip_val=clip_grad)
 
     ckpt_inter = experiment_spec.train.checkpoint_interval
     ModelCheckpoint.FILE_EXTENSION = ".pth"

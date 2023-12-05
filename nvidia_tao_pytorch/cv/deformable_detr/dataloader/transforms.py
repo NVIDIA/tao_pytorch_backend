@@ -17,18 +17,19 @@
 import PIL
 import torch
 import random
+import numpy as np
 import torchvision.transforms as T
 import torchvision.transforms.functional as F
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils.box_ops import box_xyxy_to_cxcywh
 
 
-def build_transforms(augmentation_config, experiment_config=None, dataset_mode='train'):
+def build_transforms(augmentation_config, subtask_config=None, dataset_mode='train'):
     """Build Augmentations.
 
     Args:
         augmentation_config (dict): augmentation configuration.
-        experiment_config (dict): experiment configuration.
+        subtask_config (dict): subtask experiment configuration.
         dataset_mode (str): data mode (train, val, eval, infer).
 
     Returns:
@@ -48,6 +49,8 @@ def build_transforms(augmentation_config, experiment_config=None, dataset_mode='
     flip_prob = min(1.0, augmentation_config["horizontal_flip_prob"])
     fixed_padding = augmentation_config["fixed_padding"]
 
+    # ViT requires square input. D2 LSJ style data transforms
+    fixed_random_crop = augmentation_config.get("fixed_random_crop", 1024)
     normalize = Compose([
         ToTensor(),
         Normalize(input_mean, input_std)
@@ -84,6 +87,19 @@ def build_transforms(augmentation_config, experiment_config=None, dataset_mode='
                 ),
                 normalize,
             ])
+        # ViT backbone required square cropping
+        if fixed_random_crop:
+            transforms = Compose([
+                RandomHorizontalFlip(flip_prob),
+                ResizeScale(min_scale=0.1,
+                            max_scale=2.0,
+                            target_height=fixed_random_crop,
+                            target_width=fixed_random_crop),
+                RandomCrop((fixed_random_crop, fixed_random_crop)),
+                normalize,
+                FixedPad(fixed_random_crop, fixed_random_crop)
+            ])
+
     elif dataset_mode in ('val', 'eval', 'infer'):
         if fixed_padding:
             transforms = Compose([
@@ -94,6 +110,13 @@ def build_transforms(augmentation_config, experiment_config=None, dataset_mode='
         else:
             transforms = Compose([
                 RandomResize([test_random_size], max_size=ranom_resize_max_size),
+                normalize,
+            ])
+
+        # Fixed resize
+        if subtask_config and subtask_config['input_width'] and subtask_config['input_height']:
+            transforms = Compose([
+                FixedResize((subtask_config['input_width'], subtask_config['input_height'])),
                 normalize,
             ])
     else:
@@ -280,7 +303,10 @@ class RandomCrop(object):
             image (PIL.Image): Cropped Image.
             target (dict): Cropped Annotations.
         """
-        region = T.RandomCrop.get_params(img, self.size)
+        image_width, image_height = img.size
+        crop_height = min(image_height, self.size[0])
+        crop_width = min(image_width, self.size[1])
+        region = T.RandomCrop.get_params(img, (crop_height, crop_width))
         return crop(img, target, region)
 
 
@@ -397,6 +423,64 @@ class RandomResize(object):
         """
         size = random.choice(self.sizes)
         return resize(img, target, size, self.max_size)
+
+
+class ResizeScale(object):
+    """
+    Takes target size as input and randomly scales the given target size between `min_scale`
+    and `max_scale`. It then scales the input image such that it fits inside the scaled target
+    box, keeping the aspect ratio constant.
+    This implements the resize part of the Google's 'resize_and_crop' data augmentation:
+    https://github.com/tensorflow/tpu/blob/master/models/official/detection/utils/input_utils.py#L127
+    """
+
+    def __init__(
+        self,
+        min_scale: float,
+        max_scale: float,
+        target_height: int,
+        target_width: int,
+    ):
+        """
+        Args:
+            min_scale: minimum image scale range.
+            max_scale: maximum image scale range.
+            target_height: target image height.
+            target_width: target image width.
+        """
+        self.min_scale = min_scale
+        self.max_scale = max_scale
+        self.target_height = target_height
+        self.target_width = target_width
+
+    def _get_resize(self, image: np.ndarray, target: dict, scale: float):
+        """Returns resized"""
+        image_width, image_height = image.size
+
+        # Compute new target size given a scale.
+        target_size = (self.target_width, self.target_height)
+        target_scale_size = np.multiply(target_size, scale)
+
+        # Compute actual rescaling applied to input image and output size.
+        output_scale = np.minimum(
+            target_scale_size[0] / image_width, target_scale_size[1] / image_height
+        )
+        output_size = np.round(np.multiply((image_width, image_height), output_scale)).astype(int)
+        return resize(image, target, size=list(output_size))
+
+    def __call__(self, img, target=None):
+        """Call RandomResize.
+
+        Args:
+            image (PIL.Image): Pillow Image.
+            target (dict): Annotations.
+
+        Returns:
+            image (PIL.Image): Resized Image.
+            target (dict): Resized Annotations.
+        """
+        random_scale = np.random.uniform(self.min_scale, self.max_scale)
+        return self._get_resize(img, target, random_scale)
 
 
 class FixedResize(object):

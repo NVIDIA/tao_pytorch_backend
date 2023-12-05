@@ -58,23 +58,34 @@ def run_experiment(experiment_config, key, results_dir):
         f"Checkpoint interval {checkpoint_interval} > Number of epochs {num_epochs}. "
         f"Please set experiment_config.train.checkpoint_interval < {num_epochs}"
     )
+    gpus_ids = experiment_config['train']["gpu_ids"]
+    num_gpus = experiment_config['train']['num_gpus']
+    grad_clip = experiment_config['train']['grad_clip']
 
     status_logger_callback = TAOStatusLogger(results_dir, append=True, num_epochs=num_epochs)
 
     status_logging.set_status_logger(status_logger_callback.logger)
 
-    grad_clip = experiment_config['train']['grad_clip']
-    gpus_ids = experiment_config['train']["gpu_ids"]
     acc_flag = None
-    if len(gpus_ids) > 1:
+    if num_gpus > 1 or len(gpus_ids) > 1:
         acc_flag = "ddp"
-    trainer = Trainer(gpus=gpus_ids,
-                      max_epochs=num_epochs,
-                      check_val_every_n_epoch=checkpoint_interval,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy=acc_flag,
-                      gradient_clip_val=grad_clip)
+
+    if num_gpus > 1:
+        trainer = Trainer(devices=num_gpus,
+                          max_epochs=num_epochs,
+                          check_val_every_n_epoch=checkpoint_interval,
+                          default_root_dir=results_dir,
+                          accelerator='gpu',
+                          strategy=acc_flag,
+                          gradient_clip_val=grad_clip)
+    else:
+        trainer = Trainer(gpus=gpus_ids,
+                          max_epochs=num_epochs,
+                          check_val_every_n_epoch=checkpoint_interval,
+                          default_root_dir=results_dir,
+                          accelerator='gpu',
+                          strategy=acc_flag,
+                          gradient_clip_val=grad_clip)
 
     # Overload connector to enable intermediate ckpt encryption & decryption.
     resume_ckpt = experiment_config['train']['resume_training_checkpoint_path']

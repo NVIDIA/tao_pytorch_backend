@@ -30,11 +30,12 @@ from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_world_size, get
 class ODDataModule(pl.LightningDataModule):
     """Lightning DataModule for Object Detection."""
 
-    def __init__(self, dataset_config):
+    def __init__(self, dataset_config, subtask_config=None):
         """ Lightning DataModule Initialization.
 
         Args:
             dataset_config (OmegaConf): dataset configuration
+            subtask_config (OmegaConf): subtask configuration
 
         """
         super().__init__()
@@ -44,6 +45,7 @@ class ODDataModule(pl.LightningDataModule):
         self.num_workers = dataset_config["workers"]
         self.num_classes = dataset_config["num_classes"]
         self.pin_memory = dataset_config["pin_memory"]
+        self.subtask_config = subtask_config
 
     def setup(self, stage: Optional[str] = None):
         """ Loads in data from file and prepares PyTorch tensor datasets for each split (train, val, test).
@@ -120,7 +122,8 @@ class ODDataModule(pl.LightningDataModule):
             if isinstance(pred_list, str):
                 pred_list = [pred_list]
             classmap = pred_data_sources.get("classmap", "")
-            self.pred_dataset = ODPredictDataset(pred_list, classmap, transforms=build_transforms(self.augmentation_config, dataset_mode='infer'))
+            pred_transforms = build_transforms(self.augmentation_config, subtask_config=self.subtask_config, dataset_mode='infer')
+            self.pred_dataset = ODPredictDataset(pred_list, classmap, transforms=pred_transforms)
 
     def train_dataloader(self):
         """Build the dataloader for training.

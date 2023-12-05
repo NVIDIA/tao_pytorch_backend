@@ -1,0 +1,14 @@
+model:
+  load_pruned_graph: False
+  pruned_graph_path: '/results/prune/pruned_0.1.pth'
+  backbone: fan_tiny_8_p4_hybrid
+  enlarge_feature_map_size: True
+
+export:
+  results_dir: /results/export
+  checkpoint: '/results/train/model_best.pth'
+  width: 1280
+  height: 736
+  opset_version: 17
+  verbose: False
+  gpu_id: 0
