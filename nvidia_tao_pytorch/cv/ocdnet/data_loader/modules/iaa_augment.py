@@ -39,16 +39,18 @@ class AugmenterBuilder(object):
             if root:
                 sequence = [self.build(value, root=False) for value in args]
                 return iaa.Sequential(sequence)
-            return getattr(iaa, args[0])(*[self.list_to_tuple(a) for a in args[1:]])
+            return getattr(iaa, args[0])(*[self.convert_object(a) for a in args[1:]])
         if isinstance(args, dict):
             cls = getattr(iaa, args['type'])
-            return cls(**{k: self.list_to_tuple(v) for k, v in args['args'].items()})
+            return cls(**{k: self.convert_object(v) for k, v in args['args'].items()})
         raise RuntimeError('unknown augmenter arg: ' + str(args))
 
-    def list_to_tuple(self, obj):
-        """Return tuple for list."""
+    def convert_object(self, obj):
+        """Convert the object data type."""
         if isinstance(obj, list):
             return tuple(obj)
+        if isinstance(obj, dict):
+            return self.build(obj, root=False)
         return obj
 
 

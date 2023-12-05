@@ -68,17 +68,30 @@ def run_experiment(experiment_config, results_dir, key):
                                                        map_location="cpu",
                                                        experiment_spec=experiment_config,
                                                        prepare_for_training=False)
+
+    if "swin" in experiment_config.model.backbone:
+        model.model.load_param(experiment_config["inference"]["checkpoint"])
+
     infer = Inferencer(model)
 
     # do inference
     progress = tqdm(dataloader)
     results = []
-    with torch.no_grad():
-        for data, _, _, img_paths in progress:
-            feats = infer.inference(data)
-            for img_path, feat in zip(img_paths, feats):
-                result = {"img_path": img_path, "embedding": feat.cpu().numpy().tolist()}
-                results.append(result)
+
+    if "swin" in experiment_config.model.backbone:
+        with torch.no_grad():
+            for data, _, _, img_paths in progress:
+                feats, _ = infer.inference(data)
+                for img_path, feat in zip(img_paths, feats):
+                    result = {"img_path": img_path, "embedding": feat.cpu().numpy().tolist()}
+                    results.append(result)
+    elif "resnet" in experiment_config.model.backbone:
+        with torch.no_grad():
+            for data, _, _, img_paths in progress:
+                feats = infer.inference(data)
+                for img_path, feat in zip(img_paths, feats):
+                    result = {"img_path": img_path, "embedding": feat.cpu().numpy().tolist()}
+                    results.append(result)
 
     # save the output
     output_file = open(experiment_config["inference"]["output_file"], "w")

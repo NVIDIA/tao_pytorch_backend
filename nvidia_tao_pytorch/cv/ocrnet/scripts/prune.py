@@ -21,43 +21,19 @@ import argparse
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
-import nvidia_tao_pytorch.pruning.torch_pruning as tp
 
 
-def prune(opt):
-    """Prune the the OCRNet according to option"""
-    # @TODO(tylerz): Lazy import for correctly setting CUDA_VISIBLE_DEVICES
+def legacy_pruner(opt, model, device):
+    """Legacy pruner based on deprecated torch pruning 0.2.7 API
+
+    Args:
+        opt (argparse): options
+        model (nn.module): The model to be pruned
+        device (str): The device parameter
+    """
     import torch
-    import torch.utils.data
+    import nvidia_tao_pytorch.pruning.torch_pruning_v0 as tp
 
-    from nvidia_tao_pytorch.cv.ocrnet.utils.utils import (CTCLabelConverter,
-                                                          AttnLabelConverter,
-                                                          load_checkpoint)
-    from nvidia_tao_pytorch.cv.ocrnet.model.model import Model
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    """ model configuration """
-    if 'CTC' in opt.Prediction:
-        converter = CTCLabelConverter(opt.character)
-    else:
-        converter = AttnLabelConverter(opt.character)
-    opt.num_class = len(converter.character)
-    if opt.rgb:
-        opt.input_channel = 3
-
-    # load model
-    print('loading pretrained model from %s' % opt.saved_model)
-    ckpt = load_checkpoint(opt.saved_model, key=opt.encryption_key, to_cpu=True)
-    if not isinstance(ckpt, Model):
-        model = Model(opt)
-        state_dict = ckpt
-        model.load_state_dict(state_dict)
-    else:
-        model = ckpt
-        # print(model)
-
-    model = model.to(device)
-
-    model.eval()
     num_params_before_pruning = tp.utils.count_params(model)
     # 1. build dependency graph
     dep_graph = tp.DependencyGraph()
@@ -113,6 +89,104 @@ def prune(opt):
     torch.save(model, encoded_output_file)
 
 
+def torch_pruner(opt, model, device):
+    """Torch pruner based on pip installed torch_pruning package
+
+    Args:
+        opt (argparse): options
+        model (nn.module): The model to be pruned
+        device (str): The device parameter
+    """
+    import torch
+    import torch_pruning as tp
+
+    from nvidia_tao_pytorch.pruning.dependency import TAO_DependencyGraph
+    from nvidia_tao_pytorch.cv.ocrnet.model.fan import TokenMixing, ChannelProcessing
+    from nvidia_tao_pytorch.cv.backbone.fan import ClassAttn
+    tp.dependency.DependencyGraph.update_index_mapping = TAO_DependencyGraph.update_index_mapping
+
+    imp = tp.importance.MagnitudeImportance(p=opt.p, group_reduction="mean")
+    example_inputs = (torch.randn([1, opt.input_channel, opt.imgH, opt.imgW]).to(device),
+                      torch.LongTensor(1, opt.batch_max_length + 1).fill_(0).to(device))
+    base_flops, base_params = tp.utils.count_ops_and_params(model, example_inputs)
+
+    ignored_layers = []
+    for name, module in model.named_modules():
+        if 'head' in name:
+            ignored_layers.append(module)
+        if 'linear_fuse' in name:
+            ignored_layers.append(module)
+        if "Prediction" in name:
+            ignored_layers.append(module)
+
+        if isinstance(module, (TokenMixing, ChannelProcessing, ClassAttn)):
+            ignored_layers.append(module)
+
+    pruner = tp.pruner.MagnitudePruner(model,
+                                       example_inputs,
+                                       importance=imp,
+                                       ch_sparsity=opt.amount,
+                                       channel_groups={},
+                                       ignored_layers=ignored_layers,
+                                       round_to=opt.granularity,
+                                       root_module_types=[torch.nn.Conv2d, torch.nn.Linear])
+
+    for g in pruner.step(interactive=True):
+        g.prune()
+
+    with torch.no_grad():
+        model(example_inputs[0], example_inputs[1])
+
+    # Save pruned model
+    pruned_flops, pruned_params = tp.utils.count_ops_and_params(model, example_inputs)
+    print("Base FLOPs: %d G, Pruned FLOPs: %d G" % (base_flops / 1e9, pruned_flops / 1e9))
+    print("Base Params: %d M, Pruned Params: %d M" % (base_params / 1e6, pruned_params / 1e6))
+    print(f"Pruning ratio: {pruned_params / base_params}")
+    torch.save(model, opt.output_file)
+    print(f'Pruned model save to {opt.output_file}')
+
+
+def prune(opt):
+    """Prune the the OCRNet according to option"""
+    # @TODO(tylerz): Lazy import for correctly setting CUDA_VISIBLE_DEVICES
+    import torch
+    import torch.utils.data
+
+    from nvidia_tao_pytorch.cv.ocrnet.utils.utils import (CTCLabelConverter,
+                                                          AttnLabelConverter,
+                                                          load_checkpoint)
+    from nvidia_tao_pytorch.cv.ocrnet.model.model import Model
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    """ model configuration """
+    if 'CTC' in opt.Prediction:
+        converter = CTCLabelConverter(opt.character)
+    else:
+        converter = AttnLabelConverter(opt.character)
+    opt.num_class = len(converter.character)
+    if opt.rgb:
+        opt.input_channel = 3
+
+    # load model
+    print('loading pretrained model from %s' % opt.saved_model)
+    ckpt = load_checkpoint(opt.saved_model, key=opt.encryption_key, to_cpu=True)
+    if not isinstance(ckpt, Model):
+        model = Model(opt)
+        state_dict = ckpt
+        model.load_state_dict(state_dict)
+    else:
+        model = ckpt
+
+    model = model.to(device)
+
+    model.eval()
+    if opt.FeatureExtraction in ["ResNet", "ResNet2X"]:
+        legacy_pruner(opt, model, device)
+    elif opt.FeatureExtraction == "FAN_tiny_2X":
+        torch_pruner(opt, model, device)
+    else:
+        raise ValueError("Only supports pruning [ResNet, ResNet2X, FAN_tiny_2X] backbone")
+
+
 def init_configs(experiment_spec: ExperimentConfig):
     """Pass the yaml config to argparse.Namespace"""
     parser = argparse.ArgumentParser()
@@ -162,6 +236,7 @@ def init_configs(experiment_spec: ExperimentConfig):
         opt.amount = prune_config.amount
     elif opt.prune_mode in ["threshold"]:
         opt.threshold = prune_config.threshold
+        opt.amount = opt.threshold  # For FAN backbone
     else:
         raise ValueError("Only supports prune mode in [amount, threshold, \
             experimental_hybrid]")

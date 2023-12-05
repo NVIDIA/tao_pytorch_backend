@@ -202,6 +202,7 @@ class SegDetectorRepresenter():
 
     def box_score_fast(self, bitmap, _box):
         """Calculate the bbox score according to bbox's coordinate and bitmap."""
+        bitmap = bitmap.astype(np.float32)
         h, w = bitmap.shape[:2]
         box = _box.copy()
         xmin = np.clip(np.floor(box[:, 0].min()).astype(np.int), 0, w - 1)

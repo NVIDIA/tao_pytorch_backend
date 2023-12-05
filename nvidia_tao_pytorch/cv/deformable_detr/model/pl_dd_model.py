@@ -24,7 +24,6 @@ from torch.optim.lr_scheduler import MultiStepLR, StepLR
 from fairscale.optim import OSS
 
 import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_only
 
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
@@ -37,7 +36,7 @@ from nvidia_tao_pytorch.cv.deformable_detr.model.build_nn_model import build_mod
 from nvidia_tao_pytorch.cv.deformable_detr.model.matcher import HungarianMatcher
 from nvidia_tao_pytorch.cv.deformable_detr.model.criterion import SetCriterion
 from nvidia_tao_pytorch.cv.deformable_detr.model.post_process import PostProcess, save_inference_prediction, threshold_predictions
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import match_name_keywords
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import match_name_keywords, rgetattr
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco import COCO
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco_eval import CocoEvaluator
 
@@ -66,6 +65,29 @@ class DeformableDETRModel(pl.LightningModule):
     def _build_model(self, export):
         """Internal function to build the model."""
         self.model = build_model(experiment_config=self.experiment_spec, export=export)
+
+        # freeze modules
+        if self.experiment_spec["train"]["freeze"]:
+            freezed_modules = []
+            skipped_modules = []
+            for module in self.experiment_spec["train"]["freeze"]:
+                try:
+                    module_to_freeze = rgetattr(self.model.model, module)
+                    for p in module_to_freeze.parameters():
+                        p.requires_grad = False
+                    freezed_modules.append(module)
+                except AttributeError:
+                    skipped_modules.append(module)
+            if freezed_modules:
+                status_logging.get_status_logger().write(
+                    message=f"Freezed module {freezed_modules}",
+                    status_level=status_logging.Status.SUCCESS,
+                    verbosity_level=status_logging.Verbosity.INFO)
+            if skipped_modules:
+                status_logging.get_status_logger().write(
+                    message=f"module {skipped_modules} not found. Skipped freezing",
+                    status_level=status_logging.Status.SKIPPED,
+                    verbosity_level=status_logging.Verbosity.WARNING)
 
     def _build_criterion(self):
         """Internal function to build the loss function."""
@@ -130,12 +152,12 @@ class DeformableDETRModel(pl.LightningModule):
             lr_scheduler = MultiStepLR(optimizer=optim,
                                        milestones=self.train_config['optim']["lr_steps"],
                                        gamma=self.train_config['optim']["lr_decay"],
-                                       verbose=True)
+                                       verbose=self.train_config.verbose)
         elif scheduler_type == "StepLR":
             lr_scheduler = StepLR(optimizer=optim,
                                   step_size=self.train_config['optim']["lr_step_size"],
                                   gamma=self.train_config['optim']["lr_decay"],
-                                  verbose=True)
+                                  verbose=self.train_config.verbose)
         else:
             raise NotImplementedError("LR Scheduler {} is not implemented".format(scheduler_type))
 
@@ -316,7 +338,6 @@ class DeformableDETRModel(pl.LightningModule):
         pred_results = self.box_processors(outputs, orig_target_sizes, image_names)
         return pred_results
 
-    @rank_zero_only
     def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
         """
         Predict batch end.

@@ -3,7 +3,7 @@ model:
   pruned_graph_path: '/results/prune/pruned_0.1.pth'
 
 export:
-  results_dir: /result/export
+  results_dir: /results/export
   checkpoint: /results/train/model_best.pth
   width: 1280
   height: 736

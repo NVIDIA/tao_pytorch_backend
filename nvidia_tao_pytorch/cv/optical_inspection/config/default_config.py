@@ -95,6 +95,7 @@ class OITrainExpConfig:
     loss: Optional[str] = None
     clip_grad_norm: float = 0.0
     gpu_ids: List[int] = field(default_factory=lambda: [0])
+    num_gpus: int = 1
     results_dir: Optional[str] = None
     tensorboard: Optional[TensorBoardLogger] = TensorBoardLogger()
     resume_training_checkpoint_path: Optional[str] = None
@@ -117,6 +118,7 @@ class OIEvalExpConfig:
     """Evaluation experiment config."""
 
     checkpoint: str = MISSING
+    trt_engine: str = MISSING
     gpu_id: int = 0
     batch_size: int = 1
     results_dir: Optional[str] = None

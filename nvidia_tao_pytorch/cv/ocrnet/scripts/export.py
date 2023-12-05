@@ -25,8 +25,6 @@ import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
 
-MODEL_HEIGHT_STRIDE = 16
-
 
 @gs.Graph.register()
 def replace_with_avgpool2d(self, inputs, outputs, kernel_shape,
@@ -68,6 +66,7 @@ def export(opt):
     quant_nn.TensorQuantizer.use_fb_fake_quant = True
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = "cpu"
     """ model configuration """
     if 'CTC' in opt.Prediction:
         converter = CTCLabelConverter(opt.character)
@@ -95,8 +94,8 @@ def export(opt):
 
     input_names = ["input"]
     output_names = ["output_id", "output_prob"]
-    dummy_input = (torch.randn(1, opt.input_channel, opt.imgH, opt.imgW).to(device),
-                   torch.LongTensor(1, opt.batch_max_length + 1).fill_(0).to(device))
+    dummy_input = (torch.randn(13, opt.input_channel, opt.imgH, opt.imgW).to(device),
+                   torch.LongTensor(13, opt.batch_max_length + 1).fill_(0).to(device))
     dynamic_axes = {"input": {0: "batch"}, "output_id": {0: "batch"}, "output_prob": {0: "batch"}}
     os_handle, tmp_file_name = tempfile.mkstemp()
     os.close(os_handle)
@@ -109,22 +108,20 @@ def export(opt):
                       dynamic_axes=dynamic_axes,
                       operator_export_type=torch.onnx.OperatorExportTypes.ONNX_FALLTHROUGH,
                       verbose=False,
-                      opset_version=16,
+                      opset_version=17,
                       do_constant_folding=True
                       )
 
     graph = gs.import_onnx(onnx.load(output_file))
 
+    # Do a dummy inference to get visual feature height
+    visual_feature = model.ocr_model.FeatureExtraction(dummy_input[0])
+    feature_height = visual_feature.shape[2]
+
     for node in graph.nodes:
-        # if node.op == 'grid_sampler':
-        #     #cleanup 3 unused inputs
-        #     for i in [4, 3, 2]:
-        #         node.i(i, 0).outputs.clear()
-        #         del node.inputs[i]
         if node.op == "adaptive_avg_pool2d":
-            feature_height = int(opt.imgH / MODEL_HEIGHT_STRIDE) - 1
             inp_tensor = [node.inputs[0]]
-            node.i(1, 0).outputs.clear()
+            # node.i(1, 0).outputs.clear()
             del node.inputs[1]
             oup_tensor = [node.outputs[0]]
             graph.replace_with_avgpool2d(inp_tensor, oup_tensor, kernel_shape=[1, feature_height])

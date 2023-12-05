@@ -1,0 +1,39 @@
+results_dir: '/home/scratch.p3/yuw/tlt3_experiments/odise/release'
+model:
+  # name: "convnext_xxlarge"
+  # pretrained_weights: "laion2b_s34b_b82k-augreg-soup"
+  name: "convnext_large_d_320"
+  pretrained_weights: "laion2b_s29b_b131k_ft_soup"
+  num_classes: 60
+train:
+  use_amp: True
+  checkpoint_interval: 50
+evaluate:
+  checkpoint: "/home/scratch.p3/yuw/tlt3_experiments/odise/odise_convnext_large_coco_50e_bs64x8_fixed/default/model_0089999.pth"
+inference:
+  precision: 'fp16'
+  checkpoint: "/home/scratch.p3/yuw/tlt3_experiments/odise/odise_convnext_large_coco_50e_bs64x8_fixed/default/model_0089999.pth"
+  image_dir: "/home/scratch.p3/yuw/tmp/odise_test_images"
+  overlap_threshold: 0
+  object_mask_threshold: 0.01
+dataset:
+  train:
+    name: "taco_train_panoptic"
+    root_dir: "/home/scratch.p3/yuw/datasets"
+    panoptic_json: "taco/annotations_pano.json"
+    instance_json: "/home/scratch.p3/yuw/datasets/taco/annotations.json"
+    instance_root: "/home/scratch.p3/yuw/datasets/taco"
+    panoptic_root: "taco/taco_pan"
+    semantic_root:  "taco/taco_semsegm"
+    prompt_eng_file: "/home/scratch.p3/yuw/tlt3_experiments/odise/taco_labels.txt"
+    category_json: "/home/scratch.p3/yuw/datasets/taco/categories.json"
+  val:
+    name: "taco_val_panoptic"
+    root_dir: "/home/scratch.p3/yuw/datasets"
+    panoptic_json: "taco/annotations_pano.json"
+    instance_json: "/home/scratch.p3/yuw/datasets/taco/annotations.json"
+    instance_root: "/home/scratch.p3/yuw/datasets/taco"
+    panoptic_root: "taco/taco_pan"
+    semantic_root:  "taco/taco_semsegm"
+    prompt_eng_file: "/home/scratch.p3/yuw/tlt3_experiments/odise/taco_labels.txt"
+    category_json: "/home/scratch.p3/yuw/datasets/taco/categories.json"

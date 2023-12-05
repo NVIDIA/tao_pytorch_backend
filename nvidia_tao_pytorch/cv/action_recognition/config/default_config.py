@@ -92,6 +92,7 @@ class ARTrainExpConfig:
 
     results_dir: Optional[str] = None
     gpu_ids: List[int] = field(default_factory=lambda: [0])
+    num_gpus: int = 1
     resume_training_checkpoint_path: Optional[str] = None
     optim: OptimConfig = OptimConfig()
     num_epochs: int = 10

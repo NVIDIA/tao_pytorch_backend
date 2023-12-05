@@ -15,7 +15,9 @@
 """Export re-identification model to ONNX."""
 
 import os
+import onnx
 import torch
+import onnx_graphsurgeon as gs
 
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
@@ -126,6 +128,9 @@ def run_export(args, results_dir):
                                                           prepare_for_training=False,
                                                           export=True)
     model = pl_model.model
+    if "swin" in experiment_config.model.backbone:
+        model.load_param(experiment_config["export"]["checkpoint"])
+
     model.eval()
     model.cuda()
 
@@ -144,6 +149,12 @@ def run_export(args, results_dir):
                       output_names=output_names,
                       dynamic_axes=dynamic_axes,
                       verbose=True)
+
+    #  Remove excess layers from the backbone's last layer
+    if "swin" in experiment_config.model.backbone:
+        graph = gs.import_onnx(onnx.load(onnx_file))
+        graph.outputs = graph.outputs[:-4]
+        onnx.save(gs.export_onnx(graph), onnx_file)
 
 
 if __name__ == "__main__":

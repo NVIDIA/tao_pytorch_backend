@@ -121,6 +121,7 @@ class ImageDataset(Dataset):
             tuple: A tuple containing the image, person ID, camera ID, and image path.
 
         """
+        assert index < len(self.dataset), f"Index {index} out of bounds!"
         img_path, pid, camid = self.dataset[index]
         img = read_image(img_path)
 

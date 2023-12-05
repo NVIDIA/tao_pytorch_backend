@@ -24,11 +24,12 @@ import torchmetrics
 
 from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import patch_decrypt_checkpoint
 from nvidia_tao_pytorch.cv.re_identification.model.build_nn_model import build_model
-from nvidia_tao_pytorch.cv.re_identification.model.triplet_loss import TripletLoss, CrossEntropyLabelSmooth
-from nvidia_tao_pytorch.cv.re_identification.model.center_loss import CenterLoss
+from nvidia_tao_pytorch.cv.re_identification.model.losses.triplet_loss import TripletLoss, CrossEntropyLabelSmooth
+from nvidia_tao_pytorch.cv.re_identification.model.losses.center_loss import CenterLoss
 from nvidia_tao_pytorch.cv.re_identification.dataloader.build_data_loader import build_dataloader
 from nvidia_tao_pytorch.cv.re_identification.utils.reid_metric import R1_mAP, R1_mAP_reranking
-from nvidia_tao_pytorch.cv.re_identification.utils.scheduler import WarmupMultiStepLR
+from nvidia_tao_pytorch.cv.re_identification.lr_schedulers.warmup_multi_step_lr import WarmupMultiStepLR
+from nvidia_tao_pytorch.cv.re_identification.lr_schedulers.cosine_lr import create_cosine_scheduler
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
@@ -50,12 +51,13 @@ class ReIdentificationModel(pl.LightningModule):
         self.experiment_spec = experiment_spec
         self.prepare_for_training = prepare_for_training
         # init the model
-        self._build_model(experiment_spec, export)
+        self.model = self._build_model(experiment_spec, export)
 
         self.train_accuracy = torchmetrics.Accuracy()
         self.val_accuracy = torchmetrics.Accuracy()
 
         if self.prepare_for_training:
+            self.center_criterion = None
             if self.experiment_spec["model"]["with_center_loss"]:
                 self.my_loss_func, self.center_criterion = self.__make_loss_with_center(experiment_spec, num_classes=self.num_classes)
             else:
@@ -88,6 +90,7 @@ class ReIdentificationModel(pl.LightningModule):
         else:
             self.num_classes = experiment_spec["dataset"]["num_classes"]
         self.model = build_model(experiment_spec, self.num_classes)
+        return self.model
 
     def train_dataloader(self):
         """Build the dataloader for training.
@@ -118,52 +121,24 @@ class ReIdentificationModel(pl.LightningModule):
         self.optim_config = self.train_config["optim"]
         optim_dict = {}
 
-        if self.experiment_spec["model"]["with_center_loss"]:
-            optimizer, self.optimizer_center = self.__make_optimizer_with_center(self.center_criterion)
-        else:
-            optimizer = self.__make_optimizer()
+        optimizer, self.optimizer_center = self.__make_optimizer(self.center_criterion)
 
-        self.scheduler = WarmupMultiStepLR(optimizer, self.optim_config["steps"],
-                                           gamma=self.optim_config["gamma"],
-                                           warmup_factor=self.optim_config["warmup_factor"],
-                                           warmup_iters=self.optim_config["warmup_iters"],
-                                           warmup_method=self.optim_config["warmup_method"])
-        self.scheduler.step()
+        if self.optim_config["warmup_method"] == "cosine":
+            self.scheduler = create_cosine_scheduler(self.experiment_spec, optimizer)
+        else:
+            self.scheduler = WarmupMultiStepLR(optimizer, self.optim_config["lr_steps"],
+                                               gamma=self.optim_config["gamma"],
+                                               warmup_factor=self.optim_config["warmup_factor"],
+                                               warmup_iters=self.optim_config["warmup_iters"],
+                                               warmup_method=self.optim_config["warmup_method"])
+            self.scheduler.step()
         optim_dict["optimizer"] = optimizer
         optim_dict["lr_scheduler"] = self.scheduler
         optim_dict['monitor'] = self.optim_config['lr_monitor']
 
         return optim_dict
 
-    def __make_optimizer_with_center(self, center_criterion):
-        """Make Optimizer using center loss.
-
-        Args:
-            center_criterion (CenterLoss): Center Loss for training.
-
-        Returns:
-            optimizer (Torch.Optimizer): Optimizer for training.
-            optimizer_center (Torch.Optimizer): Optimizer for center Loss for training.
-
-        """
-        params = []
-        for key, value in self.model.named_parameters():
-            if not value.requires_grad:
-                continue
-            lr = self.optim_config["base_lr"] * len(self.experiment_spec["train"]["gpu_ids"])
-            weight_decay = self.optim_config["weight_decay"]
-            if "bias" in key:
-                lr = self.optim_config["base_lr"] * self.optim_config["bias_lr_factor"]
-                weight_decay = self.optim_config["weight_decay_bias"]
-            params += [{"params": [value], "lr": lr, "weight_decay": weight_decay}]
-        if self.optim_config["name"] == 'SGD':
-            optimizer = getattr(torch.optim, self.optim_config["name"])(params, momentum=self.optim_config["momentum"])
-        else:
-            optimizer = getattr(torch.optim, self.optim_config["name"])(params)
-        optimizer_center = torch.optim.SGD(center_criterion.parameters(), lr=self.optim_config["center_lr"])
-        return optimizer, optimizer_center
-
-    def __make_optimizer(self):
+    def __make_optimizer(self, center_criterion):
         """Make Optimizer.
 
         Returns:
@@ -179,12 +154,21 @@ class ReIdentificationModel(pl.LightningModule):
             if "bias" in key:
                 lr = self.optim_config["base_lr"] * self.optim_config["bias_lr_factor"]
                 weight_decay = self.optim_config["weight_decay_bias"]
+            if self.optim_config["large_fc_lr"]:
+                if "classifier" in key or "arcface" in key:
+                    lr = self.optim_config["base_lr"] * 2
             params += [{"params": [value], "lr": lr, "weight_decay": weight_decay}]
         if self.optim_config["name"] == 'SGD':
             optimizer = getattr(torch.optim, self.optim_config["name"])(params, momentum=self.optim_config["momentum"])
+        elif self.optim_config["name"] == 'AdamW':
+            optimizer = torch.optim.AdamW(params, lr=self.optim_config["base_lr"], weight_decay=self.optim_config["weight_decay"])
         else:
             optimizer = getattr(torch.optim, self.optim_config["name"])(params)
-        return optimizer
+
+        optimizer_center = None
+        if self.experiment_spec.model.with_center_loss:
+            optimizer_center = torch.optim.SGD(center_criterion.parameters(), lr=self.optim_config["center_lr"])
+        return optimizer, optimizer_center
 
     def training_step(self, batch, batch_idx):
         """Training step.
@@ -199,7 +183,10 @@ class ReIdentificationModel(pl.LightningModule):
         """
         data, label = batch
         data = data.float()
-        score, feat = self.model(data)
+        if "swin" in self.experiment_spec.model.backbone:
+            score, feat, _ = self.model(data)
+        elif "resnet" in self.experiment_spec.model.backbone:
+            score, feat = self.model(data)
         loss = self.my_loss_func(score, feat, label)
         self.train_accuracy.update(score, label)
         self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
@@ -223,10 +210,6 @@ class ReIdentificationModel(pl.LightningModule):
             status_level=status_logging.Status.RUNNING
         )
 
-    def on_train_epoch_start(self):
-        """Perform on start of every epoch."""
-        print('\n')
-
     def on_validation_epoch_start(self):
         """Perform on validation."""
         if self.experiment_spec["re_ranking"]["re_ranking"]:
@@ -238,12 +221,14 @@ class ReIdentificationModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         """Validation step."""
         data, pids, camids, img_path = batch
-        output = self.model(data)
+        if "swin" in self.experiment_spec.model.backbone:
+            output, _ = self.model(data)
+        elif "resnet" in self.experiment_spec.model.backbone:
+            output = self.model(data)
         self.metrics.update(output, pids, camids, img_path)
 
     def on_validation_epoch_end(self):
         """Validation step end."""
-        print('\n')
         cmc, mAP = self.metrics.compute()
         for r in [1, 5, 10]:
             self.log(f"cmc_rank_{r}", cmc[r - 1], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
@@ -392,7 +377,7 @@ class ReIdentificationModel(pl.LightningModule):
             center_criterion = CenterLoss(num_classes=num_classes, feat_dim=feat_dim, use_gpu=True)
 
         elif cfg['model']['metric_loss_type'] == 'triplet_center':
-            triplet = TripletLoss(self.optim_config['triplet_loss_margin'])
+            triplet = TripletLoss(cfg['train']['optim']['triplet_loss_margin'])
             center_criterion = CenterLoss(num_classes=num_classes, feat_dim=feat_dim, use_gpu=True)
 
         else:

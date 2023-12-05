@@ -21,11 +21,13 @@
 """Train OCDnet model."""
 import os
 import re
+
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.strategies import DDPStrategy
-from nvidia_tao_pytorch.core.callbacks.loggers import TAOStatusLogger
+
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.callbacks.loggers import TAOStatusLogger
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.model.pl_ocd_model import OCDnetModel
@@ -51,6 +53,14 @@ def run_experiment(tmp_experiment_config,
     val_inter = experiment_config['train']['validation_interval']
     clip_grad = experiment_config['train']['trainer']['clip_grad_norm']
     num_gpus = experiment_config["num_gpus"]
+    activation_checkpoint = experiment_config['model']['activation_checkpoint']
+    distributed_strategy = experiment_config['train']['distributed_strategy']
+    is_dry_run = experiment_config['train']['is_dry_run']
+
+    if experiment_config['train']['precision'].lower() in ["fp16", "fp32"]:
+        precision = int(experiment_config['train']['precision'].lower().replace("fp", ""))
+    else:
+        raise NotImplementedError(f"{experiment_config['train']['precision'].lower()} is not supported. Only fp32 and fp16 are supported")
 
     status_logger_callback = TAOStatusLogger(
         results_dir,
@@ -59,9 +69,32 @@ def run_experiment(tmp_experiment_config,
     )
     status_logging.set_status_logger(status_logger_callback.logger)
 
+    sync_batchnorm = False
     strategy = None
     if num_gpus > 1:
-        strategy = DDPStrategy(find_unused_parameters=False)
+        # By default find_unused_parameters is set to True in Lightning for backward compatibility
+        # This introduces extra overhead and can't work with activation checkpointing
+        # Ref: https://pytorch-lightning.readthedocs.io/en/1.8.5/advanced/model_parallel.html#when-using-ddp-strategies-set-find-unused-parameters-false
+        # TODO: Starting from PTL 2.0, find_usued_parameters is set to False by default
+        if distributed_strategy.lower() == "ddp" and activation_checkpoint:
+            strategy = DDPStrategy(find_unused_parameters=False)
+        elif distributed_strategy.lower() == "ddp" and not activation_checkpoint:
+            strategy = 'ddp'
+        elif distributed_strategy.lower() == "ddp_sharded":
+            strategy = 'ddp_sharded'
+            # Override to FP16 for ddp_sharded as there's an error with FP32 during Positional Embedding forward pass
+            print("Overriding Precision to FP16 for ddp_sharded")
+            precision = 16
+        elif distributed_strategy.lower() == "deepspeed_stage_3_offload":
+            strategy = 'deepspeed_stage_3_offload'
+            print("Overriding Precision to FP16 for deepspeed_stage_3_offload")
+            precision = 16
+        else:
+            raise NotImplementedError(f"{distributed_strategy} is not implemented. Only ddp , ddp_sharded and deepspeed are supported")
+
+        if "fan" in experiment_config['model']['backbone']:
+            print("Setting sync batch norm")
+            sync_batchnorm = True
 
     trainer = Trainer(devices=num_gpus,
                       max_epochs=total_epochs,
@@ -72,8 +105,10 @@ def run_experiment(tmp_experiment_config,
                       strategy=strategy,
                       gradient_clip_val=clip_grad,
                       num_sanity_val_steps=0,
-                      callbacks=None
-                      )
+                      callbacks=None,
+                      precision=precision,
+                      sync_batchnorm=sync_batchnorm,
+                      fast_dev_run=is_dry_run)
 
     ckpt_inter = experiment_config['train']['checkpoint_interval']
     ModelCheckpoint.FILE_EXTENSION = ".pth"

@@ -20,14 +20,16 @@ import re
 import six
 import math
 import lmdb
+import random
 
 # from natsort import natsorted
 from nvidia_tao_pytorch.core.path_utils import expand_path
-from PIL import Image
+# from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
+from PIL import Image, ImageFilter
 import torch
 from torch.utils.data import ConcatDataset, Dataset, Subset
 from torch._utils import _accumulate
-import torchvision.transforms as transforms
+import torchvision.transforms as T
 
 
 class Batch_Balanced_Dataset(object):
@@ -341,11 +343,25 @@ class ResizeNormalize(object):
         """
         self.size = size
         self.interpolation = interpolation
-        self.toTensor = transforms.ToTensor()
+        self.toTensor = T.ToTensor()
 
     def __call__(self, img):
         """Call."""
         img = img.resize(self.size, self.interpolation)
+        img = self.toTensor(img)
+        img.sub_(0.5).div_(0.5)
+        return img
+
+
+class Normalize(object):
+    """Normalize wrapper."""
+
+    def __init__(self):
+        """Init the transform op."""
+        self.toTensor = T.ToTensor()
+
+    def __call__(self, img):
+        """Call."""
         img = self.toTensor(img)
         img.sub_(0.5).div_(0.5)
         return img
@@ -361,7 +377,7 @@ class NormalizePAD(object):
             max_size (int): The maximum size of the input.
             PAD_type (str, optional): The type of padding to use. Default is 'right'.
         """
-        self.toTensor = transforms.ToTensor()
+        self.toTensor = T.ToTensor()
         self.max_size = max_size
         self.max_width_half = math.floor(max_size[2] / 2)
         self.PAD_type = PAD_type
@@ -379,7 +395,122 @@ class NormalizePAD(object):
         return Pad_img
 
 
+class RandomWorker(object):
+    """Randomly apply the worker on the input image."""
+
+    def __init__(self, worker, prob=0.0):
+        """Initializes the RandomWorker class.
+
+        Args:
+            worker (object): The worker to be applied.
+            prob (float): The probability to apply the work.
+        """
+        self.worker = worker
+        self.prob = prob
+
+    def __call__(self, img):
+        """Call."""
+        if random.random() < self.prob:
+            p_img = self.worker(img)
+        else:
+            p_img = img
+        return p_img
+
+
+class RandomGaussianBlur(object):
+    """Apply Gaussian blur on the input image with random radius."""
+
+    def __init__(self, radius_list=[1, 2, 3, 4]):
+        """Initializes the RandomGaussianBlur class.
+
+        Args:
+            radius (List[int], optional): The Gaussian blur radius candidates.
+        """
+        self.radius_list = radius_list
+
+    def __call__(self, img):
+        """Call."""
+        radius = random.choice(self.radius_list)
+        p_img = img.filter(ImageFilter.GaussianBlur(radius))
+        return p_img
+
+
 class AlignCollate(object):
+    """Align the batch data."""
+
+    def __init__(self, imgH=32, imgW=100, keep_ratio_with_pad=False, experiment_spec=None):
+        """Init.
+
+        Args:
+            imgH (int, optional): The height of the input image. Default is 32.
+            imgW (int, optional): The width of the input image. Default is 100.
+            keep_ratio_with_pad (bool, optional): Whether to keep the aspect ratio of the input image while padding. Default is False.
+        """
+        self.imgH = imgH
+        self.imgW = imgW
+        self.keep_ratio_with_pad = keep_ratio_with_pad
+        self.experiment_spec = experiment_spec
+
+    def __call__(self, batch):
+        """Call."""
+        batch = filter(lambda x: x is not None, batch)
+        images, labels = zip(*batch)
+
+        if self.keep_ratio_with_pad:  # same concept with 'Rosetta' paper
+            resized_max_w = self.imgW
+            input_channel = 3 if images[0].mode == 'RGB' else 1
+            transform = NormalizePAD((input_channel, self.imgH, resized_max_w))
+
+            resized_images = []
+            for image in images:
+                w, h = image.size
+                ratio = w / float(h)
+                if math.ceil(self.imgH * ratio) > self.imgW:
+                    resized_w = self.imgW
+                else:
+                    resized_w = math.ceil(self.imgH * ratio)
+
+                resized_image = image.resize((resized_w, self.imgH), Image.BICUBIC)
+                resized_images.append(transform(resized_image))
+                # resized_image.save('./image_test/%d_test.jpg' % w)
+
+            image_tensors = torch.cat([t.unsqueeze(0) for t in resized_images], 0)
+
+        else:
+            extra_aug_prob = self.experiment_spec.dataset.augmentation.aug_prob if self.experiment_spec is not None else 0.0
+            if extra_aug_prob > 0.0:
+                transform_list = []
+                resize = T.Resize((self.imgH, self.imgW), interpolation=Image.BICUBIC)
+                if self.experiment_spec.dataset.augmentation.reverse_color_prob > 0:
+                    reverse_color = T.RandomInvert(p=self.experiment_spec.dataset.augmentation.reverse_color_prob)
+                    transform_list.append(reverse_color)
+
+                if self.experiment_spec.dataset.augmentation.rotate_prob > 0:
+                    rotate = RandomWorker(T.RandomRotation((0, self.experiment_spec.dataset.augmentation.max_rotation_degree),
+                                          interpolation=Image.BILINEAR, expand=True),
+                                          prob=self.experiment_spec.dataset.augmentation.rotate_prob)
+                    transform_list.append(rotate)
+
+                if self.experiment_spec.dataset.augmentation.blur_prob > 0:
+                    gaussian_blur = RandomWorker(RandomGaussianBlur(radius_list=self.experiment_spec.dataset.augmentation.gaussian_radius_list),
+                                                 prob=self.experiment_spec.dataset.augmentation.blur_prob)
+                    transform_list.append(gaussian_blur)
+
+                if len(transform_list) > 0:
+                    extra_aug = RandomWorker(T.Compose(transform_list), prob=extra_aug_prob)
+                    transform = T.Compose([resize, extra_aug, ResizeNormalize((self.imgW, self.imgH))])
+                else:
+                    transform = ResizeNormalize((self.imgW, self.imgH))
+            else:
+                transform = ResizeNormalize((self.imgW, self.imgH))
+
+        image_tensors = [transform(image) for image in images]
+        image_tensors = torch.cat([t.unsqueeze(0) for t in image_tensors], 0)
+
+        return image_tensors, labels
+
+
+class AlignCollateVal(object):
     """Align the batch data."""
 
     def __init__(self, imgH=32, imgW=100, keep_ratio_with_pad=False):

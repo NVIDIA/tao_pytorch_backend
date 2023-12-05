@@ -42,9 +42,7 @@ setuptools.setup(
         'License :: OSI Approved :: Apache Software License',
         'Natural Language :: English',
         'Operating System :: POSIX',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.10',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
     ],
     license=version_locals['__license__'],
@@ -72,7 +70,8 @@ setuptools.setup(
             # Pointpillars entry point
             'optical_inspection=nvidia_tao_pytorch.cv.optical_inspection.entrypoint.optical_inspection:main',
             'pointpillars=nvidia_tao_pytorch.pointcloud.pointpillars.entrypoint.pointpillars:main',
-            'visual_changenet=nvidia_tao_pytorch.cv.visual_changenet.entrypoint.visual_changenet:main'
+            'visual_changenet=nvidia_tao_pytorch.cv.visual_changenet.entrypoint.visual_changenet:main',
+            'centerpose=nvidia_tao_pytorch.cv.centerpose.entrypoint.centerpose:main'
         ]
     },
     cmdclass={'build_ext': BuildExtension},

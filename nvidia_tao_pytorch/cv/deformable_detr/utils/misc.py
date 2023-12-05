@@ -17,6 +17,7 @@
 
 import os
 import pickle  # nosec B403
+import functools
 
 import torch
 import torch.distributed as dist
@@ -285,3 +286,17 @@ def get_global_rank():
     if not is_dist_avail_and_initialized():
         return 0
     return dist.get_rank()
+
+
+def rgetattr(obj, attr, *args):
+    """Get object attribute recursively.
+    Args:
+        obj (object): object
+        attr (str): attribute name, can be nested, e.g. "encoder.block.0"
+
+    Returns:
+        object (object): object attribute value
+    """
+    def _getattr(obj, attr):
+        return getattr(obj, attr, *args)
+    return functools.reduce(_getattr, [obj] + attr.split('.'))

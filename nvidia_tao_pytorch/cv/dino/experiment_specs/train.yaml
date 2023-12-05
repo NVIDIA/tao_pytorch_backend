@@ -1,4 +1,4 @@
-results_dir: "???"
+results_dir: ???
 train:
   num_gpus: 1
   num_nodes: 1
@@ -12,17 +12,21 @@ train:
 dataset:
   train_sampler: default_sampler
   train_data_sources:
-    - image_dir: "???"
-      json_file: "???"
+    - image_dir: ???
+      json_file: ???
   val_data_sources:
-    - image_dir: "???"
-      json_file: "???"
+    - image_dir: ???
+      json_file: ???
+  test_data_sources:
+    image_dir: ???
+    json_file: ???
   num_classes: 91
   batch_size: 2
   workers: 8
 model:
-  pretrained_backbone_path: "???"
+  pretrained_backbone_path: ???
   backbone: fan_small
+  train_backbone: True
   num_feature_levels: 4
   dec_layers: 6
   enc_layers: 6

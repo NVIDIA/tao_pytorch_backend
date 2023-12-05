@@ -14,7 +14,9 @@
 
 """ Main PTL model file for OCRNet """
 
+from copy import deepcopy
 import os
+import math
 import random
 from typing import Any, Dict, List, Optional
 import pickle
@@ -22,6 +24,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_only
 from tabulate import tabulate
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics
 # from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
@@ -33,6 +36,62 @@ from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocrnet.utils.utils import (CTCLabelConverter,
                                                       AttnLabelConverter, create_logger)
 TABLE_HEADER = ['Ground Truth', 'Prediction', 'Confidence && T/F']
+
+
+class ModelEmaV2(nn.Module):
+    """ Model Exponential Moving Average V2
+
+    Keep a moving average of everything in the model state_dict (parameters and buffers).
+    V2 of this module is simpler, it does not match params/buffers based on name but simply
+    iterates in order. It works with torchscript (JIT of full model).
+
+    This is intended to allow functionality like
+    https://www.tensorflow.org/api_docs/python/tf/train/ExponentialMovingAverage
+
+    A smoothed version of the weights is necessary for some training schemes to perform well.
+    E.g. Google's hyper-params for training MNASNet, MobileNet-V3, EfficientNet, etc that use
+    RMSprop with a short 2.4-3 epoch decay period and slow LR decay rate of .96-.99 requires EMA
+    smoothing of weights to match results. Pay attention to the decay constant you are using
+    relative to your update count per epoch.
+
+    To keep EMA from using GPU resources, set device='cpu'. This will save a bit of memory but
+    disable validation of the EMA weights. Validation will have to be done manually in a separate
+    process, or after the training stops converging.
+
+    This class is sensitive where it is initialized in the sequence of model init,
+    GPU assignment and distributed training wrappers.
+    """
+
+    def __init__(self, model, decay=0.9999, device=None):
+        """Init."""
+        super(ModelEmaV2, self).__init__()
+        # make a copy of the model for accumulating moving average of weights
+        self.module = deepcopy(model)
+        self.module.eval()
+        # self.decay = decay
+        self.decay = lambda x: decay * (1 - math.exp(-float(x) / 2000))
+        self.updates = 0
+        self.device = device  # perform ema on different device from model if set
+        if self.device is not None:
+            self.module.to(device=device)
+
+    def _update(self, model, update_fn):
+        """Implementation of updating the module."""
+        with torch.no_grad():
+            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
+                if self.device is not None:
+                    model_v = model_v.to(device=self.device)
+                ema_v.copy_(update_fn(ema_v, model_v))
+
+    def update(self, model):
+        """Update the EMA module."""
+        self.updates += 1
+        d = self.decay(self.updates)
+        self._update(model, update_fn=lambda e, m: d * e + (1. - d) * m)
+
+    def set(self, model):
+        """Set the new EMA module."""
+        self._update(model, update_fn=lambda e, m: m)
 
 
 # pylint:disable=too-many-ancestors
@@ -61,9 +120,15 @@ class OCRNetModel(pl.LightningModule):
         self.num_class = len(self.converter.character)
         # init the model
         self._build_model(experiment_spec)
+        self.model_ema = None
+        if experiment_spec.train.model_ema:
+            self.model_ema = ModelEmaV2(self.model)
 
         self.val_accuracy = torchmetrics.Accuracy()
         self.best_acc = -1
+        if self.model_ema is not None:
+            self.val_ema_accuracy = torchmetrics.Accuracy()
+            self.best_ema_acc = -1
         val_log_file = os.path.join(experiment_spec.train.results_dir, "log_val.txt")
         self.console_logger = create_logger(val_log_file)
         self.check_val_batch_idx = 0
@@ -73,6 +138,8 @@ class OCRNetModel(pl.LightningModule):
         self.status_logging_dict = {"train_loss": 0.0,
                                     "val_loss": 0.0,
                                     "val_acc": 0.0}
+        if self.model_ema is not None:
+            self.status_logging_dict["val_ema_acc"] = 0.0
 
     def _build_model(self, experiment_spec):
         """Internal function to build the model."""
@@ -171,18 +238,17 @@ class OCRNetModel(pl.LightningModule):
 
         return cost
 
-    def validation_step(self, batch, batch_idx):
-        """Validation step."""
-        image, labels = batch
-        batch_size = image.size(0)
-        # For max length prediction
-        length_for_pred = torch.IntTensor([self.max_label_length] * batch_size)
-        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        """Update the EMA model at the train batch end."""
+        if self.model_ema is not None:
+            self.model_ema.update(self.model)
 
-        text_for_loss, length_for_loss = self.converter.encode(labels, batch_max_length=self.max_label_length)
-
+    def _evaluate_batch(self, model, image, labels, batch_size,
+                        length_for_pred, text_for_pred,
+                        text_for_loss, length_for_loss):
+        """Evaluate batch of data."""
         if self.ctc:
-            preds = self.model(image, text_for_pred)
+            preds = model(image, text_for_pred)
 
             # Calculate evaluation loss for CTC deocder.
             preds_size = torch.IntTensor([preds.size(1)] * batch_size)
@@ -209,7 +275,6 @@ class OCRNetModel(pl.LightningModule):
         preds_prob = F.softmax(preds, dim=2)
         preds_max_prob, _ = preds_prob.max(dim=2)
         confidence_score_list = []
-        fake_output = torch.IntTensor([1] * batch_size)
         fake_target = []
         for gt, pred, pred_max_prob in zip(labels, preds_str, preds_max_prob):
             if not self.ctc:
@@ -231,12 +296,28 @@ class OCRNetModel(pl.LightningModule):
             confidence_score_list.append(confidence_score)
 
         fake_target = torch.IntTensor(fake_target)
+
+        return fake_target, preds_str, confidence_score_list, cost
+
+    def validation_step(self, batch, batch_idx):
+        """Validation step."""
+        image, labels = batch
+        batch_size = image.size(0)
+        # For max length prediction
+        length_for_pred = torch.IntTensor([self.max_label_length] * batch_size)
+        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
+
+        text_for_loss, length_for_loss = self.converter.encode(labels, batch_max_length=self.max_label_length)
+
+        # For ordinary model
+        fake_target, preds_str, confidence_score_list, cost = self._evaluate_batch(self.model, image, labels, batch_size,
+                                                                                   length_for_pred, text_for_pred,
+                                                                                   text_for_loss, length_for_loss)
         show = min(5, batch_size)
         if batch_idx == self.check_val_batch_idx:
             table_data = []
             for gt, pred, confidence in zip(labels, preds_str[:show], confidence_score_list[:show]):
                 if not self.ctc:
-                    gt = gt[:gt.find('[s]')]
                     pred = pred[:pred.find('[s]')]
 
                 table_data.append((gt, pred, f"{confidence:0.4f} {str(pred == gt)}"))
@@ -244,9 +325,18 @@ class OCRNetModel(pl.LightningModule):
             self.infer_table = table
             self.check_val_batch_idx = random.randint(0, max(self.val_batch_num - 1, 0))
 
+        fake_output = torch.IntTensor([1] * batch_size)
         self.val_accuracy.update(fake_output, fake_target)
         self.log("val_loss", cost, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
         self.log("val_acc_1", self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
+        # For EMA model
+        if self.model_ema is not None:
+            fake_target, _, _, _ = self._evaluate_batch(self.model_ema.module, image, labels, batch_size,
+                                                        length_for_pred, text_for_pred,
+                                                        text_for_loss, length_for_loss)
+            self.val_ema_accuracy.update(fake_output, fake_target)
+            self.log("ema_val_acc_1", self.val_ema_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
 
         return cost
 
@@ -290,6 +380,15 @@ class OCRNetModel(pl.LightningModule):
             best_model_log = f'{"Best_accuracy":17s}: {self.best_acc:0.3f}'
             self.console_logger.info(f'{current_model_log}')
             self.console_logger.info(f'{best_model_log}')
+            if self.model_ema is not None:
+                current_ema_acc = self.val_ema_accuracy.compute()
+                if current_ema_acc > self.best_ema_acc:
+                    torch.save(self.model_ema.module, f'{self.experiment_spec.train.results_dir}/best_accuracy_ema.pth')
+                    self.best_ema_acc = current_ema_acc
+                current_model_log = f'{"Current_ema_accuracy":17s}: {current_ema_acc:0.3f}'
+                best_model_log = f'{"Best_ema_accuracy":17s}: {self.best_ema_acc:0.3f}'
+                self.console_logger.info(f'{current_model_log}')
+                self.console_logger.info(f'{best_model_log}')
             infer_table_list = self.infer_table.split("\n")
             for table in infer_table_list:
                 self.console_logger.info(table)
@@ -304,6 +403,8 @@ class OCRNetModel(pl.LightningModule):
 
         self.status_logging_dict["val_loss"] = average_val_loss
         self.status_logging_dict["val_acc"] = self.val_accuracy.compute().item()
+        if self.model_ema is not None:
+            self.status_logging_dict["val_acc"] = self.val_ema_accuracy.compute().item()
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Save the model architecture in the checkpoint"""

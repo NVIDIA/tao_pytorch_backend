@@ -185,7 +185,7 @@ def run_export(experiment_config, results_dir):
                              input_names=input_names,
                              opset_version=opset_version,
                              output_names=output_names,
-                             do_constant_folding=False,
+                             do_constant_folding=True,
                              verbose=experiment_config.export.verbose,
                              task=task)
 

@@ -22,6 +22,45 @@ from PIL import Image, ImageDraw
 from nvidia_tao_pytorch.cv.deformable_detr.utils import box_ops
 
 
+# Referenced from mmdet visualization
+METAINFO = {
+    'classes': ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
+                'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign',
+                'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep',
+                'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella',
+                'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard',
+                'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard',
+                'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork',
+                'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
+                'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
+                'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv',
+                'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
+                'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
+                'scissors', 'teddy bear', 'hair drier', 'toothbrush'),
+    # palette is a list of color tuples, which is used for visualization.
+    'palette': [(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (106, 0, 228),
+                (0, 60, 100), (0, 80, 100), (0, 0, 70), (0, 0, 192), (250, 170, 30),
+                (100, 170, 30), (220, 220, 0), (175, 116, 175), (250, 0, 30),
+                (165, 42, 42), (255, 77, 255), (0, 226, 252), (182, 182, 255),
+                (0, 82, 0), (120, 166, 157), (110, 76, 0), (174, 57, 255),
+                (199, 100, 0), (72, 0, 118), (255, 179, 240), (0, 125, 92),
+                (209, 0, 151), (188, 208, 182), (0, 220, 176), (255, 99, 164),
+                (92, 0, 73), (133, 129, 255), (78, 180, 255), (0, 228, 0),
+                (174, 255, 243), (45, 89, 255), (134, 134, 103), (145, 148, 174),
+                (255, 208, 186), (197, 226, 255), (171, 134, 1), (109, 63, 54),
+                (207, 138, 255), (151, 0, 95), (9, 80, 61), (84, 105, 51),
+                (74, 65, 105), (166, 196, 102), (208, 195, 210), (255, 109, 65),
+                (0, 143, 149), (179, 0, 194), (209, 99, 106), (5, 121, 0),
+                (227, 255, 205), (147, 186, 208), (153, 69, 1), (3, 95, 161),
+                (163, 255, 0), (119, 0, 170), (0, 182, 199), (0, 165, 120),
+                (183, 130, 88), (95, 32, 0), (130, 114, 135), (110, 129, 133),
+                (166, 74, 118), (219, 142, 185), (79, 210, 114), (178, 90, 62),
+                (65, 70, 15), (127, 167, 115), (59, 105, 106), (142, 108, 45),
+                (196, 172, 0), (95, 54, 80), (128, 76, 255), (201, 57, 1),
+                (246, 0, 122), (191, 162, 208)]
+}
+
+
 def get_key(label_map, val):
     """get_key for class label."""
     for label in label_map:
@@ -46,6 +85,10 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
         color_map(Dict): Dictonary for the color mapping to annotate the bounding box per class.
         is_internal(Bool) : To save the inference results in format of output_dir/sequence/image_name.
     """
+    # If not explicitly specified, use COCO classes as default color scheme.
+    if color_map is None:
+        color_map = {c: p for c, p in zip(METAINFO['classes'], METAINFO['palette'])}
+
     for pred in predictions:
 
         image_name = pred['image_names']
@@ -74,12 +117,12 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
             output_image_name = os.path.join(output_annotate_root, basename + extension)
 
         if not os.path.exists(output_label_root):
-            os.makedirs(output_label_root)
+            os.makedirs(output_label_root, exist_ok=True)
 
         if not os.path.exists(output_annotate_root):
-            os.makedirs(output_annotate_root)
+            os.makedirs(output_annotate_root, exist_ok=True)
 
-        pil_input = Image.open(image_name)
+        pil_input = Image.open(image_name).convert("RGB")
         pil_input = pil_input.resize((image_size[1], image_size[0]))
         im1 = ImageDraw.Draw(pil_input)
 
@@ -111,7 +154,22 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
                 f.write(label_string)
 
                 if check_key(color_map, class_name):
-                    im1.rectangle([int(x1), int(y1), int(x2), int(y2)], fill=None, outline=color_map[class_name], width=1)
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    if is_internal:
+                        # Don't put class name
+                        im1.rectangle(((x1, y1, x2, y2)),
+                                      fill=None,
+                                      outline=color_map[class_name],
+                                      width=1)
+                    else:
+                        im1.rectangle(((x1, y1, x2, y2)),
+                                      fill=None,
+                                      outline=color_map[class_name],
+                                      width=1)
+                        # text pad
+                        im1.rectangle(((x1, y1 - 10), (x1 + (x2 - x1), y1)),
+                                      fill=color_map[class_name])
+                        im1.text((x1, y1 - 10), f"{class_name}: {scores[k]:.2f}")
 
         pil_input.save(output_image_name)
         f.closed

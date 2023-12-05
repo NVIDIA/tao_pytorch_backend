@@ -425,10 +425,11 @@ class FAN(BaseModule):
         H, W = Hp, Wp
         for blk in self.blocks:
             blk.H, blk.W = H, W
-            if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
-            else:
+            # Disable activation checkpointing during ONNX export
+            if torch.onnx.is_in_onnx_export() or not self.use_checkpoint:
                 x = blk(x)
+            else:
+                x = checkpoint.checkpoint(blk, x)
             H, W = blk.H, blk.W
 
         cls_tokens = self.cls_token.expand(B, -1, -1)

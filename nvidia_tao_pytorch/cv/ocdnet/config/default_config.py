@@ -34,6 +34,10 @@ class ModelConfig:
     load_pruned_graph: bool = MISSING
     pruned_graph_path: Optional[str] = None
     pretrained_model_path: Optional[str] = None
+    enlarge_feature_map_size: bool = False
+    activation_checkpoint: bool = False
+    quant: bool = False
+    fuse_qkv_proj: bool = True
 
 
 @dataclass
@@ -43,6 +47,8 @@ class Optimargs:
     lr: float = 0.001
     weight_decay: float = 0.0
     amsgrad: bool = True
+    momentum: float = 0.0
+    eps: float = 1e-8
 
 
 @dataclass
@@ -61,6 +67,7 @@ class Loss:
     alpha: int = 5
     beta: int = 10
     ohem_ratio: int = 3
+    eps: float = 1e-6
 
 
 @dataclass
@@ -210,6 +217,11 @@ class TrainConfig:
     loss: Loss = Loss()
     optimizer: Optimizer = Optimizer()
     lr_scheduler: LRScheduler = LRScheduler()
+    precision: str = "fp32"
+    distributed_strategy: str = "ddp"
+    is_dry_run: bool = False
+    model_ema: bool = False
+    model_ema_decay: float = 0.9999
 
 
 @dataclass
@@ -249,8 +261,10 @@ class PruneConfig:
     results_dir: Optional[str] = None
     checkpoint: str = MISSING
     gpu_id: int = 0
-    batch_size: int = 1
-    pruning_thresh: float = MISSING
+    ch_sparsity: float = 0.1
+    round_to: int = 32
+    p: int = 2
+    verbose: bool = False
 
 
 @dataclass
@@ -264,6 +278,7 @@ class ExportConfig:
     width: int = MISSING
     height: int = MISSING
     opset_version: int = 11
+    verbose: bool = False
 
 
 @dataclass
@@ -286,6 +301,7 @@ class TrtConfig:
     opt_batch_size: int = 1
     max_batch_size: int = 1
     calibration: CalibrationConfig = CalibrationConfig()
+    layers_precision: Optional[List[str]] = None
 
 
 @dataclass

@@ -28,6 +28,14 @@ class BalanceCrossEntropyLoss(nn.Module):
 
     This loss measures the Binary Cross Entropy between the target and the input probabilities.
 
+
+    Examples::
+        >>> m = nn.Sigmoid()
+        >>> loss = nn.BCELoss()
+        >>> input = torch.randn(3, requires_grad=True)
+        >>> target = torch.empty(3).random_(2)
+        >>> output = loss(m(input), target)
+        >>> output.backward()
     """
 
     def __init__(self, negative_ratio=3.0, eps=1e-6):
@@ -52,7 +60,7 @@ class BalanceCrossEntropyLoss(nn.Module):
         negative = ((1 - gt) * mask).byte()
         positive_count = int(positive.float().sum())
         negative_count = min(int(negative.float().sum()), int(positive_count * self.negative_ratio))
-        loss = nn.functional.binary_cross_entropy(pred, gt, reduction='none')
+        loss = nn.functional.binary_cross_entropy_with_logits(pred, gt, reduction='none')
         positive_loss = loss * positive.float()
         negative_loss = loss * negative.float()
         negative_loss, _ = negative_loss.view(-1).topk(negative_count)
@@ -67,9 +75,9 @@ class BalanceCrossEntropyLoss(nn.Module):
 class DiceLoss(nn.Module):
     """DiceLoss.
 
-    This Loss function is from https://arxiv.org/abs/1707.03237.
-    It is used to calculate the similarity between two samples.
-
+    Loss function from https://arxiv.org/abs/1707.03237,
+    where iou computation is introduced heatmap manner to measure the
+    diversity bwtween two heatmaps.
     """
 
     def __init__(self, eps=1e-6):
@@ -101,7 +109,9 @@ class DiceLoss(nn.Module):
 
         union = (pred * mask).sum() + (gt * mask).sum() + self.eps
         loss = 1 - 2.0 * intersection / union
-        assert loss <= 1
+        assert loss <= 1, f'unions {union}, intersection {intersection} \n \
+            pred {pred.dtype} \n {pred[0]} \n {torch.max(pred)} \n {torch.min(pred)} \
+            gt {gt.dtype} \n {gt[0]} \n {torch.max(gt)} \n {torch.min(gt)} '
         return loss
 
 

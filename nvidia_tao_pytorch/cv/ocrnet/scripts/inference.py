@@ -32,7 +32,7 @@ def inference(opt):
     import torch.nn.functional as F
 
     from nvidia_tao_pytorch.cv.ocrnet.utils.utils import CTCLabelConverter, AttnLabelConverter, load_checkpoint
-    from nvidia_tao_pytorch.cv.ocrnet.dataloader.ocr_dataset import RawDataset, AlignCollate
+    from nvidia_tao_pytorch.cv.ocrnet.dataloader.ocr_dataset import RawDataset, AlignCollateVal
     from nvidia_tao_pytorch.cv.ocrnet.model.model import Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -58,7 +58,7 @@ def inference(opt):
         model = torch.nn.DataParallel(ckpt).to(device)
 
     # prepare data. two demo images from https://github.com/bgshih/crnn#run-demo
-    AlignCollate_demo = AlignCollate(imgH=opt.imgH, imgW=opt.imgW, keep_ratio_with_pad=opt.PAD)
+    AlignCollate_demo = AlignCollateVal(imgH=opt.imgH, imgW=opt.imgW, keep_ratio_with_pad=opt.PAD)
     demo_data = RawDataset(root=opt.image_folder, opt=opt)  # use RawDataset
     demo_loader = torch.utils.data.DataLoader(
         demo_data, batch_size=opt.batch_size,

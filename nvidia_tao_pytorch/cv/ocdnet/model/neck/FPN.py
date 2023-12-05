@@ -91,4 +91,5 @@ class FPN(nn.Module):
         p3 = self.out3(out3)
         p2 = self.out2(out2)
         x = torch.cat((p5, p4, p3, p2), 1)
+        x = x.float()
         return x

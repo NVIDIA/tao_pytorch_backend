@@ -31,6 +31,7 @@ from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.data_loader.build_dataloader import get_dataloader
 from nvidia_tao_pytorch.cv.ocdnet.post_processing.seg_detector_representer import get_post_processing
 from nvidia_tao_pytorch.cv.ocdnet.utils.ocr_metric.icdar2015.quad_metric import get_metric
+from nvidia_tao_pytorch.cv.ocdnet.utils.util import load_checkpoint
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
 
@@ -65,15 +66,13 @@ class Evaluate():
                 torch.backends.cudnn.benchmark = True
             else:
                 self.device = torch.device("cpu")
-            checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+            raw_checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
 
-            if not isinstance(checkpoint, dict):
-                self.model = checkpoint
+            if not isinstance(raw_checkpoint, dict):
+                self.model = raw_checkpoint
                 self.model.to(self.device)
             else:
-                if "state_dict" in checkpoint.keys():
-                    checkpoint = checkpoint["state_dict"]
-                    checkpoint = {key.replace("model.", ""): value for key, value in checkpoint.items()}
+                checkpoint = load_checkpoint(model_path, to_cpu=True)
                 self.model = OCDnetModel(config)
                 layers = checkpoint.keys()
                 ckpt = dict()
@@ -164,8 +163,9 @@ class Evaluate():
         """eval function."""
         if self.model is not None:
             self.model.eval()
-        # torch.cuda.empty_cache()  # speed up evaluating after training finished
-        raw_metrics = []
+        thresh_range = [i * 0.1 for i in range(1, 10)]
+        raw_metrics = {thresh: [] for thresh in thresh_range}
+        metrics = {thresh: {} for thresh in thresh_range}
         total_frame = 0.0
         total_time = 0.0
         for _, batch in tqdm(enumerate(self.validate_loader), total=len(self.validate_loader), desc='test model'):
@@ -184,14 +184,23 @@ class Evaluate():
                     preds = torch.from_numpy(
                         self.trt_model.predict({"input": img})["pred"]
                     ).cuda()
-                boxes, scores = self.post_process(batch, preds, is_output_polygon=self.metric_cls.is_output_polygon)
-                total_frame += batch['img'].size()[0]
-                total_time += time.time() - start
-                raw_metric = self.metric_cls.validate_measure(batch, (boxes, scores), box_thresh=self.box_thresh)
-                raw_metrics.append(raw_metric)
-        metrics = self.metric_cls.gather_measure(raw_metrics)
-        print('FPS:{}'.format(total_frame / total_time))
-        return metrics['recall'].avg, metrics['precision'].avg, metrics['hmean'].avg
+                for thresh in thresh_range:
+                    self.post_process.thresh = thresh
+                    boxes, scores = self.post_process(batch, preds, is_output_polygon=self.metric_cls.is_output_polygon)
+                    total_frame += batch['img'].size()[0]
+                    total_time += time.time() - start
+                    raw_metric = self.metric_cls.validate_measure(batch, (boxes, scores), box_thresh=self.box_thresh)
+                    raw_metrics[thresh].append(raw_metric)
+        best_hmean = 0
+        for thresh in thresh_range:
+            metric = self.metric_cls.gather_measure(raw_metrics[thresh])
+            metrics[thresh] = {'recall': metric['recall'].avg, 'precision': metric['precision'].avg, 'hmean': metric['hmean'].avg}
+            msg = f"thresh: {round(thresh, 1)}, recall: {metric['recall'].avg}, precision: {metric['precision'].avg}, hmean: {metric['hmean'].avg}"
+            status_logging.get_status_logger().write(message=msg)
+            if metric['hmean'].avg > best_hmean:
+                best_hmean = metric['hmean'].avg
+                metrics['best'] = {'Thresh': round(thresh, 1), 'Recall': metric['recall'].avg, 'Precision': metric['precision'].avg, 'Hmean': metric['hmean'].avg}
+        return metrics
 
 
 def run_experiment(experiment_config, model_path):
@@ -223,15 +232,7 @@ def run_experiment(experiment_config, model_path):
     evaluation = Evaluate(model_path, experiment_config)
 
     result = evaluation.eval()
-    print("Precision: ", result[1])
-    print("Recall: ", result[0])
-    print("Hmean: ", result[2])
-
-    status_logging_dict = {}
-    status_logging_dict["Recall"] = str(result[0])
-    status_logging_dict["Precision"] = str(result[1])
-    status_logging_dict["Hmean"] = str(result[2])
-    status_logging.get_status_logger().kpi = status_logging_dict
+    status_logging.get_status_logger().kpi = result['best']
 
     pyc_ctx.pop()
 

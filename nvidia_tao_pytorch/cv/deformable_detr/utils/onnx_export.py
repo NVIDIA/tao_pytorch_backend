@@ -67,11 +67,11 @@ class ONNXExporter(object):
             opset_version = 16
 
         register_custom_op_symbolic('nvidia::MultiscaleDeformableAttnPlugin_TRT', nvidia_msda, opset_version)
-
-        torch.onnx.export(model, dummy_input, onnx_file,
-                          input_names=input_names, output_names=output_names, export_params=True,
-                          training=torch.onnx.TrainingMode.EVAL, opset_version=opset_version, do_constant_folding=do_constant_folding,
-                          custom_opsets={"nvidia": 1}, verbose=verbose, dynamic_axes=dynamic_axes)
+        with torch.no_grad():
+            torch.onnx.export(model, dummy_input, onnx_file,
+                              input_names=input_names, output_names=output_names, export_params=True,
+                              training=torch.onnx.TrainingMode.EVAL, opset_version=opset_version, do_constant_folding=do_constant_folding,
+                              custom_opsets={"nvidia": opset_version}, verbose=verbose, dynamic_axes=dynamic_axes)
 
     @staticmethod
     def check_onnx(onnx_file):

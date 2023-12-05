@@ -63,27 +63,66 @@ def run_experiment(experiment_config,
         f"Checkpoint interval {checkpoint_interval} > Number of epochs {num_epochs}. "
         f"Please set experiment_config.train.checkpoint_interval < {num_epochs}"
     )
+    gpus_ids = experiment_config['train']["gpu_ids"]
+    num_gpus = experiment_config['train']['num_gpus']
+    grad_clip = experiment_config['train']['grad_clip']
 
     status_logger_callback = TAOStatusLogger(results_dir, append=True, num_epochs=num_epochs)
 
     status_logging.set_status_logger(status_logger_callback.logger)
 
-    grad_clip = experiment_config['train']['grad_clip']
-    gpus_ids = experiment_config['train']["gpu_ids"]
     acc_flag = None
-    if len(gpus_ids) > 1:
+    if num_gpus > 1 or len(gpus_ids) > 1:
         acc_flag = DDPStrategy(find_unused_parameters=False)
 
-    trainer = Trainer(gpus=gpus_ids,
-                      max_epochs=num_epochs,
-                      check_val_every_n_epoch=experiment_config['train']['checkpoint_interval'],
-                      default_root_dir=results_dir,
-                      num_sanity_val_steps=0,
-                      accelerator='gpu',
-                      strategy=acc_flag,
-                      replace_sampler_ddp=False,
-                      sync_batchnorm=True,
-                      gradient_clip_val=grad_clip)
+    if "swin" in experiment_config["model"]["backbone"]:
+        if num_gpus > 1:
+            trainer = Trainer(devices=num_gpus,
+                              max_epochs=num_epochs,
+                              check_val_every_n_epoch=checkpoint_interval,
+                              default_root_dir=results_dir,
+                              num_sanity_val_steps=0,
+                              precision=16,
+                              accelerator='gpu',
+                              strategy=acc_flag,
+                              replace_sampler_ddp=False,
+                              sync_batchnorm=True,
+                              gradient_clip_val=grad_clip)
+        else:
+            trainer = Trainer(devices=gpus_ids,
+                              max_epochs=num_epochs,
+                              check_val_every_n_epoch=checkpoint_interval,
+                              default_root_dir=results_dir,
+                              num_sanity_val_steps=0,
+                              precision=16,
+                              accelerator='gpu',
+                              strategy=acc_flag,
+                              replace_sampler_ddp=False,
+                              sync_batchnorm=True,
+                              gradient_clip_val=grad_clip)
+    elif "resnet" in experiment_config["model"]["backbone"]:
+        if num_gpus > 1:
+            trainer = Trainer(devices=num_gpus,
+                              max_epochs=num_epochs,
+                              check_val_every_n_epoch=checkpoint_interval,
+                              default_root_dir=results_dir,
+                              num_sanity_val_steps=0,
+                              accelerator='gpu',
+                              strategy=acc_flag,
+                              replace_sampler_ddp=False,
+                              sync_batchnorm=True,
+                              gradient_clip_val=grad_clip)
+        else:
+            trainer = Trainer(gpus=gpus_ids,
+                              max_epochs=num_epochs,
+                              check_val_every_n_epoch=checkpoint_interval,
+                              default_root_dir=results_dir,
+                              num_sanity_val_steps=0,
+                              accelerator='gpu',
+                              strategy=acc_flag,
+                              replace_sampler_ddp=False,
+                              sync_batchnorm=True,
+                              gradient_clip_val=grad_clip)
 
     # Overload connector to enable intermediate ckpt encryption and decryption.
     resume_ckpt = experiment_config['train']['resume_training_checkpoint_path']

@@ -43,6 +43,7 @@ class DBLoss(nn.Module):
         """
         super().__init__()
         assert reduction in ['mean', 'sum'], " reduction must in ['mean','sum']"
+
         self.alpha = alpha
         self.beta = beta
         self.bce_loss = BalanceCrossEntropyLoss(negative_ratio=ohem_ratio)
@@ -53,11 +54,11 @@ class DBLoss(nn.Module):
 
     def forward(self, pred, batch):
         """Forward."""
-        shrink_maps = pred[:, 0, :, :]
+        shrink_logits = pred[:, 0, :, :]
         threshold_maps = pred[:, 1, :, :]
         binary_maps = pred[:, 2, :, :]
 
-        loss_shrink_maps = self.bce_loss(shrink_maps, batch['shrink_map'], batch['shrink_mask'])
+        loss_shrink_maps = self.bce_loss(shrink_logits, batch['shrink_map'], batch['shrink_mask'])
         loss_threshold_maps = self.l1_loss(threshold_maps, batch['threshold_map'], batch['threshold_mask'])
         metrics = dict(loss_shrink_maps=loss_shrink_maps, loss_threshold_maps=loss_threshold_maps)
         if pred.size()[1] > 2:

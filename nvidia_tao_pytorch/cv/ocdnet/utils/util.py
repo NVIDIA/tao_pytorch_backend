@@ -200,7 +200,7 @@ def get_datalist(train_data_path):
             label_dir = os.path.join(p, "gt")
             for img in os.listdir(img_dir):
                 img_file = os.path.join(img_dir, img)
-                label = "gt_" + img.split('.')[0] + ".txt"
+                label = "gt_" + os.path.splitext(img)[0] + ".txt"
                 label_file = os.path.join(label_dir, label)
                 assert os.path.exists(label_file), (
                     f"Cannot find label file for image: {img_file}"
@@ -316,10 +316,25 @@ def decrypt_pytorch(input_file_name, output_file_name, key):
         )
 
 
-def load_checkpoint(model_path, to_cpu=False):
+def load_checkpoint(model_path, to_cpu=False, only_state_dict=True):
     """Helper function to load a saved checkpoint."""
     loc_type = torch.device('cpu') if to_cpu else None
     loaded_state = torch.load(model_path, map_location=loc_type)
+    if only_state_dict:
+        state_dict = {}
+        ema_state_dict = {}
+        if isinstance(loaded_state, dict):
+            for key, value in loaded_state["state_dict"].items():
+                if 'model_ema' in key:
+                    ema_state_dict[key.replace('model_ema.module.', '')] = value
+                else:
+                    state_dict[key.replace("model.", "")] = value
+            if len(ema_state_dict) > 0:
+                torch.save(ema_state_dict, f"{model_path.replace('.pth','_ema.pth')}")
+                print(f"Extract EMA state_dict and save to {model_path.replace('.pth','_ema.pth')}")
+        else:
+            state_dict = loaded_state.state_dict()
+        return state_dict
 
     return loaded_state
 

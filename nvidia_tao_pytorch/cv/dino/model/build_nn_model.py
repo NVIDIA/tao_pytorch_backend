@@ -30,7 +30,7 @@ class DINOModel(nn.Module):
                  num_classes=4,
                  hidden_dim=256,
                  pretrained_backbone_path=None,
-                 backbone='resnet50',
+                 backbone='resnet_50',
                  train_backbone=True,
                  num_feature_levels=2,
                  nheads=8,
@@ -71,7 +71,8 @@ class DINOModel(nn.Module):
                  dn_box_noise_scale=1.0,
                  dn_label_noise_ratio=0.5,
                  pe_temperatureH=20,
-                 pe_temperatureW=20
+                 pe_temperatureW=20,
+                 lsj_resolution=None,
                  ):
         """Initialize DINO Model.
 
@@ -125,7 +126,8 @@ class DINOModel(nn.Module):
             dn_label_noise_ratio (float): the scale of noise applied to labels during contrastive de-noising.
                                           If this value is 0, noise is not applied.
             pe_temperatureH (int): the temperature applied to the height dimension of Positional Sine Embedding.
-            pe_temperatureW (int): the temperature applied to the width dimension of Positional Sine Embedding
+            pe_temperatureW (int): the temperature applied to the width dimension of Positional Sine Embedding.
+            lsj_resolution (int): LSJ resolution taht is only applicable for ViT backbones.
         """
         super(__class__, self).__init__()  # pylint:disable=undefined-variable
 
@@ -147,11 +149,17 @@ class DINOModel(nn.Module):
             raise ValueError(f"num_feature_levels: {num_feature_levels} does not match the size of "
                              f"return_interm_indices: {return_interm_indices}")
 
+        # sanity check for ViT backbones
+        if backbone.startswith("vit") and lsj_resolution is None:
+            raise ValueError(f"{backbone} requires dataset.augmentation.fixed_random_crop to be set. "
+                             "Please set dataset.augmentation.fixed_random_crop in the spec file.")
+
         # Index 4 is not part of the backbone but taken from index 3 with conv 3x3 stride 2
         return_interm_indices = [r for r in return_interm_indices if r != 4]
         backbone_only = Backbone(backbone,
                                  pretrained_backbone_path,
                                  train_backbone,
+                                 lsj_resolution,
                                  return_interm_indices,
                                  dilation,
                                  export,
@@ -293,6 +301,7 @@ def build_model(experiment_config,
     pe_temperatureW = model_config.pe_temperatureW
 
     activation_checkpoint = experiment_config.train.activation_checkpoint
+    lsj_resolution = experiment_config.dataset.augmentation.fixed_random_crop
 
     model = DINOModel(num_classes=num_classes,
                       hidden_dim=hidden_dim,
@@ -321,6 +330,7 @@ def build_model(experiment_config,
                       dn_label_noise_ratio=dn_label_noise_ratio,
                       pe_temperatureH=pe_temperatureH,
                       pe_temperatureW=pe_temperatureW,
+                      lsj_resolution=lsj_resolution,
 
                       pre_norm=pre_norm,
                       two_stage_type=two_stage_type,

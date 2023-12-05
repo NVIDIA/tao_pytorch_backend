@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 
-from timm.models.layers import DropPath
+from timm.layers import DropPath
 
 from nvidia_tao_pytorch.cv.backbone.gc_vit import (
     _to_channel_first, WindowAttentionGlobal, Mlp,

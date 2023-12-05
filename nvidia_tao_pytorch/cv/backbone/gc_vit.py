@@ -17,7 +17,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.layers import trunc_normal_, DropPath
+from timm.layers import trunc_normal_, DropPath
 
 
 def _to_channel_last(x):
@@ -274,7 +274,7 @@ class WindowAttention(nn.Module):
         self.window_size = window_size
         self.num_heads = num_heads
         head_dim = torch.div(dim, num_heads, rounding_mode='floor')
-        self.fast_attn = hasattr(torch._C._nn, '_scaled_dot_product_attention')  # pylint:disable=I1101
+        self.fast_attn = hasattr(torch.nn.functional, 'scaled_dot_product_attention')  # pylint:disable=I1101
         self.scale = qk_scale or head_dim ** -0.5
         self.use_rel_pos_bias = use_rel_pos_bias
 
@@ -321,7 +321,7 @@ class WindowAttention(nn.Module):
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         else:
             # Since Torch 1.14, scaled_dot_product_attention has been optimized for performance
-            x, _ = F._scaled_dot_product_attention(
+            x = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.attn_drop.p,
             )
@@ -365,7 +365,7 @@ class WindowAttentionGlobal(nn.Module):
         self.num_heads = num_heads
         head_dim = torch.div(dim, num_heads, rounding_mode='floor')
         self.scale = qk_scale or head_dim ** -0.5
-        self.fast_attn = hasattr(torch._C._nn, '_scaled_dot_product_attention')  # pylint:disable=I1101
+        self.fast_attn = hasattr(torch.nn.functional, 'scaled_dot_product_attention')  # pylint:disable=I1101
 
         self.use_rel_pos_bias = use_rel_pos_bias
         self.relative_position_bias_table = nn.Parameter(
@@ -415,7 +415,7 @@ class WindowAttentionGlobal(nn.Module):
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         else:
             # Since Torch 1.14, scaled_dot_product_attention has been optimized for performance
-            x, _ = F._scaled_dot_product_attention(
+            x = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.attn_drop.p,
             )

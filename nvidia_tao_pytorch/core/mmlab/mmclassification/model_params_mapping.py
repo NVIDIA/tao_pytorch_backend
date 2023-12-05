@@ -32,4 +32,15 @@ map_params = {"head": {"in_channels": {
     "gc_vit_base": 1024,
     "gc_vit_large": 1536,
     "gc_vit_large_384": 1536,
+    "faster_vit_0_224": 512,  # FasterViT
+    "faster_vit_1_224": 640,
+    "faster_vit_2_224": 768,
+    "faster_vit_3_224": 1024,
+    "faster_vit_4_224": 1568,
+    "faster_vit_5_224": 2560,
+    "faster_vit_6_224": 2560,
+    "faster_vit_4_21k_224": 1568,
+    "faster_vit_4_21k_384": 1568,
+    "faster_vit_4_21k_512": 1568,
+    "faster_vit_4_21k_768": 1568,
 }}}

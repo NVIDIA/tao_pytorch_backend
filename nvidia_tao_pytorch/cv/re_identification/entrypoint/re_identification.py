@@ -21,6 +21,7 @@ import argparse
 import subprocess
 import sys
 from time import time
+import yaml
 
 import nvidia_tao_pytorch.cv.re_identification.scripts as scripts
 from nvidia_tao_pytorch.core.telemetry.nvml_utils import get_device_details
@@ -142,6 +143,18 @@ def launch(parser, subtasks, network=None):
     time_lapsed = int(end - start)
 
     try:
+        # Read config to get the number of gpus
+        num_gpus = 1
+        if args.subtask == "train":
+            with open(args.experiment_spec_file, 'r') as stream:
+                exp_config = yaml.safe_load(stream)
+                if "num_gpus" in exp_config["train"]:
+                    if exp_config["train"]["num_gpus"] > 1:
+                        num_gpus = exp_config["train"]["num_gpus"]
+                else:
+                    if "gpu_ids" in exp_config["train"]:
+                        num_gpus = len(exp_config["train"]["gpu_ids"])
+
         gpu_data = list()
         for device in get_device_details():
             gpu_data.append(device.get_config())
@@ -149,7 +162,7 @@ def launch(parser, subtasks, network=None):
             network,
             args.subtask,
             gpu_data,
-            num_gpus=1,
+            num_gpus=num_gpus,
             time_lapsed=time_lapsed,
             pass_status=process_passed
         )

@@ -35,6 +35,29 @@ class ReIDModelConfig:
     with_center_loss: bool = False
     with_flip_feature: bool = False
     label_smooth: bool = True
+    pretrain_hw_ratio: float = 2
+    id_loss_type: str = "softmax"
+    id_loss_weight: float = 1.0
+    triplet_loss_weight: float = 1.0
+    no_margin: bool = False
+    cos_layer: bool = False
+    dropout_rate: float = 0.0
+    reduce_feat_dim: bool = False
+    drop_path: float = 0.1
+    drop_out: float = 0.0
+    att_drop_rate: float = 0.0
+    stride_size:  List[int] = field(default_factory=lambda: [16, 16])
+    gem_pooling: bool = False
+    stem_conv: bool = False
+    jpm: bool = False
+    shift_num: int = 5
+    shuffle_group: int = 2
+    devide_length: int = 4
+    re_arrange: bool = True
+    sie_coe: float = 3.0
+    sie_camera: bool = False
+    sie_view: bool = False
+    semantic_weight: float = 1.0
 
 
 @dataclass
@@ -43,19 +66,25 @@ class OptimConfig:
 
     name: str = "Adam"
     lr_monitor: str = "val_loss"
-    steps:  List[int] = field(default_factory=lambda: [40, 70])
+    lr_steps:  List[int] = field(default_factory=lambda: [40, 70])
     gamma: float = 0.1
     bias_lr_factor: float = 1
     weight_decay: float = 0.0005
     weight_decay_bias: float = 0.0005
     warmup_factor: float = 0.01
     warmup_iters: int = 10
+    warmup_epochs: int = 20
     warmup_method: str = 'linear'
     base_lr: float = 0.00035
     momentum: float = 0.9
     center_loss_weight: float = 0.0005
     center_lr: float = 0.5
     triplet_loss_margin: float = 0.3
+    large_fc_lr: bool = False
+    seed: int = 1234
+    cosine_margin: float = 0.5
+    cosine_scale: float = 30
+    trp_l2: bool = False
 
 
 @dataclass
@@ -96,6 +125,7 @@ class ReIDTrainExpConfig:
 
     results_dir: Optional[str] = None
     gpu_ids: List[int] = field(default_factory=lambda: [0])
+    num_gpus: int = 1
     resume_training_checkpoint_path: Optional[str] = None
     optim: OptimConfig = OptimConfig()
     num_epochs: int = 1

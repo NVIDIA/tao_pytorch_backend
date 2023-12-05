@@ -18,9 +18,13 @@ import os
 import argparse
 import subprocess
 import sys
+from time import time
+import yaml
 
 import nvidia_tao_pytorch.cv.ocrnet.scripts as scripts
 from nvidia_tao_pytorch.core.entrypoint import get_subtasks
+from nvidia_tao_pytorch.core.telemetry.nvml_utils import get_device_details
+from nvidia_tao_pytorch.core.telemetry.telemetry import send_telemetry_data
 
 
 def launch(parser, subtasks):
@@ -84,13 +88,55 @@ def launch(parser, subtasks):
     # Create a system call.
     call = "python " + script + script_args + " " + unknown_args_as_str
 
+    process_passed = True
+    start = time()
     try:
         # Run the script.
-        subprocess.check_call(call, shell=True, stdout=sys.stdout, stderr=sys.stdout)
+        subprocess.check_call(call, shell=True, stdout=sys.stdout, stderr=sys.stdout)  # nosec B602
+    except (KeyboardInterrupt, SystemExit):
+        print("Command was interrupted.")
+        process_passed = True
     except subprocess.CalledProcessError as e:
         if e.output is not None:
             print(e.output)
-        exit(1)
+        process_passed = False
+    end = time()
+    time_lapsed = int(end - start)
+
+    try:
+        # Read config to get the number of gpus
+        num_gpus = 1
+        if args.subtask == "train":
+            with open(args.experiment_spec_file, 'r') as stream:
+                exp_config = yaml.safe_load(stream)
+                if "num_gpus" in exp_config["train"]:
+                    if exp_config["train"]["num_gpus"] > 1:
+                        num_gpus = exp_config["train"]["num_gpus"]
+                else:
+                    if "gpu_ids" in exp_config["train"]:
+                        num_gpus = len(exp_config["train"]["gpu_ids"])
+
+        gpu_data = list()
+        for device in get_device_details():
+            gpu_data.append(device.get_config())
+        send_telemetry_data(
+            "ocrnet",
+            args.subtask,
+            gpu_data,
+            num_gpus=num_gpus,
+            time_lapsed=time_lapsed,
+            pass_status=process_passed
+        )
+    except Exception as e:
+        print("Telemetry data couldn't be sent, but the command ran successfully.")
+        print(f"[WARNING]: {e}")
+        pass
+
+    if not process_passed:
+        print("Execution status: FAIL")
+        exit(1)  # returning non zero return code from the process.
+
+    print("Execution status: PASS")
 
 
 def main():

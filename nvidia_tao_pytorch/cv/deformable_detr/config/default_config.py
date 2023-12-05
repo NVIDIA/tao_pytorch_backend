@@ -54,6 +54,7 @@ class DDAugmentationConfig:
     random_resize_max_size: int = 1333
     test_random_resize: int = 800
     fixed_padding: bool = True
+    fixed_random_crop: Optional[int] = None
 
 
 @dataclass
@@ -132,6 +133,7 @@ class OptimConfig:
 class DDTrainExpConfig:
     """Train experiment config."""
 
+    freeze: Optional[List[str]] = field(default_factory=lambda: [])  # ["backbone", "input_proj", "transformer"] or ["backbone", "transformer.encoder", "transformer.decoder"]
     num_gpus: int = 1
     num_nodes: int = 1
     resume_training_checkpoint_path: Optional[str] = None
@@ -147,6 +149,7 @@ class DDTrainExpConfig:
     precision: str = "fp32"
     distributed_strategy: str = "ddp"
     activation_checkpoint: bool = True
+    verbose: bool = False
 
 
 @dataclass
@@ -157,7 +160,7 @@ class DDInferenceExpConfig:
     results_dir: Optional[str] = None
     checkpoint: Optional[str] = None
     trt_engine: Optional[str] = None
-    color_map: Dict[str, str] = MISSING
+    color_map: Optional[Dict[str, str]] = None
     conf_threshold: float = 0.5
     is_internal: bool = False
     input_width: Optional[int] = None

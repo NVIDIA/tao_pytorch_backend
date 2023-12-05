@@ -29,10 +29,11 @@
 """Visual ChangeNet Data Module"""
 
 from typing import Optional
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, distributed, RandomSampler, BatchSampler
 import pytorch_lightning as pl
 
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.dataloader.cn_dataset import CNDataset
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import is_dist_avail_and_initialized
 
 
 class CNDataModule(pl.LightningDataModule):
@@ -67,6 +68,8 @@ class CNDataModule(pl.LightningDataModule):
             stage (str): stage options from fit, test, predict or None.
 
         """
+        is_distributed = is_dist_avail_and_initialized()
+
         if stage in ('fit', None):
 
             split = self.dataset_config['train_split']
@@ -87,6 +90,10 @@ class CNDataModule(pl.LightningDataModule):
                 raise NotImplementedError(
                     'Wrong dataset name %s (choose one from [CNDataset,])'
                     % self.dataset)
+            if is_distributed:
+                self.train_sampler = distributed.DistributedSampler(self.train_dataset, shuffle=True)
+            else:
+                self.train_sampler = RandomSampler(self.train_dataset)
 
         # Assign test dataset for use in dataloader
         if stage in ('test', None):
@@ -123,8 +130,7 @@ class CNDataModule(pl.LightningDataModule):
         return DataLoader(
             self.train_dataset,
             num_workers=self.num_workers,
-            batch_size=self.batch_size,
-            shuffle=True
+            batch_sampler=BatchSampler(self.train_sampler, self.batch_size, drop_last=True)
         )
 
     def val_dataloader(self):

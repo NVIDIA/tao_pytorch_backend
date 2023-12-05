@@ -26,14 +26,14 @@ import copy
 import onnx
 import onnx_graphsurgeon as onnx_gs
 from torchvision.ops import DeformConv2d
-
 import tempfile
+
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
-
 from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.ocdnet.model.pl_ocd_model import OCDnetModel
+from nvidia_tao_pytorch.cv.ocdnet.model.model import Model
+from nvidia_tao_pytorch.cv.ocdnet.utils.util import load_checkpoint
 from omegaconf import OmegaConf
 
 
@@ -43,37 +43,30 @@ def symbolic_dcnv2_forward(g, *inputs):
     return g.op("ModulatedDeformConv2d", inputs[0], inputs[2], inputs[3], inputs[1])
 
 
-# Register custom symbolic function
-register_custom_op_symbolic("torchvision::deform_conv2d", symbolic_dcnv2_forward, 11)
-
-
 class Export():
     """Export OCDNet model."""
 
-    def __init__(
-        self, model_path, config_file,
-        width, height, opset_version,
-        gpu_id=0
-    ):
+    def __init__(self, config_file):
         """Initialize."""
-        self.model_path = model_path
+        self.model_path = config_file.export.checkpoint
         self.config_file = config_file
-        self.opset_version = opset_version
-        self.gpu_id = gpu_id
+        self.opset_version = config_file.export.opset_version
+        self.gpu_id = config_file.export.gpu_id
         if self.gpu_id is not None and isinstance(self.gpu_id, int) and torch.cuda.is_available():
             self.device = torch.device("cuda:%s" % self.gpu_id)
             torch.backends.cudnn.benchmark = True
         else:
             self.device = torch.device("cpu")
+        checkpoint = load_checkpoint(self.model_path, to_cpu=True)
 
-        checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-        if "state_dict" in checkpoint.keys():
-            checkpoint = checkpoint["state_dict"]
-            checkpoint = {key.replace("model.", ""): value for key, value in checkpoint.items()}
         config = OmegaConf.to_container(config_file)
         config['model']['pretrained'] = False
         config["dataset"]["train_dataset"] = config["dataset"]["validate_dataset"]
-        self.model = OCDnetModel(config)
+        load_pruned_graph = config['model']['load_pruned_graph']
+        if load_pruned_graph:
+            self.model = load_checkpoint(config['model']['pruned_graph_path'], only_state_dict=False)
+        else:
+            self.model = Model(config['model'])
         layers = checkpoint.keys()
         ckpt = dict()
         # Support loading official pretrained weights for eval
@@ -157,18 +150,20 @@ class Export():
                 continue
             ckpt[new_layer] = checkpoint[layer]
 
-        self.model.model.load_state_dict(ckpt)
+        self.model.load_state_dict(ckpt)
         self.model.to(self.device)
 
     def export(self):
         """Export."""
-        self.model.eval()
-        dummy_image = torch.zeros(
-            (1, 3, 544, 960),
+        input_w = self.config_file.export.width
+        input_h = self.config_file.export.height
+        dummy_image = torch.rand(
+            (1, 3, input_h, input_w),
             dtype=torch.float32,
-            device='cuda:0'
+            device=self.device
         )
 
+        self.model.eval()
         if self.config_file.export.results_dir is not None:
             results_dir = self.config_file.export.results_dir
         else:
@@ -203,21 +198,26 @@ class Export():
         handle, temp_onnx = tempfile.mkstemp()
         os.close(handle)
 
-        torch.onnx.export(
-            self.model,
-            (dummy_image,),
-            temp_onnx,
-            export_params=True,
-            opset_version=self.opset_version,
-            do_constant_folding=True,
-            operator_export_type=torch.onnx.OperatorExportTypes.ONNX_ATEN_FALLBACK,
-            keep_initializers_as_inputs=True,
-            input_names=['input'],
-            output_names=['pred'],
-            dynamic_axes={
-                "input": {0: "batch", 2: "height", 3: "width"},
-            }
-        )
+        # Register custom symbolic function
+        register_custom_op_symbolic("torchvision::deform_conv2d", symbolic_dcnv2_forward, self.opset_version)
+
+        with torch.no_grad():
+            torch.onnx.export(
+                self.model,
+                (dummy_image,),
+                temp_onnx,
+                export_params=True,
+                opset_version=self.opset_version,
+                do_constant_folding=True,
+                operator_export_type=torch.onnx.OperatorExportTypes.ONNX_ATEN_FALLBACK,
+                keep_initializers_as_inputs=True,
+                input_names=['input'],
+                output_names=['pred'],
+                verbose=self.config_file.export.verbose,
+                dynamic_axes={
+                    "input": {0: "batch"},
+                }
+            )
         # Import and add DCNv2 attributes
         onnx_model = onnx.load(temp_onnx)
         gs_graph = onnx_gs.import_onnx(onnx_model)
@@ -230,15 +230,15 @@ class Export():
                 attrs_dict["dilation"] = list(layer.dilation)
                 attrs_dict["group"] = 1
                 attrs_dict["deformable_group"] = 1
-                name = name.replace("model.backbone.", "") + ".ModulatedDeformConv2d"
+                name = name.replace("backbone.", "") + ".ModulatedDeformConv2d"
                 layer_dict[name] = copy.deepcopy(attrs_dict)
         for node in gs_graph.nodes:
             if node.op == "ModulatedDeformConv2d":
                 key = (".".join(node.name.split("/")[-3:]))
                 node.attrs = layer_dict[key]
 
-        gs_graph.fold_constants()
-        gs_graph.cleanup()
+        gs_graph.fold_constants(size_threshold=1024 * 1024 * 1024)
+        gs_graph.cleanup().toposort()
         new_onnx_model = onnx_gs.export_onnx(gs_graph)
 
         onnx.save(new_onnx_model, self.output_model)
@@ -260,13 +260,7 @@ def main(cfg: ExperimentConfig) -> None:
     obfuscate_logs(cfg)
 
     try:
-        exporter = Export(
-            config_file=cfg,
-            model_path=cfg.export.checkpoint,
-            width=cfg.export.width,
-            height=cfg.export.height,
-            opset_version=cfg.export.opset_version
-        )
+        exporter = Export(config_file=cfg)
         exporter.export()
         status_logging.get_status_logger().write(
             status_level=status_logging.Status.SUCCESS,
