@@ -45,7 +45,7 @@ onnxruntime==1.15.1
 onnxsim==0.4.17
 opencv-python==4.8.0.74
 pccm==0.4.6
-pillow==9.5.0
+pillow==10.0.1
 Polygon3==3.0.8
 protobuf>4.21.0,<5.0
 pyarmor==7.7.4
