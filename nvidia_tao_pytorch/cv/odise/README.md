@@ -71,7 +71,7 @@ The download links for these models are provided in the table below.
     <td align="center">55.5</td>
     <td align="center">46.3</td>
     <td align="center">64.6</td>
-    <td align="center"><a href="https://drive.google.com/file/d/18E_2vTUCjmhUL7x1k0dagNIZfWMX_uRd/view?usp=share_link"> checkpoint </a></td>
+    <td align="center"><a href="https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tao/models/odise">checkpoint</a></td>
   </tr>
 </tbody>
 </table>
