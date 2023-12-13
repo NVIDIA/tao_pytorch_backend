@@ -1,0 +1,20 @@
+encryption_key: "???"
+results_dir: "???"
+
+evaluate:
+  num_gpus: 1
+  checkpoint: "???"
+  opencv: False
+  eval_num_symmetry: 1
+  results_dir: "???"
+
+dataset:
+  test_data: "???"
+  num_classes: 1
+  batch_size: 4
+  workers: 4
+
+model:
+  down_ratio: 4
+  backbone:
+    model_type: "???"

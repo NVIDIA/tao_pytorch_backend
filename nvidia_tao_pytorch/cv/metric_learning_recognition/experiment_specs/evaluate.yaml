@@ -1,0 +1,16 @@
+
+model:
+  backbone: resnet_50
+  input_width: 224
+  input_height: 224
+  feat_dim: 256
+dataset:
+  workers: 8
+  train_dataset: "???"
+  test_dataset: "???"
+  query_dataset: "???"
+evaluate:
+  checkpoint: "???"
+  batch_size: 128
+  results_dir: "???"
+results_dir: "???"

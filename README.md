@@ -1,92 +1,221 @@
-# TAO Pytorch
+# TAO Toolkit - PyTorch Backend
 
+<!-- vscode-markdown-toc -->
+* [Overview](#Overview)
+* [Getting Started](#GettingStarted)
+	* [Requirements](#Requirements)
+		* [Hardware Requirements](#HardwareRequirements)
+		* [Software Requirements](#SoftwareRequirements)
+	* [Instantiating the development container](#Instantiatingthedevelopmentcontainer)
+		* [Command line options](#Commandlineoptions)
+		* [Using the mounts file](#Usingthemountsfile)
+	* [Updating the base docker](#Updatingthebasedocker)
+		* [Build base docker](#Buildbasedocker)
+		* [Test the newly built base docker](#Testthenewlybuiltbasedocker)
+		* [Update the new docker](#Updatethenewdocker)
+* [Building a release container](#Buildingareleasecontainer)
+* [Contribution Guidelines](#ContributionGuidelines)
+* [License](#License)
 
+<!-- vscode-markdown-toc-config
+	numbering=false
+	autoSave=true
+	/vscode-markdown-toc-config -->
+<!-- /vscode-markdown-toc -->
 
-## Getting started
+## <a name='Overview'></a>Overview
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+TAO Toolkit is a Python package hosted on the NVIDIA Python Package Index. It interacts with lower-level TAO dockers available from the NVIDIA GPU Accelerated Container Registry (NGC). The TAO containers come pre-installed with all dependencies required for training. The output of the TAO workflow is a trained model that can be deployed for inference on NVIDIA devices using DeepStream, TensorRT and Triton.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+This repository contains the required implementation for the all the deep learning components and networks using the PyTorch backend. These routines are packaged as part of the TAO Toolkit PyTorch container in the Toolkit package. These source code here is compatible with PyTorch version > 2.0.0
 
-## Add your files
+## <a name='GettingStarted'></a>Getting Started
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+As soon as the repository is cloned, run the `envsetup.sh` file to check
+if the build environment has the necessary dependencies, and the required
+environment variables are set.
+
+```sh
+source ${PATH_TO_REPO}/scripts/envsetup.sh
+```
+
+We recommend adding this command to your local `~/.bashrc` file, so that every new terminal instance receives this.
+
+### <a name='Requirements'></a>Requirements
+
+#### <a name='HardwareRequirements'></a>Hardware Requirements
+
+##### Minimum system configuration
+
+* 8 GB system RAM
+* 4 GB of GPU RAM
+* 8 core CPU
+* 1 NVIDIA GPU
+* 100 GB of SSD space
+
+##### Recommended system configuration
+
+* 32 GB system RAM
+* 32 GB of GPU RAM
+* 8 core CPU
+* 1 NVIDIA GPU
+* 100 GB of SSD space
+
+#### <a name='SoftwareRequirements'></a>Software Requirements
+
+| **Software**                     | **Version** |
+| :--- | :--- |
+| Ubuntu LTS                       | >=18.04     |
+| python                           | >=3.10.x     |
+| docker-ce                        | >19.03.5    |
+| docker-API                       | 1.40        |
+| `nvidia-container-toolkit`       | >1.3.0-1    |
+| nvidia-container-runtime         | 3.4.0-1     |
+| nvidia-docker2                   | 2.5.0-1     |
+| nvidia-driver                    | >535.85     |
+| python-pip                       | >21.06      |
+
+### <a name='Instantiatingthedevelopmentcontainer'></a>Instantiating the development container
+
+Inorder to maintain a uniform development environment across all users, TAO Toolkit provides a base environment Dockerfile in `docker/Dockerfile` that contains all
+the required third party dependencies for the developers. For instantiating the docker, simply run the `tao_pt` CLI. The usage for the command line launcher is mentioned below.
+
+```sh
+usage: tao_pt [-h] [--gpus GPUS] [--volume VOLUME] [--env ENV]
+              [--mounts_file MOUNTS_FILE] [--shm_size SHM_SIZE]
+              [--run_as_user] [--tag TAG] [--ulimit ULIMIT] [--port PORT]
+
+Tool to run the pytorch container.
+
+optional arguments:
+  -h, --help                show this help message and exit
+  --gpus GPUS               Comma separated GPU indices to be exposed to the docker.
+  --volume VOLUME           Volumes to bind.
+  --env ENV                 Environment variables to bind.
+  --mounts_file MOUNTS_FILE Path to the mounts file.
+  --shm_size SHM_SIZE       Shared memory size for docker
+  --run_as_user             Flag to run as user
+  --tag TAG                 The tag value for the local dev docker.
+  --ulimit ULIMIT           Docker ulimits for the host machine.
+  --port PORT               Port mapping (e.g. 8889:8889).
 
 ```
-cd existing_repo
-git remote add origin https://gitlab-master.nvidia.com/tao-toolkit/tao_pytorch_backend.git
-git branch -M main
-git push -uf origin main
+
+A sample command to instantiate an interactive session in the base development docker is mentioned below.
+
+```sh
+tao_pt --gpus all \
+       --volume /path/to/data/on/host:/path/to/data/on/container \
+       --volume /path/to/results/on/host:/path/to/results/in/container \
+       --env PYTHONPATH=/tao-pt
 ```
 
-## Integrate with your tools
+Running Deep Neural Networks implies working on large datasets. These datasets are usually stored on network share drives with significantly higher storage capacity. Since the `tao_pt` CLI wrapper uses docker containers under the hood, these drives/mount points need to be mapped to the docker.
 
-- [ ] [Set up project integrations](https://gitlab-master.nvidia.com/tao-toolkit/tao_pytorch_backend/-/settings/integrations)
+There are 2 ways to configure the `tao_pt` CLI wrapper. 
 
-## Collaborate with your team
+1. Via the command line options
+2. Via the mounts file. By default, at `~/.tao_mounts.json`.
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+#### <a name='Commandlineoptions'></a>Command line options
 
-## Test and Deploy
+| **Option**      | **Description** | **Default** |
+| :-- | :-- | :-- |
+| `gpus`         | Comma separated GPU indices to be exposed to the docker | 1 | 
+| `volume`       | Paths on the host machine to be exposed to the container. This is analogous to the `-v` option in the docker CLI. You may define multiple mount points by using the --volume option multiple times.  | None |  
+| `env`          | Environment variables to defined inside the interactive container. You may set them as `--env VAR=<value>`. Multiple environment variables can be set by repeatedly defining the `--env` option. | None |
+| `mounts_file`  | Path to the mounts file, explained more in the next section. | `~/.tao_mounts.json` | 
+| `shm_size`     | Shared memory size for docker in Bytes. | 16G |
+| `run_as_user`  | Flag to run as default user account on the host machine. This helps with maintaining permissions for all directories and artifacts created by the container. | 
+| `tag`          | The tag value for the local dev docker | None |
+| `ulimit`       | Docker ulimits for the host machine | 
+| `port`         | Port mapping (e.g. 8889:8889) | None |
 
-Use the built-in continuous integration in GitLab.
+#### <a name='Usingthemountsfile'></a>Using the mounts file
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+The `tao_pt` CLI wrapper instance can be configured by using a mounts file. By default, the wrapper expects the mounts file to be at 
+`~/.tao_mounts.json`. However, for multiple options, you may be able 
 
-***
+The launcher config file consists of three sections:
 
-# Editing this README
+* `Mounts`
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
+The `Mounts` parameter defines the paths in the local machine, that should be mapped to the docker. This is a list of `json` dictionaries containing the source path in the local machine and the destination path that is mapped for the CLI wrapper.
 
-## Suggestions for a good README
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+A sample config file containing 2 mount points and no docker options is as below.
 
-## Name
-Choose a self-explaining name for your project.
+  ```json
+  {
+      "Mounts": [
+          {
+              "source": "/path/to/your/experiments",
+              "destination": "/workspace/tao-experiments"
+          },
+          {
+              "source": "/path/to/config/files",
+              "destination": "/workspace/tao-experiments/specs"
+          }
+      ]
+  }
+  ```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+### <a name='Updatingthebasedocker'></a>Updating the base docker
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+There will be situations where developers would be required to update the third party dependancies to newer versions, or upgrade CUDA etc. In such a case, please follow the steps below:
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+#### <a name='Buildbasedocker'></a>Build base docker
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+The base dev docker is defined in `$NV_TAO_PYTORCH_TOP/docker/Dockerfile`. The python packages required for the TAO dev is defined in `$NV_TAO_PYTORCH_TOP/docker/requirements-pip.txt` and the third party apt packages are defined in `$NV_TAO_PYTORCH_TOP/docker/requirements-apt.txt`. Once you have made the required change, please update the base docker using the build script in the same directory.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+```sh
+cd $NV_TAO_PYTORCH_TOP/docker
+./build.sh --build
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+#### <a name='Testthenewlybuiltbasedocker'></a>Test the newly built base docker
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+The build script tags the newly built base docker with the username of the account in the user's local machine. Therefore, the developers may tests their new docker by using the `tao_pt` command with the `--tag` option.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+```sh
+tao_pt --tag $USER -- script args
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+#### <a name='Updatethenewdocker'></a>Update the new docker
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Once you are sufficiently confident about the newly built base docker, please do the following
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+1. Push the newly built base docker to the registry
 
-## License
-For open source projects, say how it is licensed.
+    ```sh
+    bash $NV_TAO_PYTORCH_TOP/docker/build.sh --build --push
+    ```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+2. The above step produces a digest file associated with the docker. This is a unique identifier for the docker. So please note this, and update all references of the old digest in the repository with the new digest. You may find the old digest in the `$NV_TAO_PYTORCH_TOP/docker/manifest.json`.
+
+Push you final updated changes to the repository so that other developers can leverage and sync with the new dev environment.
+
+Please note that if for some reason you would like to force build the docker without using a cache from the previous docker, you may do so by using the `--force` option.
+
+```sh
+bash $NV_TAO_PYTORCH_TOP/docker/build.sh --build --push --force
+```
+
+## <a name='Buildingareleasecontainer'></a>Building a release container
+
+The TAO docker is built on top of the TAO Pytorch base dev docker, by building a python wheel for the `nvidia_tao_pyt` module in this repository and installing the wheel in the Dockerfile defined in `release/docker/Dockerfile`. The whole build process is captured in a single shell script which may be run as follows:
+
+```sh
+git lfs install
+git lfs pull
+source scripts/envsetup.sh
+cd $NV_TAO_PYTORCH_TOP/release/docker
+./deploy.sh --build --wheel
+```
+
+In order to build a new docker, please edit the `deploy.sh` file in `$NV_TAO_PYTORCH_TOP/release/docker` to update the patch version and re-run the steps above.
+
+## <a name='ContributionGuidelines'></a>Contribution Guidelines
+TAO Toolkit PyTorch backend is not accepting contributions as part of the TAO 5.0 release, but will be open in the future.
+
+## <a name='License'></a>License
+This project is licensed under the [Apache-2.0](./LICENSE) License.

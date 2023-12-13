@@ -1,0 +1,16 @@
+build-essential
+libboost-system-dev
+libboost-thread-dev
+libboost-program-options-dev
+libboost-test-dev
+libeigen3-dev
+zlib1g-dev
+libbz2-dev
+liblzma-dev
+libsndfile1
+sox
+libsox-fmt-mp3
+ffmpeg
+libfreetype6
+libopenblas-dev
+libssl-dev

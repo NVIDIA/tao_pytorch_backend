@@ -1,0 +1,19 @@
+# ODISE
+huggingface-hub
+fvcore
+ftfy
+kornia==0.6
+diffdist==0.1
+nltk>=3.6.2
+taming-transformers-rom1504
+importlib-metadata==4.11.3
+flake8-comprehensions
+git+https://github.com/facebookresearch/detectron2.git
+git+https://github.com/openai/CLIP.git@main#egg=clip
+git+https://github.com/cocodataset/panopticapi.git
+yacs>=0.1.8
+iopath==0.1.9
+jmespath
+s3transfer
+pathspec
+black
