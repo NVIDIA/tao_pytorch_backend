@@ -1,0 +1,74 @@
+.DS_Store
+/.ipynb_checkpoints/
+*.swp
+*.tmp*
+*~
+/temp/
+/tmp/
+TAGS
+/.mypy_cache/
+__py_cache__
+__pycache__
+
+# Models and logs
+*.log
+*.tlt
+*.eonnx
+*.ejrvs
+*.riva
+*.onnx
+.hydra
+lightning_logs/
+
+# Compiled / optimized files
+*.py[cod]
+*.o
+*.so
+*.etlt
+*.ejrvs
+*.riva
+
+# Tests
+.coverage
+.cache
+/coverage/
+tests/.data/
+tests/test_models/
+tests/test_data/
+
+# Virtualenv
+/venv/
+
+# Setuptools
+/build/
+/dist/
+*.egg-info/
+
+# Local IDE settings
+/.idea/
+/.vscode/
+
+# ninja build
+*.ninja
+*.ninja_deps
+*.ninja_log
+
+# wheel
+*.whl
+
+# pointpillars output
+pointcloud/pointpillars/output/
+pointcloud/build/
+pointcloud/pointpillars/dist/
+
+#Optical Inspection
+*.tar
+scripts/data/
+scripts/util/
+scripts/trainv1.py
+scripts/trainv2.py
+scripts/scratch
+scripts/notejup/*
+model/pl_oi_model_trainv1.py
+scripts/startup.sh
+

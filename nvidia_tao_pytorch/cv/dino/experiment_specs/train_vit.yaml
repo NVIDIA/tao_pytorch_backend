@@ -1,0 +1,38 @@
+# Note: Training through this spec will require at least 8 server GPUs (e.g. V100/A100/H100) to train.
+results_dir: "???"
+train:
+  num_gpus: 8
+  num_nodes: 1
+  validation_interval: 1
+  optim:
+    lr_backbone: 1e-05
+    lr: 0.0001
+    lr_steps: [30]
+    momentum: 0.9
+    layer_decay_rate: 0.65
+  num_epochs: 36
+dataset:
+  train_data_sources:
+    - image_dir: "???"
+      json_file: "???"
+  val_data_sources:
+    - image_dir: "???"
+      json_file: "???"
+  num_classes: 91
+  batch_size: 2
+  workers: 8
+  augmentation:
+    fixed_random_crop: 1536
+    test_random_resize: 1536
+    random_resize_max_size: 1536
+    fixed_padding: True
+model:
+  pretrained_backbone_path: "???"
+  backbone: vit_large_dinov2
+  train_backbone: False
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 900
+  dropout_ratio: 0.0
+  dim_feedforward: 2048

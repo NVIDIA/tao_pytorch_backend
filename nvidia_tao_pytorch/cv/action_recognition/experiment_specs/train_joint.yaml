@@ -1,0 +1,29 @@
+output_dir: ./train_output_pl/joint_2d
+key: nvidia_tlt
+model_config:
+  model_type: joint
+  backbone: resnet18
+  of_seq_length: 10
+  of_pretrained_model_path: /opt/tylerz/tlt_dev/tlt-pytorch/cv/action_recognition/scripts/train_output_pl/of_2d/lightning_logs/version_0/checkpoints/model.ckpt
+  rgb_seq_length: 3
+  rgb_pretrained_model_path: /opt/tylerz/tlt_dev/tlt-pytorch/cv/action_recognition/scripts/train_output_pl/rgb_2d/lightning_logs/version_3/checkpoints/model.ckpt
+  num_fc: 64
+train_config:
+  optim:
+    lr: 0.0005
+    momentum: 0.9
+  epochs: 20
+dataset_config:
+  train_dataset_dir: /opt/tylerz/tlt_dev/action_recognition/convert_dataset/optical_flow_generator/SHAD_crop_new
+  val_dataset_dir: /opt/tylerz/tlt_dev/action_recognition/convert_dataset/optical_flow_generator/SHAD_crop_test_new
+  label_map:
+    walk: 0
+    sits: 1
+    squa: 2
+    fall: 3
+    bend: 4
+  output_shape:
+  - 224
+  - 224
+  batch_size: 32
+  workers: 8

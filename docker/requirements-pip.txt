@@ -1,0 +1,85 @@
+addict==2.4.0
+anyconfig==0.9.10
+astroid==2.5.2
+boto3
+botocore
+ccimport==0.4.2
+click==8.0.4
+colored==1.4.4
+cumm-cu114==0.2.8
+cutex==0.2.1
+easydict==1.10
+einops==0.3.2
+faiss-cpu==1.7.2 # TODO: faiss-gpu works better in some cases
+fire==0.5.0
+flake8==6.0.0
+gdown==4.6.4
+gradio==4.3.0
+hydra-core==1.2.0
+imgaug==0.4.0
+imageio==2.26.0
+isort==4.3.21
+lark==1.1.5
+lazy-import==0.2.2
+lazy_object_proxy==1.5.1
+lazy_loader==0.1
+librosa==0.10.0
+lmdb>=1.4.0
+matplotlib==3.7.1
+mccabe==0.7.0
+mypy==1.1.1
+mypy-extensions==1.0.0
+natsort==8.3.1
+ninja==1.11.1
+nltk==3.8.1
+nvidia-eff==0.6.5
+nvidia-eff-tao-encryption==0.1.8
+numpy==1.22.2 # TODO: Update np.float to np.float64 in the coming numpy version
+omegaconf==2.2.2
+# Install onnx-graphsurgeon with extra-index-url
+--extra-index-url https://pypi.ngc.nvidia.com
+onnx-graphsurgeon
+onnx-simplifier==0.4.5
+onnxoptimizer==0.3.8
+onnxruntime==1.15.1
+onnxsim==0.4.17
+opencv-python==4.8.0.74
+pccm==0.4.6
+pillow==9.5.0
+Polygon3==3.0.8
+protobuf>4.21.0,<5.0
+pyarmor==7.7.4
+pyclipper
+pycocotools
+pycodestyle==2.10.0
+pycuda==2022.2.2
+pycodestyle==2.10.0
+pyDeprecate<0.4.0,>=0.3.1
+pydocstyle==3.0.0
+pyflakes==3.0.1
+pylint==2.2.2
+pynini==2.1.5
+pyquaternion==0.9.9
+pyrr==0.10.3
+PyWavelets==1.4.1
+PyYAML==6.0
+rich==13.3.2
+scikit-image==0.19.3
+shapely==1.8.2
+soundfile==0.12.1
+spconv-cu114==2.1.21
+tabulate>=0.9.0
+tensorboardX==2.6.2.2
+terminaltables==3.1.0
+tifffile==2023.2.28
+# Upgrading transformer due to an error with importlib version checks.
+transformers==4.33.3
+tokenizers==0.12.1
+# Same issue with tqdm.pip
+tqdm==4.65.0
+ujson==5.5.0
+unidecode==1.2.0
+wandb>=0.12.11
+wget==3.2
+wrapt>=1.11, <1.13.0
+yapf==0.32.0

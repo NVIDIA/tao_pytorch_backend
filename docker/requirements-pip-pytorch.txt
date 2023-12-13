@@ -1,0 +1,14 @@
+fairscale==0.4.12
+lpips==0.1.4
+lightning-utilities==0.8.0
+mmcls==0.25.0
+pytorch-lightning==1.8.5
+pytorch_metric_learning==1.7.1
+pytorch-msssim
+thop
+timm>=0.9.6.dev0
+torchmetrics==0.10.3
+open-clip-torch[training]==2.23.0
+sentencepiece==0.1.99
+ftfy
+torch-pruning==1.2.2

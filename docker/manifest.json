@@ -1,0 +1,5 @@
+{
+    "registry": "nvcr.io",
+    "repository": "nvidia/tao/tao-toolkit",
+    "tag": "5.0.0-pyt-base"
+}
