@@ -205,8 +205,6 @@ bash $NV_TAO_PYTORCH_TOP/docker/build.sh --build --push --force
 The TAO docker is built on top of the TAO Pytorch base dev docker, by building a python wheel for the `nvidia_tao_pyt` module in this repository and installing the wheel in the Dockerfile defined in `release/docker/Dockerfile`. The whole build process is captured in a single shell script which may be run as follows:
 
 ```sh
-git lfs install
-git lfs pull
 source scripts/envsetup.sh
 cd $NV_TAO_PYTORCH_TOP/release/docker
 ./deploy.sh --build --wheel
