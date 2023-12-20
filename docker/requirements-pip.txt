@@ -73,7 +73,7 @@ tensorboardX==2.6.2.2
 terminaltables==3.1.0
 tifffile==2023.2.28
 # Upgrading transformer due to an error with importlib version checks.
-transformers==4.33.3
+transformers==4.36.0
 tokenizers==0.12.1
 # Same issue with tqdm.pip
 tqdm==4.65.0
