@@ -14,7 +14,7 @@ faiss-cpu==1.7.2 # TODO: faiss-gpu works better in some cases
 fire==0.5.0
 flake8==6.0.0
 gdown==4.6.4
-gradio==4.3.0
+gradio==4.11.0
 hydra-core==1.2.0
 imgaug==0.4.0
 imageio==2.26.0
