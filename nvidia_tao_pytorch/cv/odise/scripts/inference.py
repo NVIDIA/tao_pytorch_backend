@@ -91,13 +91,14 @@ LVIS_COLORS = list(
 )
 
 
-def draw_instance_predictions(self, predictions):
+def draw_instance_predictions(self, predictions, jitter_color=False):
     """
     Draw instance-level prediction results on an image.
     Args:
         predictions (Instances): the output of an instance detection/segmentation
             model. Following fields will be used to draw:
             "pred_boxes", "pred_classes", "scores", "pred_masks" (or "pred_masks_rle").
+        jitter_color (bool): whether to jitter colors
     Returns:
         output (VisImage): image object with visualizations.
     """
@@ -114,9 +115,14 @@ def draw_instance_predictions(self, predictions):
     else:
         masks = None
     if self._instance_mode == ColorMode.SEGMENTATION and self.metadata.get("thing_colors"):
-        colors = [
-            self._jitter([x / 255 for x in self.metadata.thing_colors[c]]) for c in classes
-        ]
+        if jitter_color:
+            colors = [
+                self._jitter([x / 255 for x in self.metadata.thing_colors[c]]) for c in classes
+            ]
+        else:
+            colors = [
+                [x / 255 for x in self.metadata.thing_colors[c]] for c in classes
+            ]
         alpha = 0.8
     else:
         colors = None
@@ -177,6 +183,7 @@ def overlay_instances(
         assigned_colors (list[matplotlib.colors]): a list of colors, where each color
             corresponds to each mask or box in the image. Refer to 'matplotlib.colors'
             for full list of formats that the colors are accepted in.
+        alpha (float): blending efficient. Smaller values lead to more transparent masks.
     Returns:
         output (VisImage): image object with visualizations.
     """
@@ -224,8 +231,6 @@ def overlay_instances(
         keypoints = keypoints[sorted_idxs] if keypoints is not None else None
 
     for i in range(num_instances):
-        if 'grass' in labels[i]:
-            continue
         color = assigned_colors[i]
         if boxes is not None:
             self.draw_box(boxes[i], edge_color=color)
@@ -286,8 +291,86 @@ def overlay_instances(
 
     return self.output
 
+
+def draw_panoptic_seg(self,
+                      panoptic_seg,
+                      segments_info,
+                      area_threshold=None,
+                      alpha=0.7,
+                      jitter_color=False):
+    """
+    Draw panoptic prediction annotations or results.
+
+    Args:
+        panoptic_seg (Tensor): of shape (height, width) where the values are ids for each
+            segment.
+        segments_info (list[dict] or None): Describe each segment in `panoptic_seg`.
+            If it is a ``list[dict]``, each dict contains keys "id", "category_id".
+            If None, category id of each pixel is computed by
+            ``pixel // metadata.label_divisor``.
+        area_threshold (int): stuff segments with less than `area_threshold` are not drawn.
+        alpha (float): blending efficient. Smaller values lead to more transparent masks.
+        jitter_color (bool): whether to jitter colors
+
+    Returns:
+        output (VisImage): image object with visualizations.
+    """
+    pred = _PanopticPrediction(panoptic_seg, segments_info, self.metadata)
+
+    if self._instance_mode == ColorMode.IMAGE_BW:
+        self.output.reset_image(self._create_grayscale_image(pred.non_empty_mask()))
+
+    # draw mask for all semantic segments first i.e. "stuff"
+    for mask, sinfo in pred.semantic_masks():
+        category_idx = sinfo["category_id"]
+        try:
+            mask_color = [x / 255 for x in self.metadata.stuff_colors[category_idx]]
+        except AttributeError:
+            mask_color = None
+
+        text = self.metadata.stuff_classes[category_idx]
+        self.draw_binary_mask(
+            mask,
+            color=mask_color,
+            edge_color=(1.0, 1.0, 240.0 / 255),  # off_white 
+            text=text,
+            alpha=alpha,
+            area_threshold=area_threshold,
+        )
+
+    # draw mask for all instances second
+    all_instances = list(pred.instance_masks())
+    if len(all_instances) == 0:
+        return self.output
+    masks, sinfo = list(zip(*all_instances))
+    category_ids = [x["category_id"] for x in sinfo]
+
+    try:
+        scores = [x["score"] for x in sinfo]
+    except KeyError:
+        scores = None
+    labels = _create_text_labels(
+        category_ids, scores, self.metadata.thing_classes, [x.get("iscrowd", 0) for x in sinfo]
+    )
+
+    try:
+        if jitter_color:
+            colors = [
+                self._jitter([x / 255 for x in self.metadata.thing_colors[c]]) for c in category_ids
+            ]
+        else:
+            colors = [
+                [x / 255 for x in self.metadata.thing_colors[c]] for c in category_ids
+            ]
+    except AttributeError:
+        colors = None
+    self.overlay_instances(masks=masks, labels=labels, assigned_colors=colors, alpha=alpha)
+
+    return self.output
+
 Visualizer.overlay_instances = overlay_instances
 Visualizer.draw_instance_predictions = draw_instance_predictions
+Visualizer.draw_panoptic_seg = draw_panoptic_seg
 
 
 def get_nouns(caption, with_preposition):
