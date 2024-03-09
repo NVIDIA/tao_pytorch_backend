@@ -288,7 +288,7 @@ class OCDnetModel(pl.LightningModule):
 
         self._save_checkpoint(self.current_epoch, net_save_path)
         if save_best:
-            shutil.copy(net_save_path, net_save_path_best)
+            shutil.copyfile(net_save_path, net_save_path_best)
             self.print("Saving current best: {}".format(net_save_path_best))
         else:
             self.print("Saving checkpoint: {}".format(net_save_path))

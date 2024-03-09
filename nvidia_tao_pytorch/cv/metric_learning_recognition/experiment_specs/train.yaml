@@ -1,8 +1,9 @@
 results_dir: "???"
 model:
-  backbone: resnet_50
-  pretrain_choice: imagenet
+  backbone: resnet_50 # options: resnet_50, resnet_101, fan_tiny, fan_small, fan_base, fan_large, nvdinov2_vit_large_legacy
   pretrained_model_path: "???"
+  pretrained_trunk_path: null
+  pretrained_embedder_path: null
   input_width: 224
   input_height: 224
   feat_dim: 256

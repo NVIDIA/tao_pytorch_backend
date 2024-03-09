@@ -1,4 +1,4 @@
-encryption_key: nvidia_tao
+encryption_key: "???"
 task: segment
 train:
   resume_training_checkpoint_path: null

@@ -17,14 +17,13 @@
 import torch
 import torch.nn as nn
 from timm.models.layers import trunc_normal_, LayerNorm2d
-
-from mmcls.models.builder import BACKBONES
-from mmcv.runner import BaseModule
+from mmpretrain.registry import MODELS
+from mmpretrain.models.backbones.base_backbone import BaseBackbone
 
 from nvidia_tao_pytorch.cv.backbone.faster_vit import PatchEmbed, FasterViTLayer
 
 
-class FasterViT(BaseModule):
+class FasterViT(BaseBackbone):
     """
     FasterViT based on: "Hatamizadeh et al.,
     FasterViT: Fast Vision Transformers with Hierarchical Attention <https://arxiv.org/abs/2306.06189>"
@@ -51,6 +50,7 @@ class FasterViT(BaseModule):
                  layer_norm_last=False,
                  hat=[False, False, True, False],
                  do_propagation=False,
+                 init_cfg=None,
                  **kwargs):
         """
         Args:
@@ -75,7 +75,7 @@ class FasterViT(BaseModule):
             hat: hierarchical attention flag.
             do_propagation: enable carrier token propagation.
         """
-        super().__init__()
+        super().__init__(init_cfg)
         num_features = int(dim * 2 ** (len(depths) - 1))
         self.num_classes = num_classes
         self.patch_embed = PatchEmbed(in_chans=in_chans, in_dim=in_dim, dim=dim)
@@ -146,7 +146,7 @@ class FasterViT(BaseModule):
         return x
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_0_224(FasterViT):
     """FasterViT-0 model."""
 
@@ -166,7 +166,7 @@ class faster_vit_0_224(FasterViT):
         super(faster_vit_0_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_1_224(FasterViT):
     """FasterViT-1 model."""
 
@@ -186,7 +186,7 @@ class faster_vit_1_224(FasterViT):
         super(faster_vit_1_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_2_224(FasterViT):
     """FasterViT-2 model."""
 
@@ -206,7 +206,7 @@ class faster_vit_2_224(FasterViT):
         super(faster_vit_2_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_3_224(FasterViT):
     """FasterViT-3 model."""
 
@@ -227,7 +227,7 @@ class faster_vit_3_224(FasterViT):
         super(faster_vit_3_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_4_224(FasterViT):
     """FasterViT-4 model."""
 
@@ -248,7 +248,7 @@ class faster_vit_4_224(FasterViT):
         super(faster_vit_4_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_5_224(FasterViT):
     """FasterViT-5 model."""
 
@@ -269,7 +269,7 @@ class faster_vit_5_224(FasterViT):
         super(faster_vit_5_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_6_224(FasterViT):
     """FasterViT-6 model."""
 
@@ -290,7 +290,7 @@ class faster_vit_6_224(FasterViT):
         super(faster_vit_6_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_4_21k_224(FasterViT):
     """FasterViT-4-21k-224 model."""
 
@@ -311,7 +311,7 @@ class faster_vit_4_21k_224(FasterViT):
         super(faster_vit_4_21k_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_4_21k_384(FasterViT):
     """FasterViT-4-21k-384 model."""
 
@@ -332,7 +332,7 @@ class faster_vit_4_21k_384(FasterViT):
         super(faster_vit_4_21k_384, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_4_21k_512(FasterViT):
     """FasterViT-4-21k-512 model."""
 
@@ -353,7 +353,7 @@ class faster_vit_4_21k_512(FasterViT):
         super(faster_vit_4_21k_512, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class faster_vit_4_21k_768(FasterViT):
     """FasterViT-4-21k-768 model."""
 

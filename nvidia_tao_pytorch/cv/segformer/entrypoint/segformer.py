@@ -88,12 +88,12 @@ def launch(parser, subtasks, network=None):
     # Process spec file for all commands except the one for getting spec files ;)
     # Make sure the user provides spec file.
     if args.experiment_spec_file is None:
-        print("ERROR: The subtask `{}` requires the following argument: -e/--experiment_spec_file".format(args.subtask))
+        print(f"ERROR: The subtask `{args.subtask}` requires the following argument: -e/--experiment_spec_file")
         exit(1)
 
     # Make sure the file exists!
     if not os.path.exists(args.experiment_spec_file):
-        print("ERROR: The indicated experiment spec file `{}` doesn't exist!".format(args.experiment_spec_file))
+        print(f"ERROR: The indicated experiment spec file `{args.experiment_spec_file}` doesn't exist!")
         exit(1)
 
     # Split spec file_path into config path and config name.
@@ -107,6 +107,7 @@ def launch(parser, subtasks, network=None):
             raise ValueError("Export does not support multi-gpu")
         else:
             script_args += f" {args.subtask}.num_gpus={args.gpus}"
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(list(range(args.gpus + 1)))[1:-1]
 
     # And add other params AFTERWARDS!
 

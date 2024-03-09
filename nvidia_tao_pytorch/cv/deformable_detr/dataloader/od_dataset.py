@@ -21,7 +21,7 @@ import os
 import json
 import glob
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from typing import Any, Tuple, List
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco import COCO
@@ -65,9 +65,11 @@ class ODDataset(Dataset):
         path = self.coco.loadImgs(img_id)[0]["file_name"]
         if not self.dataset_dir == "":
             img_path = os.path.join(self.dataset_dir, path)
-            return_output = (Image.open(img_path).convert("RGB"), img_path)
+            img = Image.open(img_path).convert("RGB")
+            return_output = (ImageOps.exif_transpose(img), img_path)
         else:
-            return_output = (Image.open(path).convert("RGB"), path)
+            img = Image.open(path).convert("RGB")
+            return_output = (ImageOps.exif_transpose(img), path)
 
         return return_output
 
@@ -197,7 +199,8 @@ class ODPredictDataset(Dataset):
         Returns:
             Loaded PIL.Image.
         """
-        return_output = (Image.open(img_path).convert("RGB"), img_path)
+        img = ImageOps.exif_transpose(Image.open(img_path).convert("RGB"))
+        return_output = (img, img_path)
 
         return return_output
 

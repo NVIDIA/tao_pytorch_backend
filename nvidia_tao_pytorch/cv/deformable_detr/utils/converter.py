@@ -25,7 +25,7 @@ import os
 import random
 import six
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 import json
 from json.decoder import JSONDecodeError
 
@@ -262,7 +262,7 @@ class DatasetConverter(six.with_metaclass(ABCMeta, object)):
     def _get_image_size(self, frame_id):
         """Read image size from the image file, image sizes vary in KITTI."""
         image_file = os.path.join(self.img_root_dir, self.images_dir, frame_id + self.extension)
-        width, height = Image.open(image_file).size
+        width, height = ImageOps.exif_transpose(Image.open(image_file)).size
 
         return width, height
 
@@ -415,13 +415,6 @@ class KITTIConverter(DatasetConverter):
         # Create proto for the training example. Populate with frame attributes.
         json_output = self._process_info(json_output, frame_id, image_id, global_ann_id)
         return json_output
-
-    def _get_image_size(self, frame_id):
-        """Read image size from the image file, image sizes vary in KITTI."""
-        image_file = os.path.join(self.img_root_dir, self.images_dir, frame_id + self.extension)
-        width, height = Image.open(image_file).size
-
-        return width, height
 
     def _process_info(self, json_output, frame_id, image_id, global_ann_id):
         """Add KITTI target features such as bbox to the Example protobuf.

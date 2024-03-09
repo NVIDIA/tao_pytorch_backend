@@ -43,4 +43,25 @@ map_params = {"head": {"in_channels": {
     "faster_vit_4_21k_384": 1568,
     "faster_vit_4_21k_512": 1568,
     "faster_vit_4_21k_768": 1568,
+    "ViT-L-14": 768,
+    "ViT-B-16": 512,
+    "ViT-L-14-336": 768,
+    "ViT-g-14": 1024,
+    "ViT-H-14": 1024,
+    "EVA02-E-14-plus": 1024,
+    "EVA02-E-14": 1024,
+    "EVA02-L-14-336": 768,
+    "EVA02-L-14": 768,
+    "ViT-B-32": 512,
+    "vit_large_patch14_dinov2_swiglu": 1024
 }}}
+
+# Map input resolution for different backbones
+map_input_lr_head = {
+    "faster_vit_4_21k_384": 384,
+    "faster_vit_4_21k_512": 512,
+    "faster_vit_4_21k_768": 768,
+    "ViT-L-14-336": 336,
+    "EVA02-L-14-336": 336,
+    "gc_vit_large_384": 384
+}

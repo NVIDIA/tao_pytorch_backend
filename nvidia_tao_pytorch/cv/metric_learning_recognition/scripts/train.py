@@ -49,6 +49,14 @@ def run_experiment(experiment_config):
         num_epochs=experiment_config['train']['num_epochs'])
     status_logging.set_status_logger(status_logger_callback.logger)
 
+    resume_training_checkpoint_path = get_last_generated_file(results_dir, extension="pth")  # None if no pth files found
+
+    if experiment_config['train']['resume_training_checkpoint_path']:  # override default checkpoint resume path
+        resume_training_checkpoint_path = experiment_config['train']['resume_training_checkpoint_path']
+
+    # update experiment_config in Trainer
+    experiment_config['train']['resume_training_checkpoint_path'] = resume_training_checkpoint_path
+
     metric_learning_recognition = MLRecogModel(
         experiment_config,
         results_dir,
@@ -82,11 +90,6 @@ def run_experiment(experiment_config):
                                           save_on_train_epoch_end=True)
 
     trainer.callbacks.append(checkpoint_callback)
-
-    if experiment_config['train']['resume_training_checkpoint_path']:
-        resume_training_checkpoint_path = experiment_config['train']['resume_training_checkpoint_path']
-
-    resume_training_checkpoint_path = get_last_generated_file(results_dir, extension="pth")  # None if no pth files found
 
     if resume_training_checkpoint_path:
         status_logging.get_status_logger().write(

@@ -14,6 +14,8 @@
 
 """ Init module for Classification Common Hooks"""
 
-from nvidia_tao_pytorch.core.mmlab.mmclassification.mmclassification_tao_status_logger import MMClsTaoTextLoggerHook
+from nvidia_tao_pytorch.core.mmlab.mmclassification.mmpretrain_tao_status_logger import TaoTextLoggerHook
+from nvidia_tao_pytorch.core.mmlab.mmclassification.logistic_regression_trainer import LogisticRegressionTrainer
 
-__all__ = ['MMClsTaoTextLoggerHook']
+
+__all__ = ['TaoTextLoggerHook', 'LogisticRegressionTrainer']

@@ -12,7 +12,7 @@ import torch
 
 from typing import Dict, List, Any
 from pycocotools.coco import COCO
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.utils.safe_unpickler import SafeUnpickler
@@ -219,6 +219,7 @@ class SerializedDatasetFromList(torch.utils.data.Dataset):
 
         image_path = record['file_name']
         image = Image.open(image_path).convert("RGB")
+        image = ImageOps.exif_transpose(image)
         img_id = record["image_id"]
 
         target = record['annotations']

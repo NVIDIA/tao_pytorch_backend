@@ -14,7 +14,8 @@
 
 """ Init Module Common Hooks for MMLab"""
 
-from nvidia_tao_pytorch.core.mmlab.common.base_tao_status_logger import BaseTaoTextLoggerHook
+# from nvidia_tao_pytorch.core.mmlab.common.base_tao_status_logger import BaseTaoTextLoggerHook
+from nvidia_tao_pytorch.core.mmlab.common.tao_imageclassifier_inferencer import TAOImageClassificationInferencer
 
 
-__all__ = ['BaseTaoTextLoggerHook']
+__all__ = ['TAOImageClassificationInferencer']

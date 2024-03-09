@@ -8,13 +8,13 @@ dataset:
       pipeline:
         - type: LoadImageFromFile
         - type: RandomResizedCrop
-          size: 224
+          scale: 224
         - type: ColorJitter
           brightness: 0.4
           contrast: 0.4
           saturation: 0.4
         - type: RandomFlip
-          flip_prob: 0.5
+          prob: 0.5
           direction: "horizontal"
     val:
       data_prefix: ???
@@ -24,7 +24,7 @@ model:
   backbone:
     type: faster_vit_0_224
   head:
-    type: LinearClsHead
+    type: TAOLinearClsHead
     num_classes: 1000
     loss:
       type: CrossEntropyLoss
@@ -33,14 +33,10 @@ model:
     topk: [1, 5]
   train_cfg:
     augments:
-      - type: BatchMixup
+      - type: Mixup
         alpha: 0.8
-        num_classes: 1000
-        prob: 0.5
-      - type: BatchCutMix
+      - type: CutMix
         alpha: 1.0
-        num_classes: 1000
-        prob: 0.5
 train:
   train_config:
     find_unused_parameters: True
@@ -49,22 +45,19 @@ train:
       lr: 0.005
       weight_decay: 0.05
     lr_config:
-      policy: CosineAnnealingCooldown
-      min_lr: 5e-6
-      cool_down_time: 10
-      warmup: 'linear'
-      warmup_iters: 20
-      warmup_by_epoch: True
+      type: CosineAnnealingLR
+      T_max: 200
+      by_epoch: True
+      begin: 0
     optimizer_config:
       grad_clip:
         max_norm: 5.0
     runner:
-      max_epochs: 310
+      max_epochs: 30
     checkpoint_config:
       interval: 1
     logging:
       interval: 500
-    validate: True
     evaluation:
       interval: 1
     custom_hooks:

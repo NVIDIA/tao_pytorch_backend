@@ -56,7 +56,7 @@ import torch.nn.functional as F
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.fx_features import register_notrace_module
 from timm.models.helpers import named_apply, build_model_with_cfg
-from timm.models.layers import trunc_normal_, ClassifierHead, SelectAdaptivePool2d, DropPath, Mlp
+from timm.layers import trunc_normal_, ClassifierHead, SelectAdaptivePool2d, DropPath, Mlp
 
 # Model_registry will add each entrypoint fn to this
 __all__ = ['ConvNeXt']

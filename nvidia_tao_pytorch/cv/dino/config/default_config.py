@@ -186,6 +186,7 @@ class DINOInferenceExpConfig:
     is_internal: bool = False
     input_width: Optional[int] = None
     input_height: Optional[int] = None
+    outline_width: int = 3
 
 
 @dataclass

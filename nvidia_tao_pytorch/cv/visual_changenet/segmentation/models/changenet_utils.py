@@ -35,7 +35,7 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.layers import to_2tuple, trunc_normal_
+from timm.layers import to_2tuple, trunc_normal_
 
 
 class UpsampleConvLayer(torch.nn.Module):

@@ -295,7 +295,7 @@ class Transformer(nn.Module):
             if self.reduce_feat_dim:
                 self.fcneck = nn.Linear(self.in_planes, self.feat_dim, bias=False)
                 self.fcneck.apply(weights_init_xavier)
-                self.in_planes = cfg.model.FEAT_DIM
+                self.in_planes = cfg.model.feat_dim
             self.classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)
             self.classifier.apply(weights_init_classifier)
 

@@ -1,0 +1,53 @@
+results_dir: ???
+dataset:
+  data:
+    samples_per_gpu: 128
+    workers_per_gpu: 8
+    train:
+      data_prefix: ???
+      pipeline:
+        - type: LoadImageFromFile
+        - type: RandomResizedCrop
+          scale: 224
+        - type: ColorJitter
+          brightness: 0.4
+          contrast: 0.4
+          saturation: 0.4
+        - type: RandomFlip
+          prob: 0.5
+          direction: "horizontal"
+    val:
+      data_prefix: ???
+    test:
+      data_prefix: ???
+
+model:
+  backbone:
+    type: "vit_large_patch14_dinov2_swiglu"
+    freeze: True
+  init_cfg:
+    checkpoint: ???
+  head:
+    type: "LogisticRegressionHead"
+    loss:
+      type: CrossEntropyLoss
+      use_soft: False
+    topk: [1, 5]
+    lr_head:
+      C: 0.316
+      max_iter: 5000
+    num_classes: ???
+
+train:
+  exp_config:
+    manual_seed: 49
+  train_config:
+    runner:
+      max_epochs: 300
+      checkpoint_interval: 5
+      log_interval: 500
+      val_interval: 1
+    optim_wrapper:
+      optimizer:
+        type: 'AdamW'
+        lr: 10e-5

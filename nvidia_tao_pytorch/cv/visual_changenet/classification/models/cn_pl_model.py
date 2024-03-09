@@ -211,7 +211,7 @@ class ChangeNetPlModel(pl.LightningModule):
             labels = self.gt_classify
             if self.loss_fn == 'ce':
                 labels = labels.squeeze().long()
-                self.G_loss = self.criterion(self.output_diff, labels)
+                self.G_loss = self.criterion(self.output_diff, labels.reshape(self.output_diff.shape[0]))
         return self.G_loss, self.siam_score
 
     def training_step(self, batch, batch_idx):

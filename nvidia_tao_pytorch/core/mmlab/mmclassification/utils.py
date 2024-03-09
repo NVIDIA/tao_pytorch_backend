@@ -15,25 +15,22 @@
 """Utils Function"""
 
 import os
-import os.path as osp
 import tempfile
-import time
-import torch
-import torch.distributed as dist
 from abc import abstractmethod
 import dataclasses
 from omegaconf import OmegaConf
-from nvidia_tao_pytorch.core.mmlab.mmclassification.model_params_mapping import map_params
-import mmcv
-from mmcv.runner import get_dist_info, load_checkpoint
-from mmcls.apis.test import collect_results_gpu, collect_results_cpu
-from mmcls.models import build_classifier
 
+import torch
+
+from nvidia_tao_pytorch.core.mmlab.mmclassification.model_params_mapping import map_params
+
+from mmengine.runner.checkpoint import load_checkpoint
+from mmpretrain.models import build_classifier
 
 ROOT_DIR = os.getenv("NV_TLT_PYTORCH_TOP", os.getcwd())
 
 
-class MMClsConfig(object):
+class MMPretrainConfig(object):
     """Classification Config Class to convert Hydra config to MMcls config"""
 
     def __init__(self,
@@ -41,15 +38,32 @@ class MMClsConfig(object):
                  phase="train"):
         """Init Function."""
         self.config = dataclasses.asdict(OmegaConf.to_object(config))
+        self.updated_config = {}
         self.phase = phase
         self.update_config(phase=phase)
 
     def update_config(self, phase="train"):
         """ Function to update hydra config to mmlab based config"""
-        self.config = self.update_dataset_config(self.config)
-        self.config = self.update_model_config(self.config)
+        self.update_env()
+        self.update_dataset_config()
+        self.update_model_config()
         if phase == "train":
-            self.config = self.update_train_params_config(self.config)
+            self.update_train_params_config()
+        else:
+            self.updated_config["val_cfg"] = dict()
+            self.updated_config["test_cfg"] = dict()
+
+    def update_env(self):
+        """Function to update env variables"""
+        exp_config = self.config[self.phase]["exp_config"]
+        self.updated_config["env_cfg"] = exp_config["env_config"]
+        self.updated_config["randomness"] = {"seed": exp_config["manual_seed"], "deterministic": exp_config["deterministic"]}
+        self.updated_config["default_scope"] = "mmpretrain"
+        vis_backends = [dict(type='LocalVisBackend')]
+        self.updated_config["log_level"] = "INFO"
+        self.updated_config["vis_backends"] = vis_backends
+        self.updated_config["visualizer"] = dict(type='UniversalVisualizer', vis_backends=vis_backends)
+        self.updated_config["launcher"] = "pytorch"
 
     @abstractmethod
     def update_custom_args(self, cfg):
@@ -75,121 +89,102 @@ class MMClsConfig(object):
                 cfg[param] = map_params_tmp.get(backbone_type, orig)
         return cfg
 
+    def get_dataloader_config(self, dataset_config, phase):
+        """Function to get dataloader config"""
+        dataloader_config = {}
+        dataloader_config["batch_size"] = dataset_config["data"]["samples_per_gpu"]
+        dataloader_config["num_workers"] = dataset_config["data"]["workers_per_gpu"]
+        dataloader_config["pin_memory"] = dataset_config["pin_memory"]
+        dataloader_config["sampler"] = dataset_config["sampler"]
+        dataloader_config["collate_fn"] = dataset_config["collate_fn"]
+        dataloader_config["dataset"] = dataset_config["data"][phase]
+        dataloader_config["dataset"]["pipeline"] = [{"type": "LoadImageFromFile"}] + dataloader_config["dataset"]["pipeline"] + [{"type": "PackInputs"}]
+
+        return dataloader_config
+
     @abstractmethod
-    def update_dataset_config(self, cfg):
+    def update_dataset_config(self):
         """Update the dataset config"""
         #  Update Dataset config
-        #  Update train data pipeline
-        img_norm_cfg = cfg["dataset"]["img_norm_cfg"]
-        pipeline = cfg["dataset"]["data"]["train"]["pipeline"]  # Augmentations
-        pipeline_updated = [dict(type='LoadImageFromFile')] + pipeline + [dict(type='Normalize', **img_norm_cfg),
-                                                                          dict(type='ImageToTensor', keys=['img']),
-                                                                          dict(type='ToTensor', keys=['gt_label']),
-                                                                          dict(type='Collect', keys=['img', 'gt_label'])]
-        cfg["dataset"]["data"]["train"]["pipeline"] = pipeline_updated
-
-        #  Update test pipeline
-        test_pipeline = []
-        test_pipeline_tmp = cfg["dataset"]["data"]["test"]["pipeline"]
-        # Convert resize size to tuple fro mmcv loader
-        for aug in test_pipeline_tmp:
-            if aug["type"] == "Resize":
-                aug["size"] = tuple(aug["size"])
-            test_pipeline.append(aug)
-        test_pipeline_updated = [dict(type='LoadImageFromFile')] + test_pipeline + [dict(type='Normalize', **img_norm_cfg),
-                                                                                    dict(type='ImageToTensor', keys=['img']),
-                                                                                    dict(type='Collect', keys=['img'])]
-        cfg["dataset"]["data"]["test"]["pipeline"] = test_pipeline_updated
-        cfg["dataset"]["data"]["val"]["pipeline"] = test_pipeline_updated
-
-        return cfg
+        dataset_config = self.config.pop("dataset")
+        head_config = self.config["model"]["head"]
+        topk = tuple(self.config["model"]["head"].pop("topk"))  # topk is not supported in MMPretrain in head
+        if self.phase == "evaluate":
+            self.updated_config["dataset_type"] = dataset_config["data"]["val"]["type"]
+        else:
+            self.updated_config["dataset_type"] = dataset_config["data"][self.phase]["type"]
+        self.updated_config["data_preprocessor"] = dataset_config["img_norm_cfg"]
+        self.updated_config["data_preprocessor"]["num_classes"] = head_config["num_classes"]
+        self.updated_config["train_dataloader"] = self.get_dataloader_config(dataset_config, "train")
+        self.updated_config["val_dataloader"] = self.get_dataloader_config(dataset_config, "val")
+        self.updated_config["test_dataloader"] = self.get_dataloader_config(dataset_config, "test")
+        self.updated_config["val_evaluator"] = {"type": "Accuracy", "topk": tuple(topk)}
+        self.updated_config["test_evaluator"] = {"type": "Accuracy", "topk": tuple(topk)}
 
     @abstractmethod
-    def update_model_config(self, cfg):
+    def update_model_config(self):
         """Update the model config"""
         #  Update Model Config
         #  Head Update
         #  Tok should be tuple. Hydra converts it to list by default
-        cfg["model"]["head"]["topk"] = tuple(cfg["model"]["head"]["topk"])
+        self.updated_config["model"] = self.config["model"]
+        if self.updated_config["model"]["head"]["type"] == "FANLinearClsHead":  # For Backward compatibility
+            self.updated_config["model"]["head"]["type"] = "TAOLinearClsHead"
 
         #  init_cfg should be removed if checkpoint is none
-        if not cfg["model"]["init_cfg"]["checkpoint"]:
-            cfg["model"].pop("init_cfg")
+        if self.updated_config["model"]["init_cfg"]["checkpoint"]:
+            self.updated_config["model"]["backbone"]["init_cfg"] = self.updated_config["model"]["init_cfg"]
+        self.updated_config["model"].pop("init_cfg", None)
 
-        #  Update head params from the map json
+        # Update head params from the map json
         map_params_head = map_params.get("head", None)
-        cfg["model"]["head"] = self.assign_arch_specific_params(cfg["model"]["head"], map_params_head, cfg["model"]["backbone"]["type"])
+        self.updated_config["model"]["head"].pop("lr_head")
+        if self.updated_config["model"]["head"]["type"] == "LogisticRegressionHead":
+            self.updated_config["model"]["head"]["type"] = "TAOLinearClsHead"
+        self.updated_config["model"]["head"] = self.update_custom_args(self.updated_config["model"]["head"])
+        self.updated_config["model"]["backbone"] = self.update_custom_args(self.updated_config["model"]["backbone"])
+        if self.updated_config["model"]["backbone"]["type"] == "open_clip":
+            bb_type = self.updated_config["model"]["backbone"]["model_name"]
+        else:
+            bb_type = self.updated_config["model"]["backbone"]["type"]
+        self.updated_config["model"]["head"] = self.assign_arch_specific_params(self.updated_config["model"]["head"], map_params_head, bb_type)
         map_params_head = map_params.get("backbone", None)
 
         #  Update backbone params from the map json
-        cfg["model"]["backbone"] = self.assign_arch_specific_params(cfg["model"]["backbone"], map_params_head, cfg["model"]["backbone"]["type"])
-        if cfg["model"]["neck"]:  # Neck config is not must. Hence we do this check
+        self.updated_config["model"]["backbone"] = self.assign_arch_specific_params(self.updated_config["model"]["backbone"], map_params_head, bb_type)
+        if self.updated_config["model"]["neck"]:  # Neck config is not must. Hence we do this check
             map_params_neck = map_params.get("neck", None)
-            cfg["model"]["neck"] = self.assign_arch_specific_params(cfg["model"]["neck"], map_params_neck, cfg["model"]["backbone"]["type"])
-        cfg["model"]["head"] = self.update_custom_args(cfg["model"]["head"])
-        cfg["model"]["backbone"] = self.update_custom_args(cfg["model"]["backbone"])
+            self.updated_config["model"]["neck"] = self.assign_arch_specific_params(self.updated_config["model"]["neck"], map_params_neck, bb_type)
 
-        return cfg
+    def get_updated_optimizer(self, cfg):
+        """Get the updated optimizer"""
+        optim_wrapper = {}
+        optim_params = cfg["optimizer"]
+        optim_wrapper = {"optimizer": optim_params}
+        if cfg["optimizer_config"]["grad_clip"]:
+            optim_wrapper["clip_grad"] = {"max_norm": float(cfg["optimizer_config"]["grad_clip"]["max_norm"])}
+        optim_wrapper["paramwise_cfg"] = cfg["paramwise_cfg"]
 
-    def update_train_params_config(self, cfg):
+        return optim_wrapper
+
+    def update_train_params_config(self):
         """Update train parameters"""
         #  Update Train Params
-        paramwise_cfg = cfg["train"]["train_config"].get("paramwise_cfg", None)
-        if paramwise_cfg:
-            cfg["train"]["train_config"]["optim_cfg"].update(paramwise_cfg)
-        return cfg
-
-
-def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
-    """Test model with multiple gpus.
-    This method tests model with multiple gpus and collects the results
-    under two different modes: gpu and cpu modes. By setting 'gpu_collect=True'
-    it encodes results to gpu tensors and use gpu communication for results
-    collection. On cpu mode it saves the results on different gpus to 'tmpdir'
-    and collects them by the rank 0 worker.
-    Args:
-        model (nn.Module): Model to be tested.
-        data_loader (nn.Dataloader): Pytorch data loader.
-        tmpdir (str): Path of directory to save the temporary results from
-            different gpus under cpu mode.
-        gpu_collect (bool): Option to use either gpu or cpu to collect results.
-    Returns:
-        list: The prediction results.
-    """
-    model.eval()
-    results = []
-    dataset = data_loader.dataset
-    rank, world_size = get_dist_info()
-    if rank == 0:
-        # Check if tmpdir is valid for cpu_collect
-        if (not gpu_collect) and (tmpdir is not None and osp.exists(tmpdir)):
-            raise OSError((f'The tmpdir {tmpdir} already exists.',
-                           ' Since tmpdir will be deleted after testing,',
-                           ' please make sure you specify an empty one.'))
-        prog_bar = mmcv.ProgressBar(len(dataset))
-    time.sleep(2)
-    dist.barrier()
-    img_names = []
-    for _, data in enumerate(data_loader):
-        img_names += [f["filename"] for f in data["img_metas"].data[0]]
-        with torch.no_grad():
-            result = model(return_loss=False, **data)
-        if isinstance(result, list):
-            results.extend(result)
-        else:
-            results.append(result)
-
-        if rank == 0:
-            batch_size = data['img'].size(0)
-            for _ in range(batch_size * world_size):
-                prog_bar.update()
-
-    # collect results from all ranks
-    if gpu_collect:
-        results = collect_results_gpu(results, len(dataset))
-    else:
-        results = collect_results_cpu(results, len(dataset), tmpdir)
-    return results, img_names
+        train_param_config = self.config["train"]["train_config"]
+        self.updated_config["val_cfg"] = dict()
+        self.updated_config["test_cfg"] = dict()
+        self.updated_config["default_hooks"] = train_param_config["default_hooks"]
+        self.updated_config["default_hooks"]["checkpoint"]["interval"] = train_param_config["checkpoint_config"]["interval"]
+        self.updated_config["default_hooks"]["logger"]["type"] = "TaoTextLoggerHook"
+        self.updated_config["default_hooks"]["logger"]["interval"] = train_param_config["logging"]["interval"]
+        self.updated_config["auto_scale_lr"] = {"base_batch_size": train_param_config["runner"]["auto_scale_lr_bs"]}
+        self.updated_config["train_cfg"] = {"by_epoch": True, "max_epochs": train_param_config["runner"]["max_epochs"], "val_interval": train_param_config["evaluation"]["interval"]}
+        self.updated_config["optim_wrapper"] = self.get_updated_optimizer(train_param_config)
+        self.updated_config["param_scheduler"] = [train_param_config["lr_config"]]
+        self.updated_config["load_from"] = train_param_config["load_from"]
+        self.updated_config["resume"] = train_param_config["resume"]
+        self.updated_config["custom_hooks"] = train_param_config["custom_hooks"]
+        self.updated_config["find_unused_parameters"] = train_param_config["find_unused_parameters"]
 
 
 def load_model(model_path, mmcls_config=None, return_ckpt=False):

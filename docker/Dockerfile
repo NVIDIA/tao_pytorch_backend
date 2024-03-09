@@ -1,4 +1,4 @@
-ARG PYTORCH_BASE_IMAGE=nvcr.io/nvidia/pytorch:23.08-py3
+ARG PYTORCH_BASE_IMAGE=nvcr.io/nvidia/pytorch:23.12-py3
 FROM ${PYTORCH_BASE_IMAGE}
 
 # Ensure apt-get won't prompt for selecting options
@@ -32,7 +32,7 @@ RUN mkdir trt_oss_src && \
     -DCMAKE_CUDA_ARCHITECTURES="53;60;61;70;75;80;86;90" \
     -DTRT_LIB_DIR=/usr/lib/x86_64-linux-gnu \
     -DTRT_BIN_DIR=`pwd`/out \
-    -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.2/bin/nvcc \
+    -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.3/bin/nvcc \
     -DCUDNN_VERSION=8.9 && \
   make -j16 nvinfer_plugin nvinfer_plugin_static && \
   cp libnvinfer_plugin.so.8.6.1 /usr/lib/x86_64-linux-gnu/libnvinfer_plugin.so.8.6.1 && \
@@ -40,12 +40,17 @@ RUN mkdir trt_oss_src && \
   cd ../../../ && \
   rm -rf trt_oss_src
 
+
 COPY docker/requirements-pip.txt requirements-pip.txt
 # Forcing cython==0.29.36 for pycocotools-fix with python3.10.
-RUN pip install Cython==0.29.36 \
-  && pip install --ignore-installed -r requirements-pip.txt \
+RUN pip install Cython==0.29.36
+RUN pip uninstall -y jupyterlab
+RUN pip install --upgrade pip
+RUN pip install -r requirements-pip.txt \
   && rm requirements-pip.txt
-
+RUN pip install -U openmim && mim install mmengine "mmcv>=2.0.0" "mmpretrain>=1.0.0rc8"
+RUN pip install "mmsegmentation>=1.0.0" mmdeploy
+RUN pip install --upgrade setuptools
 COPY docker/requirements-pip-pytorch.txt requirements-pip-pytorch.txt
 RUN pip install --ignore-installed --no-deps -r requirements-pip-pytorch.txt \
   && rm requirements-pip-pytorch.txt
@@ -53,14 +58,6 @@ RUN pip install --ignore-installed --no-deps -r requirements-pip-pytorch.txt \
 COPY docker/requirements-pip-odise.txt requirements-pip-odise.txt
 RUN pip install --ignore-installed --no-deps -r requirements-pip-odise.txt \
   && rm requirements-pip-odise.txt
-
-# Install mmcv from source for our cuda versions.
-COPY third_party/mmcv/mmcv.patch mmcv.patch
-RUN git clone https://github.com/open-mmlab/mmcv.git \
-  && cd mmcv && git checkout v1.7.1 \
-  && git apply /opt/mmcv.patch \
-  && pip install -r requirements/optional.txt --ignore-installed \
-  && FORCE_CUDA=1 MMCV_WITH_OPS=1 python setup.py install
 
 # Setup user account
 ARG uid=1000

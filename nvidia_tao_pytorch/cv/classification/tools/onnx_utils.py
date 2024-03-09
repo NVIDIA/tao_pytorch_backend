@@ -30,7 +30,6 @@ import numpy as np
 from functools import partial
 import onnxruntime as rt
 
-from mmcv.onnx import register_extra_symbolics
 from nvidia_tao_pytorch.cv.classification.models.dinov2_vit import DinoV2ViT, interpolate_pos_encoding
 
 
@@ -255,8 +254,8 @@ def pytorch_to_onnx(model,
         )
         setattr(model.backbone, "pos_embed", torch.nn.Parameter(reshaped_embed))
 
-        if logger:
-            logger.info("Reshape positional encoding for DinoV2ViT")
+        # if logger:
+        #     logger.info("Reshape positional encoding for DinoV2ViT")
 
     mm_inputs = _demo_mm_inputs(input_shape, num_classes)
 
@@ -264,9 +263,9 @@ def pytorch_to_onnx(model,
     img_list = [img[None, :] for img in imgs]
 
     # replace original forward function
-    origin_forward_test = model.forward_test
-    model.forward = partial(model.forward_test)
-    register_extra_symbolics(opset_version)
+    origin_forward_test = model.forward
+    model.forward = partial(model.forward)
+    # register_extra_symbolics(opset_version)
 
     # support dynamic shape export
     dynamic_axes = {
@@ -277,10 +276,10 @@ def pytorch_to_onnx(model,
             0: 'batch'
         }
     }
-
+    print(imgs.size())
     with torch.no_grad():
         torch.onnx.export(
-            model, (img_list, ),
+            model, (imgs, ),
             output_file,
             input_names=['input_1'],
             output_names=['probs'],
@@ -309,7 +308,7 @@ def pytorch_to_onnx(model,
 
         # check the numerical value
         # get pytorch output
-        pytorch_result = model(img_list)[0]
+        pytorch_result = model(imgs)[0]
 
         # get onnx output
         input_all = [node.name for node in onnx_model.graph.input]
@@ -321,7 +320,7 @@ def pytorch_to_onnx(model,
         sess = rt.InferenceSession(output_file)
         onnx_result = sess.run(
             None, {net_feed_input[0]: img_list[0].detach().numpy()})[0][0]
-
+        pytorch_result = pytorch_result.detach().numpy()
         np.testing.assert_allclose(pytorch_result, onnx_result, rtol=1e-04, atol=1e-06)
 
         if logger:

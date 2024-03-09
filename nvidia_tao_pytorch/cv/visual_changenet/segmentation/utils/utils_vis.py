@@ -35,15 +35,15 @@ from torchvision import utils
 # LandSCD mapping for external use."""
 colour_mappings_landSCD = {
     '0': (255, 255, 255),
-    '1': (229, 156, 22),
-    '2': (196, 67, 84),
-    '3': (50, 153, 50),
-    '4': (229, 115, 213),
-    '5': (255, 0, 255),
-    '6': (114, 229, 190),
-    '7': (209, 69, 17),
-    '8': (186, 218, 85),
-    '9': (132, 17, 209)
+    '1': (255, 165, 0),
+    '2': (230, 30, 100),
+    '3': (70, 140, 0),
+    '4': (218, 112, 214),
+    '5': (0, 170, 240),
+    '6': (127, 235, 170),
+    '7': (230, 80, 0),
+    '8': (205, 220, 57),
+    '9': (218, 165, 32)
 }
 
 
@@ -62,7 +62,8 @@ def get_color_mapping(dataset_name, num_classes=None, color_mapping_custom=None)
     """
     output_color_mapping = None
     if color_mapping_custom is not None:
-        assert num_classes == len(color_mapping_custom.keys()), f"""Number of color mappings ({len(color_mapping_custom.keys())}) provided must match number of classes ({num_classes})"""
+        assert num_classes == len(color_mapping_custom.keys()), \
+            f"""Number of color mappings ({len(color_mapping_custom.keys())}) provided must match number of classes ({num_classes})"""
         output_color_mapping = color_mapping_custom
     elif dataset_name == 'LandSCD':
         output_color_mapping = colour_mappings_landSCD

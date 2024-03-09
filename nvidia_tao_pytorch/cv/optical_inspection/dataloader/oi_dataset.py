@@ -62,7 +62,6 @@ class SiameseNetworkTRIDataset(Dataset):
                 self.num_inputs
             ))
         # self.tensorBR = tensorBR
-        self.ext = '.jpg'
 
     def get_absolute_image_path(self, prefix, light=None):
         """

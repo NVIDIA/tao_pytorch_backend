@@ -17,7 +17,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from nvidia_tao_pytorch.cv.re_identification.dataloader.datasets.market1501 import Market1501
-from nvidia_tao_pytorch.cv.re_identification.dataloader.sampler import RandomIdentitySampler
+from nvidia_tao_pytorch.cv.re_identification.dataloader.sampler import RandomIdentitySampler, RandomIdentitySamplerDDP
 from nvidia_tao_pytorch.cv.re_identification.dataloader.datasets.bases import ImageDataset
 from nvidia_tao_pytorch.cv.re_identification.dataloader.transforms import build_transforms
 
@@ -107,12 +107,25 @@ def build_dataloader(cfg, is_train):
         train_transforms = build_transforms(cfg, is_train=True)
         num_classes = dataset.num_train_pids
         train_dataset = ImageDataset(dataset.train, train_transforms)
-        train_loader = DataLoader(
-            train_dataset, batch_size=cfg["dataset"]["batch_size"] * num_gpus,
-            sampler=RandomIdentitySampler(dataset.train, cfg["dataset"]["batch_size"] * num_gpus,
-                                          cfg["dataset"]["num_instances"] * num_gpus),
-            num_workers=num_workers, collate_fn=train_collate_fn, drop_last=True
-        )
+
+        if num_gpus > 1:
+            mini_batch_size = cfg["dataset"]["batch_size"] // num_gpus
+            data_sampler = RandomIdentitySamplerDDP(dataset.train, cfg["dataset"]["batch_size"], cfg["dataset"]["num_instances"], num_gpus)
+            batch_sampler = torch.utils.data.sampler.BatchSampler(data_sampler, mini_batch_size, True)
+            train_loader = torch.utils.data.DataLoader(
+                train_dataset,
+                num_workers=num_workers,
+                batch_sampler=batch_sampler,
+                collate_fn=train_collate_fn,
+                pin_memory=True,
+            )
+        else:
+            train_loader = DataLoader(
+                train_dataset, batch_size=cfg["dataset"]["batch_size"] * num_gpus,
+                sampler=RandomIdentitySampler(dataset.train, cfg["dataset"]["batch_size"] * num_gpus,
+                                              cfg["dataset"]["num_instances"] * num_gpus),
+                num_workers=num_workers, collate_fn=train_collate_fn, drop_last=True
+            )
         enumerate(train_loader)
     else:
         num_classes = dataset.num_gallery_pids
@@ -121,5 +134,6 @@ def build_dataloader(cfg, is_train):
         val_dataset, batch_size=cfg["dataset"]["val_batch_size"] * num_gpus, shuffle=False,
         num_workers=num_workers, collate_fn=val_collate_fn
     )
+
     enumerate(val_loader)
     return train_loader, val_loader, len(dataset.query), num_classes

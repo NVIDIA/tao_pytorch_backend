@@ -118,9 +118,11 @@ class ICDAR2015Dataset(BaseDataSet):
                 params = line.strip().strip('\ufeff').strip('\xef\xbb\xbf').split(',')
                 try:
                     box = order_points_clockwise(np.array(list(map(float, params[:8]))).reshape(-1, 2))
+                    if not (box > -50).all():
+                        continue
                     if cv2.contourArea(box) > 0:
                         boxes.append(box)
-                        label = params[8]
+                        label = ','.join(params[8:])
                         texts.append(label)
                         ignores.append(label in self.ignore_tags)
                 except Exception:

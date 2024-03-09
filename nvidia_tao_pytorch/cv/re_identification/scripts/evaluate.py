@@ -107,6 +107,10 @@ def run_experiment(experiment_config, results_dir, key):
     print(tabulate(table, headers=["Name", "Score"], floatfmt=".4f", tablefmt="fancy_grid"))
 
     plt.figure()
+
+    if isinstance(cmc, torch.Tensor):
+        cmc = cmc.cpu().numpy()
+
     cmc_percentages = [value * 100 for value in cmc]
     plt.xticks(np.arange(len(cmc_percentages)), np.arange(1, len(cmc_percentages) + 1))
     plt.plot(cmc_percentages, marker="*")

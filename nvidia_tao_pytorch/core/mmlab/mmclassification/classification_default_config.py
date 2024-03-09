@@ -34,8 +34,8 @@ class TrainData:
 
     type: str = "ImageNet"
     data_prefix: Optional[str] = None
-    pipeline: List[Any] = field(default_factory=lambda: [{"type": "RandomResizedCrop", "size": 224},
-                                {"type": "RandomFlip", "flip_prob": 0.5, "direction": "horizontal"}])
+    pipeline: List[Any] = field(default_factory=lambda: [{"type": "RandomResizedCrop", "scale": 224},
+                                {"type": "RandomFlip", "prob": 0.5, "direction": "horizontal"}])
     classes: Optional[str] = None
 
 
@@ -46,7 +46,7 @@ class ValData:
     type: str = "ImageNet"
     data_prefix: Optional[str] = None
     ann_file: Optional[str] = None
-    pipeline: List[Any] = field(default_factory=lambda: [{"type": "Resize", "size": (256, -1)},
+    pipeline: List[Any] = field(default_factory=lambda: [{"type": "Resize", "scale": 224},
                                 {"type": "CenterCrop", "crop_size": 224}])
     classes: Optional[str] = None
 
@@ -58,7 +58,7 @@ class TestData:
     type: str = "ImageNet"
     data_prefix: Optional[str] = None
     ann_file: Optional[str] = None
-    pipeline: List[Any] = field(default_factory=lambda: [{"type": "Resize", "size": (256, -1)},
+    pipeline: List[Any] = field(default_factory=lambda: [{"type": "Resize", "scale": 224},
                                                          {"type": "CenterCrop", "crop_size": 224}])
     classes: Optional[str] = None
 
@@ -80,7 +80,10 @@ class DatasetConfig:
 
     img_norm_cfg: ImgNormConfig = ImgNormConfig()
     data: DataConfig = DataConfig()
-    sampler: Optional[Dict[Any, Any]] = None  # Allowed sampler : RepeatAugSampler
+    sampler: Dict[Any, Any] = field(default_factory=lambda: {"type": "DefaultSampler", "shuffle": True})  # Allowed sampler : RepeatAugSampler
+    pin_memory: bool = True  # Newly supported
+    persistent_workers: bool = True  # Newly supported
+    collate_fn: Dict[Any, Any] = field(default_factory=lambda: {"type": "default_collate"})  # Does not change
 
 
 @dataclass
@@ -96,6 +99,7 @@ class RunnerConfig:
 
     type: str = "TAOEpochBasedRunner"  # Currently We support only Epochbased Runner - Non configurable
     max_epochs: int = 20  # Set this if Epoch based runner
+    auto_scale_lr_bs: int = 1024
 
 
 @dataclass
@@ -141,6 +145,15 @@ class EvaluationConfig:
 
 
 @dataclass
+class EnvConfig:
+    """Environment Config."""
+
+    cudnn_benchmark: bool = False
+    mp_cfg: Dict[Any, Any] = field(default_factory=lambda: {"mp_start_method": "fork", "opencv_num_threads": 0})
+    dist_cfg: Dict[Any, Any] = field(default_factory=lambda: {"backend": "nccl"})
+
+
+@dataclass
 class TrainConfig:
     """Train Config."""
 
@@ -150,20 +163,23 @@ class TrainConfig:
                                                                "weight_decay": 0.05})
     paramwise_cfg: Optional[Dict[Any, Any]] = None  # Not a must - needs to be provided in yaml
     optimizer_config: Dict[Any, Any] = field(default_factory=lambda: {'grad_clip': None})  # Gradient Accumulation and grad clip
-    lr_config: Dict[Any, Any] = field(default_factory=lambda: {"policy": 'CosineAnnealing',
-                                                               "min_lr": 10e-4, "warmup": "linear",
-                                                               "warmup_iters": 5,
-                                                               "warmup_ratio": 0.01,
-                                                               "warmup_by_epoch": True})
+    lr_config: Dict[Any, Any] = field(default_factory=lambda: dict(type='CosineAnnealingLR', T_max=95, by_epoch=True, begin=5, end=100))
     runner: RunnerConfig = RunnerConfig()
     logging: LogConfig = LogConfig()  # By default we add logging
     evaluation: EvaluationConfig = EvaluationConfig()  # Does not change
     find_unused_parameters: bool = False  # Does not change
     resume_training_checkpoint_path: Optional[str] = None
-    validate: bool = False
+    validate: bool = True  # Does not change
     # This param can be omitted if init_cfg is used in model_cfg. Both does same thing.
     load_from: Optional[str] = None  # If they want to load the weights till head
     custom_hooks: List[Any] = field(default_factory=lambda: [])
+    default_hooks: Dict[Any, Any] = field(default_factory=lambda: {"timer": {"type": "IterTimerHook"},
+                                                                   "param_scheduler": {"type": "ParamSchedulerHook"},
+                                                                   "checkpoint": {"type": "CheckpointHook", "interval": 1},
+                                                                   "logger": {"type": "LoggerHook"},
+                                                                   "visualization": {"type": "VisualizationHook", "enable": False},
+                                                                   "sampler_seed": {"type": "DistSamplerSeedHook"}})  # Does not change for old spec
+    resume: bool = False  # Not exposed
 
 
 # Experiment Common Configs
@@ -175,6 +191,8 @@ class ExpConfig:
     # If needed, the next line can be commented
     MASTER_ADDR: str = "127.0.0.1"
     MASTER_PORT: int = 631
+    env_config: EnvConfig = EnvConfig()
+    deterministic: bool = False
 
 
 @dataclass
@@ -192,6 +210,7 @@ class TrainExpConfig:
 class InferenceExpConfig:
     """Inference experiment config."""
 
+    exp_config: ExpConfig = ExpConfig()
     num_gpus: int = 1  # non configurable here
     batch_size: int = 1
     checkpoint: Optional[str] = None
@@ -204,6 +223,7 @@ class InferenceExpConfig:
 class EvalExpConfig:
     """Inference experiment config."""
 
+    exp_config: ExpConfig = ExpConfig()
     num_gpus: int = 1  # non configurable here
     batch_size: int = 1
     checkpoint: Optional[str] = None
@@ -239,15 +259,26 @@ class ExportExpConfig:
 
 
 @dataclass
+class LRHeadConfig:
+    """Logistic Regression Head Config"""
+
+    C: float = 0.316
+    max_iter: int = 5000
+    class_weight: Optional[str] = None
+    solver: Optional[str] = 'lbfgs'
+
+
+@dataclass
 class HeadConfig:
     """Head Config"""
 
-    type: str = 'LinearClsHead'
+    type: str = 'TAOLinearClsHead'
     num_classes: int = 1000
     in_channels: int = 448  # Mapped to differenct channels based according to the backbone used in the fan_model.py
     custom_args: Optional[Dict[Any, Any]] = None
     loss: Dict[Any, Any] = field(default_factory=lambda: {"type": 'CrossEntropyLoss'})
     topk: List[int] = field(default_factory=lambda: [1, ])
+    lr_head: LRHeadConfig = LRHeadConfig()
 
 
 @dataclass

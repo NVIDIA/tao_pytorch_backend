@@ -18,55 +18,6 @@
 
 """Data Utils Module."""
 
-from torch.utils.data.dataset import ConcatDataset as _ConcatDataset
-import torch.distributed as dist
-from torch.utils.data import DistributedSampler
-from nvidia_tao_pytorch.cv.segformer.dataloader.builder import DATASETS
-import copy
-import random
-from functools import partial
-
-import numpy as np
-from mmcv.parallel import collate
-from mmcv.runner import get_dist_info
-from mmcv.utils import build_from_cfg
-from mmcv.utils.parrots_wrapper import DataLoader, PoolDataLoader
-
-
-def _concat_dataset(cfg, default_args=None):
-    """Build :obj:`ConcatDataset by."""
-    img_dir = cfg['img_dir']
-    ann_dir = cfg.get('ann_dir', None)
-    split = cfg.get('split', None)
-    num_img_dir = len(img_dir) if isinstance(img_dir, (list, tuple)) else 1
-    if ann_dir is not None:
-        num_ann_dir = len(ann_dir) if isinstance(ann_dir, (list, tuple)) else 1
-    else:
-        num_ann_dir = 0
-    if split is not None:
-        num_split = len(split) if isinstance(split, (list, tuple)) else 1
-    else:
-        num_split = 0
-    if num_img_dir > 1:
-        assert num_ann_dir in (num_img_dir, 0)
-        assert num_split in (num_img_dir, 0)
-    else:
-        assert num_split == num_ann_dir or num_ann_dir <= 1
-    num_dset = max(num_split, num_img_dir)
-
-    datasets = []
-    for i in range(num_dset):
-        data_cfg = copy.deepcopy(cfg)
-        if isinstance(img_dir, (list, tuple)):
-            data_cfg['img_dir'] = img_dir[i]
-        if isinstance(ann_dir, (list, tuple)):
-            data_cfg['ann_dir'] = ann_dir[i]
-        if isinstance(split, (list, tuple)):
-            data_cfg['split'] = split[i]
-        datasets.append(build_dataset(data_cfg, default_args))
-
-    return ConcatDataset(datasets)
-
 
 class TargetClass(object):
     """Target class parameters."""
@@ -88,173 +39,57 @@ class TargetClass(object):
         self.train_name = train_name
 
 
-def get_train_class_mapping(target_classes):
-    """Utility function that returns the mapping of the train id to orig class."""
-    train_id_name_mapping = {}
+def build_target_class_list(dataset_config):
+    """Build a list of TargetClasses based on palette"""
+    target_classes = []
+    orig_class_label_id_map = {}
+    color_mapping = {}
+    for target_class in dataset_config["palette"]:
+        orig_class_label_id_map[target_class["seg_class"]] = target_class["label_id"]
+        color_mapping[target_class["seg_class"]] = target_class["rgb"]
+    class_label_id_calibrated_map = orig_class_label_id_map.copy()
+    for target_class in dataset_config["palette"]:
+        label_name = target_class["seg_class"]
+        train_name = target_class["mapping_class"]
+
+        class_label_id_calibrated_map[label_name] = orig_class_label_id_map[train_name]
+
+    train_ids = sorted(list(set(class_label_id_calibrated_map.values())))
+    train_id_calibrated_map = {}
+    for idx, tr_id in enumerate(train_ids):
+        train_id_calibrated_map[tr_id] = idx
+
+    class_train_id_calibrated_map = {}
+    for label_name, train_id in class_label_id_calibrated_map.items():
+        class_train_id_calibrated_map[label_name] = train_id_calibrated_map[train_id]
+
+    for target_class in dataset_config["palette"]:
+        target_classes.append(
+            TargetClass(target_class["seg_class"], label_id=target_class["label_id"],
+                        train_id=class_train_id_calibrated_map[target_class["seg_class"]],
+                        color=color_mapping[target_class["mapping_class"]],
+                        train_name=target_class["mapping_class"]
+                        ))
+
+    return target_classes
+
+
+def build_palette(target_classes):
+    """Build palette, classes and label_map."""
+    label_map = {}
+    classes_color = {}
+    id_color_map = {}
+    classes = []
+    palette = []
     for target_class in target_classes:
-        if target_class.train_id not in train_id_name_mapping.keys():
-            train_id_name_mapping[target_class.train_id] = [target_class.name]
-        else:
-            train_id_name_mapping[target_class.train_id].append(target_class.name)
-    return train_id_name_mapping
+        label_map[target_class.label_id] = target_class.train_id
+        if target_class.train_name not in classes_color.keys():
+            classes_color[target_class.train_id] = (target_class.train_name, target_class.color)
+            id_color_map[target_class.train_id] = target_class.color
+    keylist = list(classes_color.keys())
+    keylist.sort()
+    for train_id in keylist:
+        classes.append(classes_color[train_id][0])
+        palette.append(classes_color[train_id][1])
 
-
-@DATASETS.register_module()
-class ConcatDataset(_ConcatDataset):
-    """A wrapper of concatenated dataset.
-    Same as :obj:`torch.utils.data.dataset.ConcatDataset`, but
-    concat the group flag for image aspect ratio.
-    Args:
-        datasets (list[:obj:`Dataset`]): A list of datasets.
-    """
-
-    def __init__(self, datasets):
-        """Init Module."""
-        super(ConcatDataset, self).__init__(datasets)
-        self.CLASSES = datasets[0].CLASSES
-        self.PALETTE = datasets[0].PALETTE
-
-
-@DATASETS.register_module()
-class RepeatDataset(object):
-    """A wrapper of repeated dataset.
-    The length of repeated dataset will be `times` larger than the original
-    dataset. This is useful when the data loading time is long but the dataset
-    is small. Using RepeatDataset can reduce the data loading time between
-    epochs.
-    Args:
-        dataset (:obj:`Dataset`): The dataset to be repeated.
-        times (int): Repeat times.
-    """
-
-    def __init__(self, dataset, times):
-        """Init Module."""
-        self.dataset = dataset
-        self.times = times
-        self.CLASSES = dataset.CLASSES
-        self.PALETTE = dataset.PALETTE
-        self._ori_len = len(self.dataset)
-
-    def __getitem__(self, idx):
-        """Get item from original dataset."""
-        return self.dataset[idx % self._ori_len]
-
-    def __len__(self):
-        """The length is multiplied by ``times``"""
-        return self.times * self._ori_len
-
-
-def is_dist_avail_and_initialized():
-    """is dist initialized"""
-    is_dist = True
-    if not dist.is_available():
-        is_dist = False
-    else:
-        is_dist = dist.is_initialized() or False
-    return is_dist
-
-
-def build_dataset(cfg, default_args=None):
-    """Build datasets."""
-    if isinstance(cfg, (list, tuple)):
-        dataset = ConcatDataset([build_dataset(c, default_args) for c in cfg])
-    elif cfg['type'] == 'RepeatDataset':
-        dataset = RepeatDataset(
-            build_dataset(cfg['dataset'], default_args), cfg['times'])
-    elif isinstance(cfg.get('img_dir'), (list, tuple)) or isinstance(
-            cfg.get('split', None), (list, tuple)):
-        print("Concatenating datasets")
-
-        dataset = _concat_dataset(cfg, default_args)
-    else:
-        dataset = build_from_cfg(cfg, DATASETS, default_args)
-
-    return dataset
-
-
-def build_dataloader(dataset,
-                     samples_per_gpu,
-                     workers_per_gpu,
-                     num_gpus=1,
-                     dist=True,
-                     shuffle=True,
-                     seed=None,
-                     drop_last=False,
-                     pin_memory=True,
-                     dataloader_type='PoolDataLoader',
-                     **kwargs):
-    """Build PyTorch DataLoader.
-    In distributed training, each GPU/process has a dataloader.
-    In non-distributed training, there is only one dataloader for all GPUs.
-    Args:
-        dataset (Dataset): A PyTorch dataset.
-        samples_per_gpu (int): Number of training samples on each GPU, i.e.,
-            batch size of each GPU.
-        workers_per_gpu (int): How many subprocesses to use for data loading
-            for each GPU.
-        num_gpus (int): Number of GPUs. Only used in non-distributed training.
-        dist (bool): Distributed training/test or not. Default: True.
-        shuffle (bool): Whether to shuffle the data at every epoch.
-            Default: True.
-        seed (int | None): Seed to be used. Default: None.
-        drop_last (bool): Whether to drop the last incomplete batch in epoch.
-            Default: False
-        pin_memory (bool): Whether to use pin_memory in DataLoader.
-            Default: True
-        dataloader_type (str): Type of dataloader. Default: 'PoolDataLoader'
-        kwargs: any keyword argument to be used to initialize DataLoader
-    Returns:
-        DataLoader: A PyTorch dataloader.
-    """
-    rank, world_size = get_dist_info()
-    if dist:
-        sampler = DistributedSampler(
-            dataset, world_size, rank, shuffle=shuffle)
-        shuffle = False
-        batch_size = samples_per_gpu
-        num_workers = workers_per_gpu
-    else:
-        sampler = None
-        batch_size = num_gpus * samples_per_gpu
-        num_workers = num_gpus * workers_per_gpu
-
-    init_fn = partial(
-        worker_init_fn, num_workers=num_workers, rank=rank,
-        seed=seed) if seed is not None else None
-
-    assert dataloader_type in (
-        'DataLoader',
-        'PoolDataLoader'), f'unsupported dataloader {dataloader_type}'
-
-    if dataloader_type == 'PoolDataLoader':
-        dataloader = PoolDataLoader
-    elif dataloader_type == 'DataLoader':
-        dataloader = DataLoader
-
-    data_loader = dataloader(
-        dataset,
-        batch_size=batch_size,
-        sampler=sampler,
-        num_workers=num_workers,
-        collate_fn=partial(collate, samples_per_gpu=samples_per_gpu),
-        pin_memory=pin_memory,
-        shuffle=shuffle,
-        worker_init_fn=init_fn,
-        drop_last=drop_last,
-        **kwargs)
-
-    return data_loader
-
-
-def worker_init_fn(worker_id, num_workers, rank, seed):
-    """Worker init func for dataloader.
-    The seed of each worker equals to num_worker * rank + worker_id + user_seed
-    Args:
-        worker_id (int): Worker id.
-        num_workers (int): Number of workers.
-        rank (int): The rank of current process.
-        seed (int): The random seed to use.
-    """
-    worker_seed = num_workers * rank + worker_id + seed
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
+    return palette, classes, label_map, id_color_map

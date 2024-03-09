@@ -15,17 +15,17 @@
 """ open_clip Model Module """
 
 from torch import nn
-from mmcls.models.builder import BACKBONES
+from mmpretrain.registry import MODELS
 from open_clip import create_model
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class open_clip(nn.Module):
     """
     open_clip model
     """
 
-    def __init__(self, model_name="ViT-B-32", freeze=False, **kwargs):
+    def __init__(self, model_name="ViT-B-32", freeze=False, init_cfg=None, **kwargs):
         """
         Constructor for open_clip model
         """

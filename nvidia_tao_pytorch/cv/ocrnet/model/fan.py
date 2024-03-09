@@ -13,8 +13,8 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import DropPath, trunc_normal_, to_2tuple
-from mmcls.models.builder import BACKBONES
-from mmcv.runner import BaseModule
+from mmpretrain.registry import MODELS
+from mmpretrain.models.backbones.base_backbone import BaseBackbone
 from nvidia_tao_pytorch.cv.backbone.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.fan import (TokenMixing, SqueezeExcite, OverlapPatchEmbed,
                                                 PositionalEncodingFourier, ConvPatchEmbed,
@@ -331,7 +331,7 @@ class FANBlock(nn.Module):
         return x
 
 
-class FAN(BaseModule):
+class FAN(BaseBackbone):
     """Based on timm code bases
     https://github.com/rwightman/pytorch-image-models/tree/master/timm
     """
@@ -543,7 +543,7 @@ class FAN(BaseModule):
 # FAN-Hybrid Models
 # CNN backbones are based on ConvNeXt architecture with only first two stages for downsampling purpose
 # This has been verified to be beneficial for downstream tasks
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_tiny_8_p2_hybrid(FAN):
     """ FAN Tiny Hybrid """
 

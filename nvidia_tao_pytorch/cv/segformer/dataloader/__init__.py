@@ -14,8 +14,5 @@
 
 """Segformer dataloader module."""
 
-from .segformer_dataset import SFDataset
-from .custom_dataset import CustomDataset
-from .data_utils import ConcatDataset, RepeatDataset
-
-__all__ = ["SFDataset", "CustomDataset", "ConcatDataset", "RepeatDataset"]
+# flake8: noqa: F401, F403
+from .loading import *

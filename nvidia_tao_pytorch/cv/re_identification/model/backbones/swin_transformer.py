@@ -34,6 +34,9 @@ from torch.nn import Sequential
 from torch.nn import Linear
 from torch import Tensor
 
+from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
+from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
+
 
 def _ntuple(n):
     """
@@ -1606,6 +1609,13 @@ class SwinTransformer(BaseModule):
                     constant_init(m.weight, 1.0)
         else:
             ckpt = torch.load(pretrained, map_location='cpu')
+            if "state_dict_encrypted" in ckpt:
+                if ckpt.get("state_dict_encrypted", False):
+                    # Retrieve encryption key from TLTPyTorchCookbook.
+                    key = TLTPyTorchCookbook.get_passphrase()
+                    if key is None:
+                        raise PermissionError("Cannot access model state dict without the encryption key")
+                    ckpt = patch_decrypt_checkpoint(ckpt, key)
             if 'teacher' in ckpt:
                 ckpt = ckpt['teacher']
 
@@ -1623,6 +1633,8 @@ class SwinTransformer(BaseModule):
             for k, v in _state_dict.items():
                 if k.startswith('backbone.'):
                     state_dict[k[9:]] = v
+                elif k.startswith('model.base.'):
+                    state_dict[k[11:]] = v
 
             # strip prefix of state_dict
             if list(state_dict.keys())[0].startswith('module.'):

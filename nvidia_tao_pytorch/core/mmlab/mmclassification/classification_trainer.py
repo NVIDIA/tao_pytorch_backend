@@ -38,7 +38,7 @@ class TAOEpochBasedRunner(EpochBasedRunner):
     without symlinks which requires root access.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs):  # noqa pylint: disable=W0235
         """Init Function."""
         super(TAOEpochBasedRunner, self).__init__(*args, **kwargs)
 

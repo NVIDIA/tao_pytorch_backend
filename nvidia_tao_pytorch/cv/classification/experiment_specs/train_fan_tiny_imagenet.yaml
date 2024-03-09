@@ -1,3 +1,4 @@
+results_dir: ???
 dataset:
   data:
     samples_per_gpu: 128
@@ -6,17 +7,17 @@ dataset:
       data_prefix: "/ImageNet2012/ImageNet2012/train"
       pipeline: # Augmentations alone
         - type: RandomResizedCrop
-          size: 224
+          scale: 224
           backend: "pillow"
         - type: RandomFlip
-          flip_prob: 0.5
+          prob: 0.5
           direction: "horizontal"
         - type: ColorJitter
           brightness: 0.4
           contrast: 0.4
           saturation: 0.4
         - type: RandomResizedCrop
-          size: 224
+          scale: 224
         - type: RandomErasing
           erase_prob: 0.3
     val:

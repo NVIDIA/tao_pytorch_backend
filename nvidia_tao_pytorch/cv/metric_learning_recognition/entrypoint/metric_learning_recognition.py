@@ -100,7 +100,7 @@ def launch(parser, subtasks, network=None):
     time_lapsed = int(end - start)
 
     try:
-        gpu_data = list()
+        gpu_data = []
         for device in get_device_details():
             gpu_data.append(device.get_config())
         send_telemetry_data(

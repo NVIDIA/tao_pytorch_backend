@@ -14,29 +14,29 @@
 
 """ MMClassification Train Module """
 
-from mmcls.utils import get_root_logger
-from mmcls.models import build_classifier
-from mmcls.datasets import build_dataset
-from nvidia_tao_pytorch.cv.segformer.utils.common_utils import check_and_create
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.mmlab.mmclassification.classification_default_config import ExperimentConfig
-from nvidia_tao_pytorch.core.mmlab.mmclassification.classification_trainer import MMClsTrainer
-from nvidia_tao_pytorch.core.mmlab.mmclassification.utils import MMClsConfig
-from nvidia_tao_pytorch.core.mmlab.common.utils import set_env, set_distributed, get_latest_pth_model
+from nvidia_tao_pytorch.core.mmlab.mmclassification.utils import MMPretrainConfig
 from nvidia_tao_pytorch.cv.classification.heads import *  # noqa pylint: disable=W0401, W0614
 from nvidia_tao_pytorch.cv.classification.models import *  # noqa pylint: disable=W0401, W0614
+from nvidia_tao_pytorch.core.mmlab.mmclassification.logistic_regression_trainer import LogisticRegressionTrainer as LRTrainer
+from nvidia_tao_pytorch.core.mmlab.common.utils import get_latest_pth_model
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-import warnings
-import json
-import time
-import datetime
+
+import torch
+from mmengine.runner import Runner
+
 import os
+import warnings
+
+warnings.filterwarnings('ignore')
 
 
 def run_experiment(experiment_config, results_dir):
     """Start the training."""
-    check_and_create(results_dir)
+    os.makedirs(results_dir, exist_ok=True)
     # Set status logging
+
     status_file = os.path.join(results_dir, "status.json")
     status_logging.set_status_logger(
         status_logging.StatusLogger(
@@ -49,56 +49,35 @@ def run_experiment(experiment_config, results_dir):
         message="Starting Classification Train"
     )
     status_logger = status_logging.get_status_logger()
-    mmcls_config_obj = MMClsConfig(experiment_config)
-    mmcls_config = mmcls_config_obj.config
-    resume_checkpoint_local = get_latest_pth_model(results_dir)
-    resume_checkpoint_config = mmcls_config["train"]["train_config"]["resume_training_checkpoint_path"]
-    if not resume_checkpoint_config:  # If no resume ckpt was provided in the config
-        mmcls_config["train"]["train_config"]["resume_training_checkpoint_path"] = resume_checkpoint_local
+    status_logger.write(message="********************** Start logging for Training **********************.")
+    mmpretrain_config = MMPretrainConfig(experiment_config, phase="train")
+    train_cfg = mmpretrain_config.updated_config
+    train_cfg["work_dir"] = results_dir
+    if experiment_config.model.head.type == "LogisticRegressionHead":
+        lr_trainer = LRTrainer(train_cfg=experiment_config,
+                               updated_config=train_cfg,
+                               status_logger=status_logger)
+        lr_trainer.fit()
+        model = lr_trainer.model
+        model.eval()
+        checkpoint = {}
+        with torch.no_grad():
+            weights = lr_trainer.classifier.coef_
+            model.head.fc.weight.data.copy_(torch.from_numpy(weights))
+            biases = lr_trainer.classifier.intercept_
+            model.head.fc.bias.data.copy_(torch.from_numpy(biases))
+        checkpoint['state_dict'] = model.state_dict()
+        torch.save(checkpoint, os.path.join(results_dir, "model_lrHead_0.pth"))
 
-    # Set the logger
-    log_file = os.path.join(results_dir, 'log_train_{}.txt'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
-    logger = get_root_logger(log_file=log_file, log_level="INFO")
-    # log to file
-    logger.info('**********************Start logging for Training**********************')
-    status_logger.write(message="**********************Start logging for Training**********************.")
-    meta = set_env()
-    set_distributed(mmcls_config)
-
-    # set the encryption key:
-    seed = mmcls_config["train"]["exp_config"]["manual_seed"]
-    meta['seed'] = seed
-
-    datasets = [build_dataset(mmcls_config["dataset"]["data"]["train"])]
-    status_logger.write(message="Completed Data Module Construction", status_level=status_logging.Status.RUNNING)
-
-    model = build_classifier(
-        mmcls_config["model"])
-
-    if mmcls_config["model"].get("backbone", {}).get("pretrained", None) is None:
-        model.init_weights()
-
-    status_logger.write(message="Model Classifier Construction", status_level=status_logging.Status.RUNNING)
-    exp_params_file = os.path.join(results_dir, "experiment_params.json")
-    try:
-        with open(exp_params_file, 'w') as fp:
-            json.dump(mmcls_config, fp)
-    except Exception as e:
-        logger.info(e)
-        warnings.warn("The expeirment spec paras could not be dumped into file.")
-
-    meta["CLASSES"] = datasets[0].CLASSES
-    timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
-    cls_trainer = MMClsTrainer(
-        datasets,
-        model,
-        timestamp=timestamp,
-        meta=meta,
-        result_dir=results_dir,
-        experiment_spec=mmcls_config)
-    cls_trainer.set_up_trainer()  # This will setup dataloader, model, runner
-    cls_trainer.fit()
-    status_logger.write(message="Completed Train.", status_level=status_logging.Status.SUCCESS)
+    else:
+        resume_checkpoint = get_latest_pth_model(results_dir)
+        if resume_checkpoint:
+            train_cfg["load_from"] = resume_checkpoint
+            train_cfg["resume"] = True
+            train_cfg["model"]["backbone"]["init_cfg"] = None  # Disable pretrained weights if there are any
+        train_cfg["work_dir"] = results_dir
+        runner = Runner.from_cfg(train_cfg)
+        runner.train()
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,6 +97,8 @@ def main(cfg: ExperimentConfig) -> None:
             results_dir = os.path.join(cfg.results_dir, "train")
 
         run_experiment(cfg, results_dir=results_dir)
+        status_logging.get_status_logger().write(status_level=status_logging.Status.SUCCESS,
+                                                 message="Training finished successfully.")
     except (KeyboardInterrupt, SystemExit):
         status_logging.get_status_logger().write(
             message="Training was interrupted",

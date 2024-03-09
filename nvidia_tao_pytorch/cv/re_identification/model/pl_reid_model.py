@@ -229,12 +229,13 @@ class ReIdentificationModel(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         """Validation step end."""
-        cmc, mAP = self.metrics.compute()
-        for r in [1, 5, 10]:
-            self.log(f"cmc_rank_{r}", cmc[r - 1], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
-            self.status_logging_dict[f"cmc_rank_{r}"] = str(cmc[r - 1])
-        self.log("mAP", mAP, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
-        self.status_logging_dict["mAP"] = str(mAP)
+        if self.trainer.global_rank == 0:
+            cmc, mAP = self.metrics.compute()
+            for r in [1, 5, 10]:
+                self.log(f"cmc_rank_{r}", cmc[r - 1], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
+                self.status_logging_dict[f"cmc_rank_{r}"] = str(cmc[r - 1])
+            self.log("mAP", mAP, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
+            self.status_logging_dict["mAP"] = str(mAP)
 
     def forward(self, x):
         """Forward of the re-identification model.
@@ -270,7 +271,7 @@ class ReIdentificationModel(pl.LightningModule):
 
         """
         img_paths = glob.glob(os.path.join(dir_path, '*.jpg'))
-        pattern = re.compile(r'([-\d]+)_c(\d)')
+        pattern = re.compile(r'(\d+)_c(\d+)')
         pid_container = set()
         for img_path in img_paths:
             pid, _ = map(int, pattern.search(img_path).groups())

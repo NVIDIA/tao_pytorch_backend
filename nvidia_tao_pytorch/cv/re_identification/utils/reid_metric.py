@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from nvidia_tao_pytorch.cv.re_identification.utils.eval_reid import eval_func
-from nvidia_tao_pytorch.cv.re_identification.utils.re_ranking import re_rank
+from nvidia_tao_pytorch.cv.re_identification.utils.re_ranking import rerank_gpu
 
 
 def euclidean_distance(qf, gf):
@@ -138,7 +138,6 @@ class R1_mAP():
         distmat = torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
             torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
         distmat.addmm_(qf, gf.t(), beta=1, alpha=-2)
-        distmat = distmat.cpu().numpy()
         cmc, mAP = eval_func(self.cfg, distmat, q_pids, g_pids, q_camids, g_camids, q_img_paths, g_img_paths, self.prepare_for_training)
 
         return cmc, mAP
@@ -207,23 +206,18 @@ class R1_mAP_reranking():
             feats = torch.nn.functional.normalize(feats, dim=1, p=2)
 
         # query
-        qf = feats[:self.num_query].cpu().numpy()
+        qf = feats[:self.num_query]
         q_pids = np.asarray(self.pids[:self.num_query])
         q_camids = np.asarray(self.camids[:self.num_query])
         q_img_paths = self.img_paths[:self.num_query]
         # gallery
-        gf = feats[self.num_query:].cpu().numpy()
+        gf = feats[self.num_query:]
         g_pids = np.asarray(self.pids[self.num_query:])
         g_camids = np.asarray(self.camids[self.num_query:])
         g_img_paths = self.img_paths[self.num_query:]
 
-        # m, n = qf.shape[0], gf.shape[0]
-        # distmat = torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
-        #           torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
-        # distmat.addmm_(1, -2, qf, gf.t())
-        # distmat = distmat.cpu().numpy()
         print("The distance matrix is computed using euclidean distance. It is then processed by re-ranking.")
-        distmat = re_rank(qf, gf, k1=self.cfg["re_ranking"]["k1"], k2=self.cfg["re_ranking"]["k2"], lambda_value=self.cfg["re_ranking"]["lambda_value"])
+        distmat = rerank_gpu(qf, gf, k1=self.cfg["re_ranking"]["k1"], k2=self.cfg["re_ranking"]["k2"], lambda_value=self.cfg["re_ranking"]["lambda_value"])
         cmc, mAP = eval_func(self.cfg, distmat, q_pids, g_pids, q_camids, g_camids, q_img_paths, g_img_paths, self.prepare_for_training)
 
         return cmc, mAP

@@ -17,6 +17,7 @@ from collections import namedtuple
 import os
 import tempfile
 
+from easydict import EasyDict
 import numpy as np
 import torch
 
@@ -31,6 +32,23 @@ def decrypt_pytorch(input_file_name, output_file_name, key):
             input_stream=open_temp_file, output_stream=open_encoded_file,
             passphrase=key, encryption=True
         )
+
+
+def model_config_lower_case(cfg):
+    """Convert cfg key to lower cases."""
+    new_cfg = EasyDict()
+    for k, v in cfg.items():
+        if isinstance(v, (dict, EasyDict)):
+            new_cfg[k.lower()] = model_config_lower_case(v)
+        else:
+            if k == "NMS_PRE_MAXSIZE":
+                new_k = "nms_pre_max_size"
+            elif k == "NMS_POST_MAXSIZE":
+                new_k = "nms_post_max_size"
+            else:
+                new_k = k.lower()
+            new_cfg[new_k] = v
+    return new_cfg
 
 
 def load_checkpoint(model_path, key, to_cpu=False):
@@ -65,6 +83,9 @@ def load_checkpoint(model_path, key, to_cpu=False):
     # It can be a DDP wrapper
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         model = model.module
+    # For backward compatibility fo old PP PTMs
+    model.model_cfg = model_config_lower_case(model.model_cfg)
+    model.dense_head.model_cfg = model_config_lower_case(model.dense_head.model_cfg)
     return model, opt_state, epoch, it
 
 

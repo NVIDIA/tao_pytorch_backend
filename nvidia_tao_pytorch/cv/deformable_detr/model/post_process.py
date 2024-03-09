@@ -17,7 +17,7 @@
 import torch
 from torch import nn
 import os
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils import box_ops
 
@@ -74,7 +74,7 @@ def check_key(my_dict, key):
     return bool(key in my_dict.keys())
 
 
-def save_inference_prediction(predictions, output_dir, conf_threshold, label_map, color_map, is_internal=False):
+def save_inference_prediction(predictions, output_dir, conf_threshold, label_map, color_map, is_internal=False, outline_width=3):
     """Save the annotated images and label file to the output directory.
 
     Args:
@@ -84,6 +84,7 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
         label_map(Dict): Dictonary for the class lables.
         color_map(Dict): Dictonary for the color mapping to annotate the bounding box per class.
         is_internal(Bool) : To save the inference results in format of output_dir/sequence/image_name.
+        outline_width (int): Bbox outline width (default: 3)
     """
     # If not explicitly specified, use COCO classes as default color scheme.
     if color_map is None:
@@ -92,7 +93,6 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
     for pred in predictions:
 
         image_name = pred['image_names']
-        image_size = pred['image_size']
         pred_boxes = pred['boxes']
         pred_labels = pred['labels']
         pred_scores = pred['scores']
@@ -123,7 +123,8 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
             os.makedirs(output_annotate_root, exist_ok=True)
 
         pil_input = Image.open(image_name).convert("RGB")
-        pil_input = pil_input.resize((image_size[1], image_size[0]))
+        pil_input = ImageOps.exif_transpose(pil_input)
+
         im1 = ImageDraw.Draw(pil_input)
 
         with open(output_label_name, 'w') as f:
@@ -160,12 +161,12 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
                         im1.rectangle(((x1, y1, x2, y2)),
                                       fill=None,
                                       outline=color_map[class_name],
-                                      width=1)
+                                      width=outline_width)
                     else:
                         im1.rectangle(((x1, y1, x2, y2)),
                                       fill=None,
                                       outline=color_map[class_name],
-                                      width=1)
+                                      width=outline_width)
                         # text pad
                         im1.rectangle(((x1, y1 - 10), (x1 + (x2 - x1), y1)),
                                       fill=color_map[class_name])

@@ -17,14 +17,13 @@
 import torch
 import torch.nn as nn
 from timm.models.layers import trunc_normal_
-
-from mmcls.models.builder import BACKBONES
-from mmcv.runner import BaseModule
+from mmpretrain.registry import MODELS
+from mmpretrain.models.backbones.base_backbone import BaseBackbone
 
 from nvidia_tao_pytorch.cv.backbone.gc_vit import PatchEmbed, GCViTLayer, _to_channel_first
 
 
-class GCViT(BaseModule):
+class GCViT(BaseBackbone):
     """
     GCViT based on: "Hatamizadeh et al.,
     Global Context Vision Transformers <https://arxiv.org/abs/2206.09959>"
@@ -47,6 +46,7 @@ class GCViT(BaseModule):
                  norm_layer=nn.LayerNorm,
                  layer_scale=None,
                  use_rel_pos_bias=True,
+                 init_cfg=None,
                  **kwargs):
         """
         Args:
@@ -67,7 +67,7 @@ class GCViT(BaseModule):
             layer_scale: layer scaling coefficient.
             use_rel_pos_bias: set bias for relative positional embedding
         """
-        super().__init__()
+        super().__init__(init_cfg)
         num_features = int(dim * 2 ** (len(depths) - 1))
         self.num_classes = num_classes
         self.patch_embed = PatchEmbed(in_chans=in_chans, dim=dim)
@@ -130,7 +130,7 @@ class GCViT(BaseModule):
         return x
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class gc_vit_xxtiny(GCViT):
     """GCViT-XXTiny model."""
 
@@ -146,7 +146,7 @@ class gc_vit_xxtiny(GCViT):
         super(gc_vit_xxtiny, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class gc_vit_xtiny(GCViT):
     """GCViT-XTiny model."""
 
@@ -162,7 +162,7 @@ class gc_vit_xtiny(GCViT):
         super(gc_vit_xtiny, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class gc_vit_tiny(GCViT):
     """GCViT-Tiny model."""
 
@@ -178,7 +178,7 @@ class gc_vit_tiny(GCViT):
         super(gc_vit_tiny, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class gc_vit_small(GCViT):
     """GCViT-Small model."""
 
@@ -195,7 +195,7 @@ class gc_vit_small(GCViT):
         super(gc_vit_small, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class gc_vit_base(GCViT):
     """GCViT-Base model."""
 
@@ -212,7 +212,7 @@ class gc_vit_base(GCViT):
         super(gc_vit_base, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class gc_vit_large(GCViT):
     """GCViT-Large model."""
 
@@ -229,7 +229,7 @@ class gc_vit_large(GCViT):
         super(gc_vit_large, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class gc_vit_large_384(GCViT):
     """GCViT-Large Input Resolution 384 model."""
 

@@ -1,4 +1,4 @@
-encryption_key: tlt_encode
+encryption_key: "???"
 task: classify
 train:
   resume_training_checkpoint_path: null

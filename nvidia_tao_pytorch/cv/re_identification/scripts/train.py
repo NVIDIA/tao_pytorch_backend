@@ -73,7 +73,7 @@ def run_experiment(experiment_config,
 
     acc_flag = None
     if num_gpus > 1 or len(gpus_ids) > 1:
-        acc_flag = DDPStrategy(find_unused_parameters=False)
+        acc_flag = DDPStrategy(find_unused_parameters=True)
 
     if "swin" in experiment_config["model"]["backbone"]:
         if num_gpus > 1:

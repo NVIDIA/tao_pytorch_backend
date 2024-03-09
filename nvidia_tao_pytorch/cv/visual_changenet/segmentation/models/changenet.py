@@ -31,6 +31,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 import logging
 
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
@@ -38,6 +39,7 @@ from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils 
     ResidualBlock, ConvLayer, resize, count_params,
 )
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.fan import fan_model_dict
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.vit_adapter import vit_adapter_model_dict
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank, load_pretrained_weights
 
 logger = logging.getLogger(__name__)
@@ -233,15 +235,30 @@ class ChangeNetSegment(nn.Module):
         feature_strides (list): List of feature strides for the Transformer Decoder (default is [4, 8, 16, 16]).
         in_index (list): List of input indices for the Transformer Decoder (default is [0, 1, 2, 3]).
         feat_downsample: Flag to indicate whether to use feature downsampling for the transformer block for FAN-Hybrid
+        learnable_difference_modules (int): Number of decoder difference modules for Architecture 2
+        pretrained_backbone_path (str): Path to the pre-trained backbone weights.
+        activation_checkpoint (bool): Enable activation checkpointing
+        freeze_backbone: Flag to freeze backbone weights during training.
+        return_interm_indices (list): list of layer indices to reutrn as backbone features.
     """
 
     def __init__(self, input_nc=3, output_nc=2, decoder_softmax=False, embed_dim=256, model='fan_tiny_8_p4_hybrid_256', img_size=256,
                  embed_dims=[128, 256, 384, 384], feature_strides=[4, 8, 16, 16], in_index=[0, 1, 2, 3], feat_downsample=False,
-                 pretrained_backbone_path=None):
+                 pretrained_backbone_path=None, return_interm_indices=[0, 1, 2, 3], activation_checkpoint=False, freeze_backbone=False):
         """Initialize Visual ChangeNetSegment class"""
         super(ChangeNetSegment, self).__init__()
-        # Transformer Encoder
 
+        # Index 4 is not part of the backbone but taken from index 3 with conv 3x3 stride 2
+        return_interm_indices = [r for r in return_interm_indices if r != 4]
+        return_interm_indices = np.array(return_interm_indices)
+        if not np.logical_and(return_interm_indices >= 0, return_interm_indices <= 4).all():
+            raise ValueError(f"Invalid range for return_interm_indices. "
+                             f"Provided return_interm_indices is {return_interm_indices}.")
+
+        if len(np.unique(return_interm_indices)) != len(return_interm_indices):
+            raise ValueError(f"Duplicate index in the provided return_interm_indices: {return_interm_indices}")
+
+        # Transformer Encoder
         self.depths = [3, 3, 4, 3]  # [3, 3, 6, 18, 3]
         self.embedding_dim = embed_dim
         self.drop_rate = 0.1
@@ -251,14 +268,24 @@ class ChangeNetSegment(nn.Module):
         self.embed_dims = embed_dims
 
         logger.info(f"Number of output classes: {output_nc}")
-        assert img_size % feature_strides[-1] == 0, 'Input image size must be a multiple of 16'
-        # TODO: @zbhat - support FANSwin?
-        self.backbone = fan_model_dict[self.model_name](
-            pretrained=False,
-            num_classes=output_nc,
-            checkpoint_path='',
-            img_size=img_size,
-            feat_downsample=feat_downsample)
+        assert img_size % feature_strides[-1] == 0, f"Input image size must be a multiple of {feature_strides[-1]}"
+
+        if 'fan' in self.model_name:
+            self.backbone = fan_model_dict[self.model_name](
+                pretrained=False,
+                num_classes=output_nc,
+                checkpoint_path='',
+                img_size=img_size,
+                feat_downsample=feat_downsample)
+
+        elif 'vit' in self.model_name:
+            assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
+            self.backbone = vit_adapter_model_dict[self.model_name](
+                out_indices=return_interm_indices,
+                resolution=img_size,
+                activation_checkpoint=activation_checkpoint)
+        else:
+            raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)
 
         # missing_keys = None
         if pretrained_backbone_path:
@@ -268,6 +295,14 @@ class ChangeNetSegment(nn.Module):
             if get_global_rank() == 0:
                 logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
                 logger.info(f"{_tmp_st_output}")
+
+        # Freeze backbone
+        if freeze_backbone:
+            assert pretrained_backbone_path is not None, "You shouldn't freeze a model without specifying pretrained_backbone_path"
+            for _, parameter in self.backbone.named_parameters():
+                parameter.requires_grad_(False)
+            # self.backbone.eval()  # TODO: Check if needed??
+            logger.info("Frozen backbone training")
 
         # Transformer Decoder
         self.decoder = DecoderTransformer_v3(input_transform='multiple_select', in_index=in_index, align_corners=False,
@@ -306,17 +341,20 @@ def build_model(experiment_config,
     dataset_config = experiment_config.dataset.segment
 
     backbone = model_config.backbone['type']
+    freeze_backbone = model_config.backbone['freeze_backbone']
     feat_downsample = model_config.backbone.feat_downsample
     pretrained_backbone_path = model_config.backbone.pretrained_backbone_path
 
     channels_map = {"fan_tiny_8_p4_hybrid": [128, 256, 192, 192],
                     "fan_large_16_p4_hybrid": [128, 256, 480, 480],
                     "fan_small_12_p4_hybrid": [128, 256, 384, 384],
-                    "fan_base_16_p4_hybrid": [128, 256, 448, 448], }
+                    "fan_base_16_p4_hybrid": [128, 256, 448, 448],
+                    "vit_large_nvdinov2": [1024, 1024, 1024, 1024]
+                    }
+
     if backbone in channels_map:
         embed_dims = channels_map[backbone]
         model_config.decode_head.in_channels = embed_dims
-
     else:
         raise NotImplementedError('Bacbkbone name [%s] is not supported' % backbone)
 
@@ -337,7 +375,8 @@ def build_model(experiment_config,
                              feature_strides=feature_strides,
                              in_index=in_index,
                              feat_downsample=feat_downsample,
-                             pretrained_backbone_path=pretrained_backbone_path)
+                             pretrained_backbone_path=pretrained_backbone_path,
+                             freeze_backbone=freeze_backbone)
     count_params(model)
 
     return model

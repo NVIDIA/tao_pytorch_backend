@@ -14,6 +14,6 @@
 
 """ Init Module for FAN """
 
-from .fan_linear_head import FANLinearClsHead
+from .tao_linear_head import TAOLinearClsHead
 
-__all__ = ["FANLinearClsHead"]
+__all__ = ["TAOLinearClsHead"]

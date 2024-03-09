@@ -13,8 +13,8 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import DropPath, trunc_normal_, to_2tuple
-from mmcls.models.builder import BACKBONES
-from mmcv.runner import BaseModule
+from mmpretrain.registry import MODELS
+from mmpretrain.models.backbones.base_backbone import BaseBackbone
 from nvidia_tao_pytorch.cv.backbone.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.fan import (TokenMixing, SqueezeExcite, OverlapPatchEmbed,
                                                 PositionalEncodingFourier, ConvPatchEmbed,
@@ -280,13 +280,15 @@ class FANBlock_SE(nn.Module):
         self.gamma1 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
         self.gamma2 = nn.Parameter(eta * torch.ones(dim), requires_grad=True)
 
-    def forward(self, x, H: int, W: int, attn=None):
+    def forward(self, x, attn=None):
         """ Forward Function """
+        H, W = self.H, self.W
+
         x_new, _ = self.attn(self.norm1(x), H, W)
         x = x + self.drop_path(self.gamma1 * x_new)
         x_new, H, W = self.mlp(self.norm2(x), H, W)
         x = x + self.drop_path(self.gamma2 * x_new)
-        return x, H, W
+        return x
 
 
 class FANBlock(nn.Module):
@@ -330,7 +332,7 @@ class FANBlock(nn.Module):
         return x
 
 
-class FAN(BaseModule):
+class FAN(BaseBackbone):
     """Based on timm code bases
     https://github.com/rwightman/pytorch-image-models/tree/master/timm
     """
@@ -479,7 +481,7 @@ class FAN(BaseModule):
 
 
 # FAN-ViT Models
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_tiny_12_p16_224(FAN):
     """ FAN Tiny ViT """
 
@@ -492,7 +494,7 @@ class fan_tiny_12_p16_224(FAN):
         super(fan_tiny_12_p16_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_small_12_p16_224_se_attn(FAN):
     """ FAN Small SE ViT """
 
@@ -505,7 +507,7 @@ class fan_small_12_p16_224_se_attn(FAN):
         super(fan_small_12_p16_224_se_attn, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_small_12_p16_224(FAN):
     """ FAN Small ViT """
 
@@ -518,7 +520,7 @@ class fan_small_12_p16_224(FAN):
         super(fan_small_12_p16_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_base_18_p16_224(FAN):
     """ FAN Base ViT """
 
@@ -531,7 +533,7 @@ class fan_base_18_p16_224(FAN):
         super(fan_base_18_p16_224, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_large_24_p16_224(FAN):
     """ FAN Large ViT """
 
@@ -547,7 +549,7 @@ class fan_large_24_p16_224(FAN):
 # FAN-Hybrid Models
 # CNN backbones are based on ConvNeXt architecture with only first two stages for downsampling purpose
 # This has been verified to be beneficial for downstream tasks
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_tiny_8_p4_hybrid(FAN):
     """ FAN Tiny Hybrid """
 
@@ -562,7 +564,7 @@ class fan_tiny_8_p4_hybrid(FAN):
         super(fan_tiny_8_p4_hybrid, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_small_12_p4_hybrid(FAN):
     """ FAN Small Hybrid """
 
@@ -578,7 +580,7 @@ class fan_small_12_p4_hybrid(FAN):
         super(fan_small_12_p4_hybrid, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_base_16_p4_hybrid(FAN):
     """ FAN Base Hybrid """
 
@@ -593,7 +595,7 @@ class fan_base_16_p4_hybrid(FAN):
         super(fan_base_16_p4_hybrid, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_large_16_p4_hybrid(FAN):
     """ FAN Large Hybrid """
 
@@ -608,7 +610,7 @@ class fan_large_16_p4_hybrid(FAN):
         super(fan_large_16_p4_hybrid, self).__init__(**model_kwargs)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_Xlarge_16_p4_hybrid(FAN):
     """FAN XLarge hybrid"""
 

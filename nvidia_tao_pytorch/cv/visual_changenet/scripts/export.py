@@ -190,6 +190,7 @@ def run_export(experiment_config, results_dir):
                              task=task)
 
     onnx_export.check_onnx(output_file)
+
     if output_file.endswith('.etlt') and key:
         # encrypt the onnx if and only if key is provided and output file name ends with .etlt
         encrypt_onnx(tmp_file_name=tmp_onnx_file,

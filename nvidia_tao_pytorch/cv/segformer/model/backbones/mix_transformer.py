@@ -7,14 +7,11 @@
 """Mix Transformer Module."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 from functools import partial
 
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from nvidia_tao_pytorch.cv.segformer.model.builder import BACKBONES
-from nvidia_tao_pytorch.cv.segformer.utils import get_root_logger
-from nvidia_tao_pytorch.cv.segformer.model.utils.common_utils import load_model
-from mmcv.runner import load_checkpoint
+from mmseg.registry import MODELS
 import math
 
 
@@ -301,13 +298,6 @@ class MixVisionTransformer(nn.Module):
             if m.bias is not None:
                 m.bias.data.zero_()
 
-    def init_weights(self, pretrained=None):
-        """Init Weights."""
-        if isinstance(pretrained, str):
-            logger = get_root_logger()
-            update_pretrained = load_model(pretrained)
-            load_checkpoint(self, update_pretrained, map_location='cpu', strict=False, logger=logger)
-
     def reset_drop_path(self, drop_path_rate):
         """Reset Drop Path."""
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(self.depths))]
@@ -397,7 +387,7 @@ class DWConv(nn.Module):
 
     def __init__(self, dim=768, export=False):
         """ Init Function. """
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
         self.export = export
 
@@ -413,74 +403,73 @@ class DWConv(nn.Module):
         return x
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class mit_b0(MixVisionTransformer):
     """ Model Class."""
 
     def __init__(self, **kwargs):
         """ Init Function. """
-        super(mit_b0, self).__init__(
+        super().__init__(
             patch_size=4, embed_dims=[32, 64, 160, 256], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0, drop_path_rate=0.1)
-        self.export = kwargs["export"]
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class mit_b1(MixVisionTransformer):
     """ Model Class."""
 
     def __init__(self, **kwargs):
         """ Init Function. """
-        super(mit_b1, self).__init__(
+        super().__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1, export=kwargs["export"])
+            drop_rate=0.0, drop_path_rate=0.1)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class mit_b2(MixVisionTransformer):
     """ Model Class."""
 
     def __init__(self, **kwargs):
         """ Init Function. """
-        super(mit_b2, self).__init__(
+        super().__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1, export=kwargs["export"])
+            drop_rate=0.0, drop_path_rate=0.1)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class mit_b3(MixVisionTransformer):
     """ Model Class."""
 
     def __init__(self, **kwargs):
         """ Init Function. """
-        super(mit_b3, self).__init__(
+        super().__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 18, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1, export=kwargs["export"])
+            drop_rate=0.0, drop_path_rate=0.1)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class mit_b4(MixVisionTransformer):
     """ Model Class."""
 
     def __init__(self, **kwargs):
         """ Init Function. """
-        super(mit_b4, self).__init__(
+        super().__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 8, 27, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1, export=kwargs["export"])
+            drop_rate=0.0, drop_path_rate=0.1)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class mit_b5(MixVisionTransformer):
     """ Model Class."""
 
     def __init__(self, **kwargs):
         """ Init Function. """
-        super(mit_b5, self).__init__(
+        super().__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 6, 40, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1, export=kwargs["export"])
+            drop_rate=0.0, drop_path_rate=0.1)

@@ -14,13 +14,11 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
-from mmcv.runner import load_checkpoint
+from mmseg.registry import MODELS
+from mmengine.model import BaseModule
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import DropPath, trunc_normal_, to_2tuple
 
-from nvidia_tao_pytorch.cv.segformer.model.utils.common_utils import load_model
-from nvidia_tao_pytorch.cv.segformer.model.builder import BACKBONES
-from nvidia_tao_pytorch.cv.segformer.utils import get_root_logger
 from nvidia_tao_pytorch.cv.segformer.model.backbones.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.fan import (PositionalEncodingFourier, Mlp, ConvPatchEmbed,
                                                 ClassAttentionBlock, adaptive_avg_pool)
@@ -343,7 +341,7 @@ class FANBlock(nn.Module):
         return x
 
 
-class FAN(nn.Module):
+class FAN(BaseModule):
     """Based on timm https://github.com/rwightman/pytorch-image-models/tree/master/timm"""
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
@@ -399,13 +397,6 @@ class FAN(nn.Module):
         # Init weights
         trunc_normal_(self.cls_token, std=.02)
         self.apply(self._init_weights)
-
-    def init_weights(self, pretrained=None):
-        """Init Weights"""
-        if isinstance(pretrained, str):
-            logger = get_root_logger()
-            update_pretrained = load_model(pretrained)
-            load_checkpoint(self, update_pretrained, map_location='cpu', strict=False, logger=logger)
 
     def _init_weights(self, m):
         """Init Weights"""
@@ -508,7 +499,7 @@ class FAN(nn.Module):
 
 
 # FAN-Hybrid models
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_tiny_8_p4_hybrid(FAN):
     """FAN Hybrid Tiny"""
 
@@ -522,7 +513,7 @@ class fan_tiny_8_p4_hybrid(FAN):
                                                    act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_small_12_p4_hybrid(FAN):
     """FAN Hybrid Small"""
 
@@ -536,7 +527,7 @@ class fan_small_12_p4_hybrid(FAN):
                                                      act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, feat_downsample=False)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_base_16_p4_hybrid(FAN):
     """FAN Hybrid Base"""
 
@@ -550,7 +541,7 @@ class fan_base_16_p4_hybrid(FAN):
                                                     act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, default_cfg=None)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_large_16_p4_hybrid(FAN):
     """FAN Hybrid Large"""
 
@@ -565,7 +556,7 @@ class fan_large_16_p4_hybrid(FAN):
 
 
 # FAN-ViT Models
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_small_12_p16_224(FAN):
     """FAN ViT Small"""
 
@@ -577,7 +568,7 @@ class fan_small_12_p16_224(FAN):
                                                    act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class fan_base_18_p16_224(FAN):
     """FAN ViT Base"""
 

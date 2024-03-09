@@ -62,8 +62,9 @@ class ModelConfig:
     """Metric Learning Recognition model configuration for training, testing & validation."""
 
     backbone: str = "resnet_50"
-    pretrain_choice: Optional[str] = "imagenet"
     pretrained_model_path: Optional[str] = None
+    pretrained_trunk_path: Optional[str] = None
+    pretrained_embedder_path: Optional[str] = None
     input_width: int = 224
     input_height: int = 224
     input_channels: int = 3
@@ -112,6 +113,8 @@ class TrainConfig:
     batch_size: int = 64
     val_batch_size: int = 64
     results_dir: Optional[str] = None
+    train_trunk: Optional[bool] = True
+    train_embedder: Optional[bool] = True
 
 
 @dataclass

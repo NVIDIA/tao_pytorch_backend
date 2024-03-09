@@ -6,13 +6,13 @@
 
 """MLP Segformer Head."""
 
-import torch.nn as nn
+from torch import nn
 import torch
+
 from mmcv.cnn import ConvModule
-from nvidia_tao_pytorch.cv.segformer.ops import resize
-from nvidia_tao_pytorch.cv.segformer.model.utils import *  # noqa pylint: disable=W0401, W0614
-from nvidia_tao_pytorch.cv.segformer.model.builder import HEADS
-from nvidia_tao_pytorch.cv.segformer.model.decode_heads.decode_head import BaseDecodeHead
+from mmseg.registry import MODELS
+from mmseg.models.utils.wrappers import resize
+from mmseg.models.decode_heads.decode_head import BaseDecodeHead
 
 
 class MLP(nn.Module):
@@ -35,23 +35,24 @@ class MLP(nn.Module):
         return x
 
 
-@HEADS.register_module()
-class SegFormerHead(BaseDecodeHead):
+@MODELS.register_module()
+class TAOSegFormerHead(BaseDecodeHead):
     """
     SegFormer: Simple and Efficient Design for Semantic Segmentation with Transformers
     """
 
-    def __init__(self, feature_strides, **kwargs):
+    def __init__(self, feature_strides, decoder_params, **kwargs):
         """Init Module."""
-        super(SegFormerHead, self).__init__(input_transform='multiple_select', **kwargs)
+        super().__init__(input_transform='multiple_select', **kwargs)
         assert len(feature_strides) == len(self.in_channels), "The number of feature strides:{} should be equal to number of channels: {}".format(feature_strides, len(self.in_channels))
         assert min(feature_strides) == feature_strides[0], "Minimum of feature strides is not supported."
         self.feature_strides = feature_strides
-        self.export = kwargs["export"]
+        self.export = False
 
         c1_in_channels, c2_in_channels, c3_in_channels, c4_in_channels = self.in_channels
 
-        decoder_params = kwargs['decoder_params']
+        # @seanf: the decoder_params that set us apart from mmseg aren't used in our BaseDecodeHead, so we can use mmseg's
+        # decoder_params = kwargs['decoder_params']
         embedding_dim = decoder_params['embed_dim']
 
         self.linear_c4 = MLP(input_dim=c4_in_channels, embed_dim=embedding_dim, export=self.export)
@@ -63,10 +64,17 @@ class SegFormerHead(BaseDecodeHead):
             in_channels=embedding_dim * 4,
             out_channels=embedding_dim,
             kernel_size=1,
-            norm_cfg=dict(type='SyncBN', requires_grad=True)
+            norm_cfg=self.norm_cfg
         )
 
         self.linear_pred = nn.Conv2d(embedding_dim, self.num_classes, kernel_size=1)
+
+        # @seanf note for future
+        # conv_seg exists in the decode head but is useless as linear_pred takes its place
+        # However, it's not deleted, so mmengine will throw an error about it being unused,
+        # hence requiring find_unused_parameters which will be much slower than normal training
+        # On the other hand, we still need the variable lienar_pred to exist because checkpoints load its state
+        # So, both need to exist, but linear_pred should be used, and conv_seg should be ignored
 
     def forward(self, inputs):
         """Forward."""

@@ -101,7 +101,9 @@ class ChangeNetPlModel(pl.LightningModule):
         self.weights = tuple(self.train_config.segment.weights)
         self.vis_after_n_batches = self.eval_config.vis_after_n_batches
         self.vis_after_n_batches_infer = self.infer_config.vis_after_n_batches
-        self.color_map = get_color_mapping(dataset_name=self.dataset_config.data_name, color_mapping_custom=self.dataset_config.color_map, num_classes=self.n_class)
+        self.color_map = get_color_mapping(dataset_name=self.dataset_config.data_name,
+                                           color_mapping_custom=self.dataset_config.color_map,
+                                           num_classes=self.n_class)
 
     def _build_model(self, export):
         """Internal function to build the model."""
@@ -211,8 +213,13 @@ class ChangeNetPlModel(pl.LightningModule):
 
                 if self.n_class > 2:
                     # print("Visualising multiple classes")
-                    vis_pred, vis_pred_mismatch = utils.make_numpy_grid(self._visualize_pred_multi(i), num_class=self.n_class, gt=self.batch['L'][i].unsqueeze(0), color_map=self.color_map)
-                    vis_gt = utils.make_numpy_grid(self.batch['L'][i].unsqueeze(0), num_class=self.n_class, color_map=self.color_map)
+                    vis_pred, _ = utils.make_numpy_grid(self._visualize_pred_multi(i),
+                                                        num_class=self.n_class,
+                                                        gt=self.batch['L'][i].unsqueeze(0),
+                                                        color_map=self.color_map)
+                    vis_gt = utils.make_numpy_grid(self.batch['L'][i].unsqueeze(0),
+                                                   num_class=self.n_class,
+                                                   color_map=self.color_map)
                 else:
                     vis_pred = utils.make_numpy_grid(self._visualize_pred(i))
                     vis_gt = utils.make_numpy_grid(self.batch['L'][i].unsqueeze(0))
@@ -220,18 +227,25 @@ class ChangeNetPlModel(pl.LightningModule):
                 # Combining horizontally
                 line_width = 10  # width of the black line in pixels
                 line = np.zeros((vis_input.shape[0], line_width, 3), dtype=np.uint8)  # create a black line
-                # TODO: Check if mismatch viz needed
-                if self.n_class > 2:
-                    vis = np.concatenate([vis_input, line, vis_input2, line, vis_pred, line, vis_gt, line, vis_pred_mismatch], axis=1)
-                else:
-                    vis = np.concatenate([vis_input, line, vis_input2, line, vis_pred, line, vis_gt], axis=1)
 
-                # Original code combining vertically
-                # vis = np.concatenate([vis_input, vis_input2, vis_pred, vis_gt], axis=0)
+                # Combine predictions in the order of Image A, Image B, Prediction, GT.
+                vis = np.concatenate([vis_input, line, vis_input2, line, vis_pred, line, vis_gt], axis=1)
+
                 vis = np.clip(vis, a_min=0.0, a_max=1.0)
+
+                # Save combined visualisation in a different folder.
+                vis_combined_dir = os.path.join(self.vis_dir, "combined_visualisation")
+                if not os.path.exists(vis_combined_dir):
+                    os.makedirs(vis_combined_dir)
+                file_name = expand_path(os.path.join(
+                    vis_combined_dir, self.batch['name'][i] + '.jpg'))
+                plt.imsave(file_name, vis)
+
+                # Dump Predictions only
+                vis_pred_only = np.clip(vis_pred, a_min=0.0, a_max=1.0)
                 file_name = expand_path(os.path.join(
                     self.vis_dir, self.batch['name'][i] + '.jpg'))
-                plt.imsave(file_name, vis)
+                plt.imsave(file_name, vis_pred_only)
 
     def _visualize_infer_output(self, batch_idx, vis_afer_n_batches=1):
         """
@@ -246,22 +260,30 @@ class ChangeNetPlModel(pl.LightningModule):
 
                 if self.n_class > 2:
                     # print("Visualising multiple classes")
-                    vis_pred = utils.make_numpy_grid(self._visualize_pred_multi(i), num_class=self.n_class, color_map=self.color_map)
+                    vis_pred = utils.make_numpy_grid(self._visualize_pred_multi(i),
+                                                     num_class=self.n_class, color_map=self.color_map)
                 else:
                     vis_pred = utils.make_numpy_grid(self._visualize_pred(i))
 
                 # Combining horizontally
                 line_width = 10  # width of the black line in pixels
                 line = np.zeros((vis_input.shape[0], line_width, 3), dtype=np.uint8)  # create a black line
-                if self.n_class > 2:
-                    vis = np.concatenate([vis_input, line, vis_input2, line, vis_pred], axis=1)
-                else:
-                    vis = np.concatenate([vis_input, line, vis_input2, line, vis_pred], axis=1)
+                vis = np.concatenate([vis_input, line, vis_input2, line, vis_pred], axis=1)
 
                 vis = np.clip(vis, a_min=0.0, a_max=1.0)
+                # Save combined visualisation in a different folder.
+                vis_combined_dir = os.path.join(self.vis_dir, "combined_visualisation")
+                if not os.path.exists(vis_combined_dir):
+                    os.makedirs(vis_combined_dir)
+                file_name = expand_path(os.path.join(
+                    vis_combined_dir, self.batch['name'][i] + '.jpg'))
+                plt.imsave(file_name, vis)
+
+                # Dump Predictions only
+                vis_pred_only = np.clip(vis_pred, a_min=0.0, a_max=1.0)
                 file_name = expand_path(os.path.join(
                     self.vis_dir, self.batch['name'][i] + '.jpg'))
-                plt.imsave(file_name, vis)
+                plt.imsave(file_name, vis_pred_only)
 
     def _clear_cache(self):
         self.running_metric.clear()
@@ -271,9 +293,9 @@ class ChangeNetPlModel(pl.LightningModule):
         scores, mean_score_dict = self.running_metric.get_scores()
         self.epoch_acc = scores['mf1']
         # message = 'Scores per class'
-        self.log_dict(scores, on_step=False, on_epoch=True, prog_bar=True)
+        self.log_dict(scores, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         # message = 'Mean scores for all classes: '
-        self.log_dict(mean_score_dict, on_step=False, on_epoch=True)
+        self.log_dict(mean_score_dict, on_step=False, on_epoch=True, sync_dist=True)
         return scores, mean_score_dict
 
     def _forward_pass(self, batch):

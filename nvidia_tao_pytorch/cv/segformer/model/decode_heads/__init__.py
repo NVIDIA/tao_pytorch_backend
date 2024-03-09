@@ -14,8 +14,4 @@
 
 """Init module."""
 
-from .segformer_head import SegFormerHead
-
-__all__ = [
-    'SegFormerHead'
-]
+from .segformer_head import *  # noqa: F403, F401

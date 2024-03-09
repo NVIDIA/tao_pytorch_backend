@@ -37,7 +37,7 @@ class ChangeNetHeadConfig:
 
     in_channels: List[int] = field(default_factory=lambda: [128, 256, 384, 384])  # FANHybrid-S
     in_index: List[int] = field(default_factory=lambda: [0, 1, 2, 3])  # No change
-    feature_strides: List[int] = field(default_factory=lambda: [4, 8, 16, 16])  # No change
+    feature_strides: List[int] = field(default_factory=lambda: [4, 8, 16, 16])
     align_corners: bool = False
     decoder_params: Dict[str, int] = field(default_factory=lambda: {"embed_dim": 256})  # 256, 512, 768 -> Configurable
 
@@ -49,6 +49,7 @@ class BackboneConfig:
     type: str = "fan_small_12_p4_hybrid"
     feat_downsample: bool = False
     pretrained_backbone_path: Optional[str] = None
+    freeze_backbone: bool = False
 
 
 @dataclass

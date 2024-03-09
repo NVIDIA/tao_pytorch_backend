@@ -380,7 +380,8 @@ class DINOPlModel(pl.LightningModule):
         color_map = self.experiment_spec.inference.color_map
         conf_threshold = self.experiment_spec.inference.conf_threshold
         is_internal = self.experiment_spec.inference.is_internal
-        save_inference_prediction(outputs, output_dir, conf_threshold, label_map, color_map, is_internal)
+        outline_width = self.experiment_spec.inference.outline_width
+        save_inference_prediction(outputs, output_dir, conf_threshold, label_map, color_map, is_internal, outline_width)
 
     def forward(self, x):
         """Forward of the dino model."""

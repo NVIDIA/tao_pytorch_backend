@@ -85,8 +85,8 @@ class QuadMetric():
         results = []
         gt_polyons_batch = batch['text_polys']
         ignore_tags_batch = batch['ignore_tags']
-        pred_polygons_batch = np.array(output[0])
-        pred_scores_batch = np.array(output[1])
+        pred_polygons_batch = np.array(output[0], dtype=object)
+        pred_scores_batch = np.array(output[1], dtype=object)
         for polygons, pred_polygons, pred_scores, ignore_tags in zip(gt_polyons_batch, pred_polygons_batch, pred_scores_batch, ignore_tags_batch):
             gt = [dict(points=np.int64(polygons[i]), ignore=ignore_tags[i]) for i in range(len(polygons))]
             if self.is_output_polygon:
@@ -95,7 +95,7 @@ class QuadMetric():
                 pred = []
                 for i in range(pred_polygons.shape[0]):
                     if pred_scores[i] >= box_thresh:
-                        pred.append(dict(points=pred_polygons[i, :, :].astype(np.int)))
+                        pred.append(dict(points=pred_polygons[i, :, :].astype(int)))
                 res = self.evaluator.evaluate_image(gt, pred)
             results.append(res)
         return results

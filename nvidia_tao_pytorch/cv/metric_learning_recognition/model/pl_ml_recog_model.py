@@ -152,14 +152,13 @@ class MLRecogModel(pl.LightningModule):
             model = self.model.trunk
         params = []
         for key, value in model.named_parameters():
-            if not value.requires_grad:
-                continue
             lr = self.optim_config[model_name]["base_lr"]
             weight_decay = self.optim_config[model_name]["weight_decay"]
             if "bias" in key:
                 lr = self.optim_config[model_name]["base_lr"] * self.optim_config[model_name]["bias_lr_factor"]
                 weight_decay = self.optim_config[model_name]["weight_decay_bias"]
             params += [{"params": [value], "lr": lr, "weight_decay": weight_decay}]
+
         if self.optim_config["name"] == 'SGD':
             optimizer = getattr(torch.optim, self.optim_config["name"])(params, momentum=self.optim_config[model_name]["momentum"])
         else:

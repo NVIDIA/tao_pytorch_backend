@@ -32,13 +32,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import logging
+import numpy as np
 
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
     MLP, conv_diff, resize, count_params,
 )
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.fan import fan_model_dict
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.dinov2_vit import vit_model_dict
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.vit_adapter import vit_adapter_model_dict
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank, load_pretrained_weights
-
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +68,7 @@ class ChangeNetClassifyDecoder(nn.Module):
             num_input (int): Number of input image lighting conditions.
             output_shape (list): Output shape of the model.
             embed_dec (int): Embedding dimension for the final classifier.
+            learnable_difference_modules (int): Number of decoder difference modules for Architecture 2.
         """
         super(ChangeNetClassifyDecoder, self).__init__()
         # assert
@@ -97,7 +100,8 @@ class ChangeNetClassifyDecoder(nn.Module):
         self.diff_c1 = conv_diff(in_channels=2 * self.embedding_dim, out_channels=self.embedding_dim)
 
         # Final linear fusion layer
-        self.linear_fuse = nn.Sequential(nn.Conv2d(in_channels=self.embedding_dim * learnable_difference_modules, out_channels=self.embedding_dim, kernel_size=1),
+        self.linear_fuse = nn.Sequential(nn.Conv2d(in_channels=self.embedding_dim * learnable_difference_modules,
+                                                   out_channels=self.embedding_dim, kernel_size=1),
                                          nn.BatchNorm2d(self.embedding_dim)
                                          )
 
@@ -213,16 +217,31 @@ class ChangeNetClassify(nn.Module):
         embedding_vectors: For architecture 1, the dimension for the last embedding vector for each input image for computing eulidean distance
         embed_dec: For architecture 2, the embedding dimension of the output MLP.
         feat_downsample: Flag to indicate whether to use feature downsampling for the transformer block for FAN-Hybrid
+        learnable_difference_modules (int): Number of decoder difference modules for Architecture 2
+        pretrained_backbone_path (str): Path to the pre-trained backbone weights.
+        activation_checkpoint (bool): Enable activation checkpointing
+        freeze_backbone: Flag to freeze backbone weights during training.
+        return_interm_indices (list): list of layer indices to reutrn as backbone features.
     """
 
     def __init__(self, input_nc=3, output_nc=2, embed_dim=256, model='fan_tiny_8_p4_hybrid_256', img_size=128,
                  embed_dims=[128, 256, 384, 384], feature_strides=[4, 8, 16, 16], in_index=[0, 1, 2, 3],
                  difference_module='learnable', num_input=1, output_shape=[128, 128], embedding_vectors=5, embed_dec=30,
-                 feat_downsample=False, learnable_difference_modules=4, pretrained_backbone_path=None):
+                 feat_downsample=False, return_interm_indices=[0, 1, 2, 3], learnable_difference_modules=4, pretrained_backbone_path=None, activation_checkpoint=False, freeze_backbone=False):
         """Initialize Visual ChangeNetSegment class"""
         super(ChangeNetClassify, self).__init__()
-        # Transformer Encoder
 
+        # Index 4 is not part of the backbone but taken from index 3 with conv 3x3 stride 2
+        return_interm_indices = [r for r in return_interm_indices if r != 4]
+        return_interm_indices = np.array(return_interm_indices)
+        if not np.logical_and(return_interm_indices >= 0, return_interm_indices <= 4).all():
+            raise ValueError(f"Invalid range for return_interm_indices. "
+                             f"Provided return_interm_indices is {return_interm_indices}.")
+
+        if len(np.unique(return_interm_indices)) != len(return_interm_indices):
+            raise ValueError(f"Duplicate index in the provided return_interm_indices: {return_interm_indices}")
+
+        # Transformer Encoder
         self.depths = [3, 3, 4, 3]  # [3, 3, 6, 18, 3]
         self.embedding_dim = embed_dim
         self.drop_rate = 0.1
@@ -233,23 +252,49 @@ class ChangeNetClassify(nn.Module):
         self.difference_module = difference_module
 
         logger.info(f"Number of output classes: {output_nc}")
-        assert img_size % feature_strides[-1] == 0, 'Input image size must be a multiple of 16'
 
-        self.backbone = fan_model_dict[self.model_name](
-            pretrained=False,
-            num_classes=output_nc,
-            checkpoint_path='',
-            img_size=img_size,
-            feat_downsample=feat_downsample)
+        loaded_weights = False
+        if 'fan' in self.model_name:
+            assert img_size % feature_strides[-1] == 0, 'Input image size must be a multiple of 16'
+            self.backbone = fan_model_dict[self.model_name](
+                pretrained=False,
+                num_classes=output_nc,
+                checkpoint_path='',
+                img_size=img_size,
+                feat_downsample=feat_downsample)
 
-        # missing_keys = None
-        if pretrained_backbone_path:
-            checkpoint = load_pretrained_weights(pretrained_backbone_path)
-            _tmp_st_output = self.backbone.load_state_dict(checkpoint, strict=False)
-            # missing_keys = list(_tmp_st_output[0])
-            if get_global_rank() == 0:
-                logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                logger.info(f"{_tmp_st_output}")
+        elif 'vit' in self.model_name:
+            if self.difference_module == 'learnable':
+                self.backbone = vit_adapter_model_dict[self.model_name](
+                    out_indices=return_interm_indices,
+                    resolution=img_size,
+                    activation_checkpoint=activation_checkpoint)
+
+            if self.difference_module == 'euclidean':
+                self.backbone = vit_model_dict[self.model_name](
+                    pretrained=pretrained_backbone_path,
+                    freeze=freeze_backbone)
+                loaded_weights = True
+
+        else:
+            raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)
+
+        if not loaded_weights:
+            # missing_keys = None
+            if pretrained_backbone_path:
+                checkpoint = load_pretrained_weights(pretrained_backbone_path)
+                _tmp_st_output = self.backbone.load_state_dict(checkpoint, strict=False)
+                # missing_keys = list(_tmp_st_output[0])
+                if get_global_rank() == 0:
+                    logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
+                    logger.info(f"{_tmp_st_output}")
+
+            # Freeze backbone
+            if freeze_backbone:
+                assert pretrained_backbone_path is not None, "You shouldn't freeze a model without specifying pretrained_backbone_path"
+                for _, parameter in self.backbone.named_parameters():
+                    parameter.requires_grad_(False)
+                    # self.backbone.eval()  # TODO: Check if needed??
 
         if self.difference_module == 'learnable':
             # Transformer Decoder
@@ -259,10 +304,12 @@ class ChangeNetClassify(nn.Module):
                                                     num_input=num_input, output_shape=output_shape, embed_dec=embed_dec,
                                                     learnable_difference_modules=learnable_difference_modules)
 
-        if self.difference_module == 'euclidean':
+        elif self.difference_module == 'euclidean':
             self.dim_output = output_shape[0] // feature_strides[-1]
             self.dim_output1 = (output_shape[1] * num_input) // feature_strides[-1]
             self.fc_ip_dim = self.embed_dims[-1] * self.dim_output * self.dim_output1
+            if 'vit' in self.model_name:
+                self.fc_ip_dim = self.embed_dims[-1]
 
             self.embedding = embedding_vectors
             self.fc1 = nn.Sequential(
@@ -274,6 +321,9 @@ class ChangeNetClassify(nn.Module):
                 nn.BatchNorm1d(512),
                 nn.Linear(512, self.embedding))
 
+        else:
+            raise NotImplementedError('Difference module [%s] is not supported' % self.difference_module)
+
     def forward_once(self, x):
         """
         Forward pass of the Visual ChangeNetClassify model for a single image when using Euclidean Distance metric
@@ -284,7 +334,10 @@ class ChangeNetClassify(nn.Module):
         Returns:
             torch.Tensor: Embedding vector for the given input image
         """
-        output = self.backbone(x)[-1]
+        if 'fan' in self.model_name:
+            output = self.backbone(x)[-1]
+        elif 'vit' in self.model_name:
+            output = self.backbone(x)
         output = output.reshape(output.size()[0], -1)
         output = self.fc1(output)
         return output
@@ -300,6 +353,11 @@ class ChangeNetClassify(nn.Module):
         Returns:
             torch.Tensor: Returns the output tensor (For Arch1: two embedding vectors for 2 input images, Arch2: single output vector of dimension Batch_size x num_classes)
         """
+        if 'vit' in self.model_name:
+            assert x1.shape[2] == x1.shape[3], f"{self.model_name} backbone only supports square input images. " \
+                "Please make sure the input height and width are equal, use an N x N grid to combine multiple lighting conditions."
+            if self.difference_module == 'learnable':
+                assert x1.shape[2] % 32 == 0 and x1.shape[3] % 32 == 0, "Input image size must be a multiple of 32 for ViT-Adapter"
         if self.difference_module == 'euclidean':
             # Classifier after last FM with eucledian distance:
             output1 = self.forward_once(x1)
@@ -331,17 +389,20 @@ def build_model(experiment_config,
     dataset_config = experiment_config.dataset.classify
 
     backbone = model_config.backbone['type']
+    freeze_backbone = model_config.backbone['freeze_backbone']
     feat_downsample = model_config.backbone.feat_downsample
     pretrained_backbone_path = model_config.backbone.pretrained_backbone_path
 
     channels_map = {"fan_tiny_8_p4_hybrid": [128, 256, 192, 192],
                     "fan_large_16_p4_hybrid": [128, 256, 480, 480],
                     "fan_small_12_p4_hybrid": [128, 256, 384, 384],
-                    "fan_base_16_p4_hybrid": [128, 256, 448, 448], }
+                    "fan_base_16_p4_hybrid": [128, 256, 448, 448],
+                    "vit_large_nvdinov2": [1024, 1024, 1024, 1024]
+                    }
+
     if backbone in channels_map:
         embed_dims = channels_map[backbone]
         model_config.decode_head.in_channels = embed_dims
-
     else:
         raise NotImplementedError('Bacbkbone name [%s] is not supported' % backbone)
 
@@ -375,7 +436,8 @@ def build_model(experiment_config,
                               feat_downsample=feat_downsample,
                               learnable_difference_modules=learnable_difference_modules,
                               difference_module=difference_module,
-                              pretrained_backbone_path=pretrained_backbone_path)
+                              pretrained_backbone_path=pretrained_backbone_path,
+                              freeze_backbone=freeze_backbone)
 
     count_params(model)
 
