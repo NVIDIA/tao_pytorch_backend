@@ -1,0 +1,31 @@
+results_dir: "???"
+export:
+  checkpoint: "???"
+  onnx_file: "???"
+model:
+  backbone:
+    type: "fan_base_18_p16_224"
+  head:
+    type: "FANLinearClsHead"
+    custom_args:
+      head_init_scale: 1
+dataset:
+  data:
+    samples_per_gpu: 16
+    train:
+      data_prefix: "???"
+      pipeline:  # Augmentations alone
+        - type: RandomResizedCrop
+          scale: 224
+        - type: RandomFlip
+          prob: 0.5
+          direction: "horizontal"
+      classes: "???"
+    val:
+      data_prefix: "???"
+      ann_file: "???"
+      classes: "???"
+    test:
+      data_prefix: "???"
+      ann_file: "???"
+      classes: "???"

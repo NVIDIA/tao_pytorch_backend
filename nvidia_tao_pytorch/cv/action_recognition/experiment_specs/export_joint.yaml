@@ -1,0 +1,18 @@
+encryption_key: nvidia_tao
+batch_size: 1
+model_config:
+  model_type: joint
+  backbone: resnet18
+  of_seq_length: 10
+  rgb_seq_length: 3
+  num_fc: 64
+dataset_config:
+  label_map:
+    walk: 0
+    sits: 1
+    squa: 2
+    fall: 3
+    bend: 4
+  output_shape:
+  - 224
+  - 224

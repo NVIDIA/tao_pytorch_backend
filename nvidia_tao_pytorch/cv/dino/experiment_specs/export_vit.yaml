@@ -1,0 +1,24 @@
+results_dir: "???"
+export:
+  gpu_id: 0
+  checkpoint: "???"
+  onnx_file: "???"
+  input_width: 1536
+  input_height: 1536
+  opset_version: 17
+dataset:
+  num_classes: 91
+  batch_size: -1
+  augmentation:
+    fixed_random_crop: 1536
+    test_random_resize: 1536
+    random_resize_max_size: 1536
+    fixed_padding: True
+model:
+  backbone: vit_large_dinov2
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 900
+  dropout_ratio: 0.0
+  dim_feedforward: 2048

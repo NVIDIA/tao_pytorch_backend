@@ -1,0 +1,72 @@
+results_dir: ???
+dataset:
+  data:
+    samples_per_gpu: 128
+    workers_per_gpu: 8
+    train:
+      data_prefix: "/ImageNet2012/ImageNet2012/train"
+      pipeline: # Augmentations alone
+        - type: RandomResizedCrop
+          scale: 224
+          backend: "pillow"
+        - type: RandomFlip
+          prob: 0.5
+          direction: "horizontal"
+        - type: ColorJitter
+          brightness: 0.4
+          contrast: 0.4
+          saturation: 0.4
+        - type: RandomResizedCrop
+          scale: 224
+        - type: RandomErasing
+          erase_prob: 0.3
+    val:
+      data_prefix: /ImageNet2012/ImageNet2012/val
+    test:
+      data_prefix: /ImageNet2012/ImageNet2012/val
+model:
+  backbone:
+    type: "fan_tiny_8_p4_hybrid"
+    custom_args:
+      drop_path_rate: 0.1
+  head:
+    type: "FANLinearClsHead"
+    num_classes: 1000
+    custom_args:
+      head_init_scale: 1
+    loss:
+      type: LabelSmoothLoss
+      label_smooth_val: 0.1
+      mode: 'original'
+  train_cfg:
+    augments:
+      - type: Mixup
+        alpha: 0.8
+      - type: CutMix
+        alpha: 1.0
+train:
+  train_config:
+    runner:
+      max_epochs: 300
+    checkpoint_config:
+      interval: 1
+    logging:
+      interval: 5000
+    validate: True
+    evaluation:
+      interval: 10
+    custom_hooks:
+      - type: "EMAHook"
+        momentum: 0.00008
+        priority: "ABOVE_NORMAL"
+    lr_config:
+      policy: CosineAnnealingCooldown
+      min_lr: 5.0e-06
+      cool_down_time: 10
+      warmup: 'linear'
+      warmup_iters: 20
+      warmup_by_epoch: True
+    optimizer:
+        type: AdamW
+        lr: 0.005
+        weight_decay: 0.05

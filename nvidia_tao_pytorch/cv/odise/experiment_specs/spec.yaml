@@ -1,0 +1,37 @@
+results_dir: '/home/scratch.p3/yuw/tlt3_experiments/odise/release'
+model:
+  # name: "convnext_xxlarge"
+  # pretrained_weights: "laion2b_s34b_b82k-augreg-soup"
+  name: "convnext_large_d_320"
+  pretrained_weights: "laion2b_s29b_b131k_ft_soup"
+  num_classes: 133
+train:
+  use_amp: True
+  checkpoint_interval: 50
+evaluate:
+  checkpoint: "/home/scratch.p3/yuw/tlt3_experiments/odise/odise_convnext_large_coco_50e_bs64x8_fixed/default/model_0089999.pth"
+inference:
+  precision: 'fp16'
+  checkpoint: "/home/scratch.p3/yuw/tlt3_experiments/odise/odise_convnext_large_coco_50e_bs64x8_fixed/default/model_0089999.pth"
+  image_dir: "/home/scratch.p3/yuw/tmp/odise_test_images"
+  overlap_threshold: 0
+  object_mask_threshold: 0.0
+dataset:
+  train:
+    name: "coco_train_panoptic"
+    root_dir: "/home/scratch.p3/yuw/datasets"
+    panoptic_json: "coco/annotations/panoptic_train2017.json"
+    instance_json: "/home/scratch.p3/yuw/datasets/coco/annotations/instances_train2017.json"
+    instance_root: "/home/scratch.p3/yuw/datasets/coco/train2017"
+    panoptic_root: "coco/panoptic_train2017"
+    semantic_root:  "coco/panoptic_semseg_train2017"
+    prompt_eng_file: "/home/scratch.p3/yuw/tlt3_experiments/odise/coco_labels.txt"
+  val:
+    name: "coco_val_panoptic"
+    root_dir: "/home/scratch.p3/yuw/datasets"
+    panoptic_json: "coco/annotations/panoptic_val2017.json"
+    instance_json: "/home/scratch.p3/yuw/datasets/coco/annotations/instances_val2017.json"
+    instance_root: "/home/scratch.p3/yuw/datasets/coco/val2017"
+    panoptic_root: "coco/panoptic_val2017"
+    semantic_root:  "coco/panoptic_semseg_val2017"
+    prompt_eng_file: "/home/scratch.p3/yuw/tlt3_experiments/odise/coco_labels.txt"

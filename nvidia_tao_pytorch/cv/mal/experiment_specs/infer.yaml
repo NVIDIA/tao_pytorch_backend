@@ -1,0 +1,7 @@
+results_dir: ???
+inference:
+  checkpoint: '/home/scratch.p3/yuw/tlt3_experiments/mal_vit/coco/vit-mae-base-16epoch=0.ckpt'
+  gpu_ids: [0]
+  ann_path: '/home/scratch.p3/yuw/datasets/P1000328_segm_gt.json'
+  img_dir: '/home/projects.metropolis2/datasets/kpi_datasets/People/P1000328/images'
+  label_dump_path: '/home/scratch.p3/yuw/datasets/P1000328_segm_mal.json'

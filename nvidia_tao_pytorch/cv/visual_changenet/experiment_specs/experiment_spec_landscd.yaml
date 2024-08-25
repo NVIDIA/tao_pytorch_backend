@@ -1,0 +1,74 @@
+encryption_key: "???"
+task: segment
+train:
+  resume_training_checkpoint_path: null
+  segment:
+    loss: "ce"
+    weights: [0.5, 0.5, 0.5, 0.8, 1.0]
+  num_epochs: 350
+  num_nodes: 1
+  validation_interval: 1
+  checkpoint_interval: 1
+  optim:
+    lr: 0.0001
+    optim: "adamw"
+    policy: "linear" 
+    momentum: 0.9
+    weight_decay: 0.01
+results_dir: "???"
+model:
+  backbone:
+    type: "fan_small_12_p4_hybrid"
+    pretrained_backbone_path: null
+dataset:
+  segment:
+    dataset: "CNDataset"
+    root_dir: "???"
+    data_name: "LandSCD"
+    label_transform: "None"
+    batch_size: 8
+    workers: 1
+    multi_scale_train: True
+    multi_scale_infer: False
+    num_classes: 10
+    img_size: 416
+    image_folder_name: "A"
+    change_image_folder_name: 'B'
+    list_folder_name: 'list'
+    annotation_folder_name: "label"
+    train_split: "train"
+    validation_split: "val"
+    test_split: "test"
+    predict_split: 'test'
+    label_suffix: .png
+    augmentation: 
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: True
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list: [90, 180, 270]
+        enable: True
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: True
+      with_scale_random_crop:
+        enable: True
+      with_random_crop: True
+      with_random_blur: True
+evaluate:
+  checkpoint: "???"
+  vis_after_n_batches: 10
+inference:
+  checkpoint: "???"
+  vis_after_n_batches: 1
+export:
+  gpu_id: 0
+  checkpoint: "???"
+  onnx_file: "???"
+  input_width: 256
+  input_height: 256
