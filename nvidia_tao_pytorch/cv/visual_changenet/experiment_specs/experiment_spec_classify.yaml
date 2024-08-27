@@ -1,13 +1,14 @@
-encryption_key: "???"
+encryption_key: tlt_encode
 task: classify
 train:
   resume_training_checkpoint_path: null
+  pretrained_model_path: /results/pretrained/visual_changenet_classification_vvisual_changenet_nvpcb_trainable_v1.0/changenet_classifier.pth
   classify:
-    loss: "ce"
+    loss: "contrastive"
     cls_weight: [1.0, 10.0]
-  num_epochs: 30
+  num_epochs: 1
   num_nodes: 1
-  val_interval: 1
+  validation_interval: 1
   checkpoint_interval: 1
   optim:
     lr: 0.00005
@@ -18,32 +19,34 @@ train:
   results_dir: "${results_dir}/train"
   tensorboard:
     enabled: True
-results_dir: "???"
+    infrequent_logging_frequency: 1
+results_dir: /results
 model:
   backbone:
     type: "fan_small_12_p4_hybrid"
     pretrained_backbone_path: null
+    freeze_backbone: False
   classify:
     train_margin_euclid: 2.0
     eval_margin: 0.005
     embedding_vectors: 5
     embed_dec: 30
-    difference_module: 'learnable'
+    difference_module: 'euclidean'
     learnable_difference_modules: 4
 dataset:
   classify:
     train_dataset:
-      csv_path: /path/to/train.csv
-      images_dir: /path/to/img_dir
+      csv_path: /data/dataset_convert/train_combined.csv
+      images_dir: /data/images/
     validation_dataset:
-      csv_path: /path/to/val.csv
-      images_dir: /path/to/img_dir
+      csv_path: /data/dataset_convert/valid_combined.csv
+      images_dir: /data/images/
     test_dataset:
-      csv_path: /path/to/test.csv
-      images_dir: /path/to/img_dir
+      csv_path: /data/dataset_convert/valid_combined.csv
+      images_dir: /data/images/
     infer_dataset:
-      csv_path: /path/to/infer.csv
-      images_dir: /path/to/img_dir
+      csv_path: /data/dataset_convert/valid_combined.csv
+      images_dir: /data/images/
     image_ext: .jpg
     batch_size: 16
     workers: 2
@@ -58,20 +61,57 @@ dataset:
     grid_map:
       x: 2
       y: 2
-    output_shape:
-      - 128
-      - 128
+    image_width: 128
+    image_height: 128
     augmentation_config:
       rgb_input_mean: [0.485, 0.456, 0.406]
       rgb_input_std: [0.229, 0.224, 0.225]
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: True
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list: [90, 180, 270]
+        enable: True
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: True
+      with_scale_random_crop:
+        enable: True
+      with_random_crop: True
+      with_random_blur: True
+      augment: False
     num_classes: 2
 evaluate: 
-  checkpoint: "???"
+  checkpoint: "${results_dir}/train/changenet_classify.pth"
+  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  batch_size: ${dataset.classify.batch_size}
 inference:
-  checkpoint: "???"
+  checkpoint: "${results_dir}/train/changenet_classify.pth"
+  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  batch_size: ${dataset.classify.batch_size}
 export:
   gpu_id: 0
-  checkpoint: "${results_dir}/train/changenet_classifier_epoch=004.pth"
-  onnx_file: "${export.results_dir}/changenet_classifier.onnx"
+  checkpoint: "${results_dir}/train/changenet_classify.pth"
+  onnx_file: "${results_dir}/export/changenet-classify.onnx"
   input_width: 128
   input_height: 512
+  batch_size: ${dataset.classify.batch_size}
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: "${results_dir}/export/changenet-classify.onnx"
+  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  batch_size: ${dataset.classify.batch_size}
+  input_channel: 3
+  input_width: 128
+  input_height: 512
+  tensorrt:
+    data_type: FP32
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 10
+    max_batch_size: 10

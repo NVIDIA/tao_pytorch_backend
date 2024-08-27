@@ -15,21 +15,16 @@
 """ Main PTL model file for DINO. """
 
 import copy
-import datetime
-import os
 import json
-from typing import Any, Dict
 
 import torch
 from torch.optim.lr_scheduler import MultiStepLR, StepLR
 from fairscale.optim import OSS
-
 import pytorch_lightning as pl
 
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
-from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.utils import common_utils
+from nvidia_tao_pytorch.core.tlt_logging import logging
 
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.od_dataset import CoCoDataMerge
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco import COCO
@@ -44,15 +39,12 @@ from nvidia_tao_pytorch.cv.deformable_detr.model.post_process import PostProcess
 
 
 # pylint:disable=too-many-ancestors
-class DINOPlModel(pl.LightningModule):
+class DINOPlModel(TAOLightningModule):
     """PTL module for DINO Object Detection Model."""
 
     def __init__(self, experiment_spec, export=False):
         """Init training for DINO Model."""
-        super().__init__()
-        self.experiment_spec = experiment_spec
-        self.dataset_config = experiment_spec.dataset
-        self.model_config = experiment_spec.model
+        super().__init__(experiment_spec)
         self.eval_class_ids = self.dataset_config["eval_class_ids"]
         self.dataset_type = self.dataset_config["dataset_type"]
         if self.dataset_type not in ("serialized", "default"):
@@ -62,7 +54,7 @@ class DINOPlModel(pl.LightningModule):
         self._build_model(export)
         self._build_criterion()
 
-        self.status_logging_dict = {}
+        self.checkpoint_filename = 'dino_model'
 
     def _build_model(self, export):
         """Internal function to build the model."""
@@ -83,7 +75,7 @@ class DINOPlModel(pl.LightningModule):
             if freezed_modules:
                 status_logging.get_status_logger().write(
                     message=f"Freezed module {freezed_modules}",
-                    status_level=status_logging.Status.SUCCESS,
+                    status_level=status_logging.Status.RUNNING,
                     verbosity_level=status_logging.Verbosity.INFO)
             if skipped_modules:
                 status_logging.get_status_logger().write(
@@ -164,7 +156,7 @@ class DINOPlModel(pl.LightningModule):
         else:
             raise NotImplementedError(f"Optimizer {self.train_config.optim.optimizer} is not implemented")
 
-        if self.train_config.distributed_strategy == "ddp_sharded":
+        if self.train_config.distributed_strategy == "fsdp":
             # Override force_broadcast_object=False in PTL
             optim = OSS(params=base_optimizer.param_groups, optim=type(base_optimizer), force_broadcast_object=True, **base_optimizer.defaults)
         else:
@@ -195,38 +187,37 @@ class DINOPlModel(pl.LightningModule):
         """Training step."""
         data, targets, _ = batch
         batch_size = data.shape[0]
-        if self.model_config['use_dn']:
-            outputs = self.model(data, targets)
-        else:
-            outputs = self.model(data)
+
+        outputs = self.model(data,
+                             targets=targets if self.model_config['use_dn'] else None)
+
         # loss
         loss_dict = self.criterion(outputs, targets)
 
         losses = sum(loss_dict[k] * self.weight_dict[k] for k in loss_dict.keys() if k in self.weight_dict)
 
-        self.log("train_loss", losses, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-        self.log("train_class_error", loss_dict['class_error'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("train_loss_ce", loss_dict['loss_ce'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("train_loss_bbox", loss_dict['loss_bbox'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("train_loss_giou", loss_dict['loss_giou'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
+        self.log("train_loss", losses, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("train_class_error", loss_dict['class_error'], on_step=True, on_epoch=False, prog_bar=False)
+        self.log("train_loss_ce", loss_dict['loss_ce'], on_step=True, on_epoch=False, prog_bar=False)
+        self.log("train_loss_bbox", loss_dict['loss_bbox'], on_step=True, on_epoch=False, prog_bar=False)
+        self.log("train_loss_giou", loss_dict['loss_giou'], on_step=True, on_epoch=False, prog_bar=False)
+        lrs = [param_group['lr'] for param_group in self.optimizers().optimizer.param_groups]
+        self.log("lr", lrs[0], on_step=True, on_epoch=False, prog_bar=True)
 
-        return {'loss': losses}
+        return losses
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """Log Training metrics to status.json"""
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
-        training_step_outputs.clear()
 
     def on_validation_epoch_start(self) -> None:
         """
@@ -249,10 +240,10 @@ class DINOPlModel(pl.LightningModule):
         """Validation step."""
         data, targets, image_names = batch
         batch_size = data.shape[0]
-        if self.model_config['use_dn']:
-            outputs = self.model(data, targets)
-        else:
-            outputs = self.model(data)
+
+        outputs = self.model(data,
+                             targets=targets if self.model_config['use_dn'] else None)
+
         loss_dict = self.criterion(outputs, targets)
         losses = sum(loss_dict[k] * self.weight_dict[k] for k in loss_dict.keys() if k in self.weight_dict)
 
@@ -262,13 +253,14 @@ class DINOPlModel(pl.LightningModule):
         self.val_coco_evaluator.update(res)
 
         self.log("val_loss", losses, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-        self.log("val_class_error", loss_dict['class_error'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("val_loss_ce", loss_dict['loss_ce'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("val_loss_bbox", loss_dict['loss_bbox'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("val_loss_giou", loss_dict['loss_giou'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
+        self.log("val_class_error", loss_dict['class_error'], on_step=True, on_epoch=False, prog_bar=False)
+        self.log("val_loss_ce", loss_dict['loss_ce'], on_step=True, on_epoch=False, prog_bar=False)
+        self.log("val_loss_bbox", loss_dict['loss_bbox'], on_step=True, on_epoch=False, prog_bar=False)
+        self.log("val_loss_giou", loss_dict['loss_giou'], on_step=True, on_epoch=False, prog_bar=False)
+
         return losses
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         """
         Validation epoch end.
         Compute mAP at the end of epoch.
@@ -279,20 +271,28 @@ class DINOPlModel(pl.LightningModule):
         mAP = self.val_coco_evaluator.coco_eval['bbox'].stats[0]
         mAP50 = self.val_coco_evaluator.coco_eval['bbox'].stats[1]
         if self.trainer.is_global_zero:
-            print("\n Validation mAP : {}\n".format(mAP))
-            print("\n Validation mAP50 : {}\n".format(mAP50))
-        self.log("val_mAP", mAP, rank_zero_only=True, sync_dist=True)
-        self.log("val_mAP50", mAP50, rank_zero_only=True, sync_dist=True)
-        self.status_logging_dict["val_mAP"] = str(mAP)
-        self.status_logging_dict["val_mAP50"] = str(mAP50)
+            logging.info("\n Validation mAP : {}\n".format(mAP))
+            logging.info("\n Validation mAP50 : {}\n".format(mAP50))
 
-        average_val_loss = 0.0
-        for out in outputs:
-            average_val_loss += out.item()
-        average_val_loss /= len(outputs)
+        self.log("current_epoch", self.current_epoch, sync_dist=True)
+        self.log("val_mAP", mAP, sync_dist=True)
+        self.log("val_mAP50", mAP50, sync_dist=True)
 
-        self.status_logging_dict["val_loss"] = average_val_loss
-        outputs.clear()
+        average_val_loss = self.trainer.logged_metrics["val_loss"].item()
+
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["val_mAP"] = str(mAP)
+            self.status_logging_dict["val_mAP50"] = str(mAP50)
+            self.status_logging_dict["val_loss"] = average_val_loss
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+        # Clear memory
+        self.val_coco_evaluator = None
+        pl.utilities.memory.garbage_collection_cuda()
 
     def on_test_epoch_start(self) -> None:
         """
@@ -312,9 +312,6 @@ class DINOPlModel(pl.LightningModule):
         """Test step. Evaluate."""
         data, targets, image_names = batch
         outputs = self.model(data)
-        batch_size = data.shape[0]
-        loss_dict = self.criterion(outputs, targets)
-        losses = sum(loss_dict[k] * self.weight_dict[k] for k in loss_dict.keys() if k in self.weight_dict)
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results = self.box_processors(outputs, orig_target_sizes, image_names)
@@ -325,13 +322,7 @@ class DINOPlModel(pl.LightningModule):
         res = {target['image_id'].item(): output for target, output in zip(targets, filtered_res)}
         self.test_coco_evaluator.update(res)
 
-        self.log("test_loss", losses, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("test_class_error", loss_dict['class_error'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("test_loss_ce", loss_dict['loss_ce'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("test_loss_bbox", loss_dict['loss_bbox'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-        self.log("test_loss_giou", loss_dict['loss_giou'], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True, batch_size=batch_size)
-
-    def test_epoch_end(self, outputs):
+    def on_test_epoch_end(self):
         """
         Test epoch end.
         Compute mAP at the end of epoch.
@@ -344,23 +335,14 @@ class DINOPlModel(pl.LightningModule):
         self.log("test_mAP", mAP, rank_zero_only=True)
         self.log("test_mAP50", mAP50, rank_zero_only=True)
 
-        # Log the evaluation results to a file
-        log_file = os.path.join(self.experiment_spec.results_dir, 'log_eval_{}.txt'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
-        logger = common_utils.create_logger(log_file, rank=0)
-        if self.trainer.is_global_zero:
-            logger.info('**********************Start logging Evaluation Results **********************')
-            logger.info('*************** mAP *****************')
-            logger.info('mAP : %2.2f' % mAP)
-            logger.info('*************** mAP50 *****************')
-            logger.info('mAP50 : %2.2f' % mAP50)
+        self.status_logging_dict = {}
         self.status_logging_dict["test_mAP"] = str(mAP)
         self.status_logging_dict["test_mAP50"] = str(mAP50)
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Evaluation metrics generated.",
+            message="Test metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
-        outputs.clear()
 
     def predict_step(self, batch, batch_idx):
         """Predict step. Inference."""
@@ -370,7 +352,7 @@ class DINOPlModel(pl.LightningModule):
         pred_results = self.box_processors(outputs, orig_target_sizes, image_names)
         return pred_results
 
-    def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
+    def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx=0):
         """
         Predict batch end.
         Save the result inferences at the end of batch.
@@ -387,16 +369,3 @@ class DINOPlModel(pl.LightningModule):
         """Forward of the dino model."""
         outputs = self.model(x)
         return outputs
-
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Encrpyt the checkpoint. The encryption is done in TLTCheckpointConnector."""
-        pass
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Decrpyt the checkpoint."""
-        if checkpoint.get("state_dict_encrypted", False):
-            # Retrieve encryption key from TLTPyTorchCookbook.
-            key = TLTPyTorchCookbook.get_passphrase()
-            if key is None:
-                raise PermissionError("Cannot access model state dict without the encryption key")
-            checkpoint = patch_decrypt_checkpoint(checkpoint, key)

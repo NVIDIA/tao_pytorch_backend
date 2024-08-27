@@ -240,7 +240,7 @@ class ConvNeXt(nn.Module):
             norm_layer = partial(LayerNorm2d, eps=1e-6)
             cl_norm_layer = norm_layer if conv_mlp else partial(nn.LayerNorm, eps=1e-6)
         else:
-            assert conv_mlp,\
+            assert conv_mlp, \
                 'If a norm_layer is specified, conv MLP must be used so all norm expect rank-4, channels-first input'
             cl_norm_layer = norm_layer
 

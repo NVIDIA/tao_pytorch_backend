@@ -16,7 +16,6 @@
 
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-# from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.cv.optical_inspection.dataloader.oi_dataset import SiameseNetworkTRIDataset, get_sampler
 
 # START SIAMESE DATALOADER
@@ -36,20 +35,21 @@ def build_dataloader(df, weightedsampling, split, data_config):
     """
     workers = data_config["workers"]
     batch_size = data_config["batch_size"]
-    output_shape = data_config["output_shape"]
+    image_width = data_config["image_width"]
+    image_height = data_config["image_height"]
     rgb_mean = data_config["augmentation_config"]["rgb_input_mean"]
     rgb_std = data_config["augmentation_config"]["rgb_input_std"]
 
     train_transforms = transforms.Compose(
         [
-            transforms.Resize((output_shape[0], output_shape[1])),
+            transforms.Resize((image_height, image_width)),
             transforms.ToTensor(),
             transforms.Normalize(rgb_mean, rgb_std)
         ]
     )
     test_transforms = transforms.Compose(
         [
-            transforms.Resize((output_shape[0], output_shape[1])),
+            transforms.Resize((image_height, image_width)),
             transforms.ToTensor(),
             transforms.Normalize(rgb_mean, rgb_std)
         ]

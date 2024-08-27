@@ -13,12 +13,10 @@
 # limitations under the License.
 
 """Evaluation script for PointPillars."""
-import argparse
 import datetime
 import os
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch import nn
 
@@ -35,10 +33,11 @@ except:  # noqa: E722
         "Failed to import TensorRT package, "
         "evaluation with TensorRT engine will not be available."
     )
+from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.path_utils import expand_path
+from nvidia_tao_pytorch.pointcloud.pointpillars.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.pointcloud.pointpillars.tools.eval_utils import eval_utils
-from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.config import cfg, cfg_from_yaml_file
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.datasets import build_dataloader
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.models import load_checkpoint
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.models.model_utils import model_nms_utils
@@ -49,26 +48,6 @@ pyc_dev = pycuda.autoinit.device
 pyc_ctx = pyc_dev.retain_primary_context()
 
 
-def parse_config():
-    """Argument Parser."""
-    parser = argparse.ArgumentParser(description='arg parser')
-    parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
-    parser.add_argument('--save_to_file', action='store_true', default=False, help='')
-    parser.add_argument("--output_dir", type=str, required=False, default=None, help="output checkpoint directory.")
-    parser.add_argument(
-        "--trt_engine",
-        type=str,
-        required=False,
-        default=None,
-        help="Path to the TensorRT engine to be used for evaluation"
-    )
-    parser.add_argument("--key", "-k", type=str, required=True, help="Encryption key")
-    args = parser.parse_args()
-    cfg_from_yaml_file(expand_path(args.cfg_file), cfg)
-    np.random.seed(1024)
-    return args, cfg
-
-
 def parse_epoch_num(model_file):
     """Parse epoch number from model file."""
     model_base = os.path.basename(model_file)
@@ -77,28 +56,28 @@ def parse_epoch_num(model_file):
 
 
 def eval_single_ckpt(
-    model, test_loader, args,
+    model, test_loader, cfg,
     eval_output_dir, logger, epoch_id,
-    cfg, dist_test=False
+    dist_test=False
 ):
     """Evaluation with PyTorch model."""
     model.cuda()
     # start evaluation
     return eval_utils.eval_one_epoch(
         cfg, model, test_loader, epoch_id, logger, dist_test=dist_test,
-        result_dir=eval_output_dir, save_to_file=args.save_to_file
+        result_dir=eval_output_dir, save_to_file=cfg.evaluate.save_to_file
     )
 
 
 def eval_single_ckpt_trt(
-    model, test_loader, args,
+    model, test_loader, cfg,
     eval_output_dir, logger,
-    cfg, dist_test=False
+    dist_test=False
 ):
     """Evaluation with TensorRT engine."""
     return eval_utils.eval_one_epoch_trt(
         cfg, model, test_loader, logger, dist_test=dist_test,
-        result_dir=eval_output_dir, save_to_file=args.save_to_file
+        result_dir=eval_output_dir, save_to_file=cfg.evaluate.save_to_file
     )
 
 
@@ -179,18 +158,21 @@ class TrtModelWrapper():
         )
 
 
-def main():
+spec_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "cfgs")
+
+
+# Load experiment specification, additially using schema for validation/retrieving the default values.
+# --config_path and --config_name will be provided by the entrypoint script.
+@hydra_runner(
+    config_path=spec_root, config_name="pointpillar_general", schema=ExperimentConfig
+)
+def main(cfg: ExperimentConfig) -> None:
     """Main function."""
-    args, cfg = parse_config()
-    args.batch_size = cfg.evaluate.batch_size
-    args.workers = cfg.dataset.num_workers
-    args.ckpt = cfg.evaluate.checkpoint
-    if args.output_dir is None:
-        if cfg.results_dir is None:
-            raise OSError("Either provide results_dir in config file or provide output_dir as a CLI argument")
-        else:
-            args.output_dir = cfg.results_dir
-    output_dir = Path(expand_path(args.output_dir))
+    if cfg.get("evaluate", {}).get("trt_engine", None) == "":
+        cfg["evaluate"]["trt_engine"] = None
+    if cfg.results_dir is None:
+        raise OSError("Either provide output_dir in config file or provide output_dir as a CLI argument")
+    output_dir = Path(expand_path(cfg.results_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
     eval_output_dir = output_dir / 'eval'
     eval_output_dir.mkdir(parents=True, exist_ok=True)
@@ -209,28 +191,32 @@ def main():
     logger.info('CUDA_VISIBLE_DEVICES=%s' % gpu_list)
     test_loader = build_dataloader(
         dataset_cfg=cfg.dataset,
-        class_names=cfg.class_names,
-        batch_size=args.batch_size,
-        dist=False, workers=args.workers, logger=logger, training=False
+        class_names=cfg.dataset.class_names,
+        batch_size=cfg.evaluate.batch_size,
+        dist=False,
+        workers=cfg.dataset.num_workers,
+        logger=logger,
+        training=False,
+        info_path=cfg.dataset.data_info_path
     )[1]
     checkpoint_loaded = load_checkpoint(
-        args.ckpt,
-        args.key
+        cfg.evaluate.checkpoint,
+        cfg.key
     )
     model = checkpoint_loaded[0]
     epoch_num = checkpoint_loaded[2]
     # Try to load TRT engine if there is any
-    if args.trt_engine is not None:
+    if cfg.evaluate.trt_engine is not None:
         trt_model = TrtModel(
-            args.trt_engine,
-            args.batch_size,
+            cfg.evaluate.trt_engine,
+            cfg.evaluate.batch_size,
         )
         trt_model.build_or_load_trt_engine()
         # Check the batch size
         engine_batch_size = trt_model.engine._engine.get_binding_shape(0)[0]
-        if engine_batch_size != args.batch_size:
+        if engine_batch_size != cfg.evaluate.batch_size:
             raise ValueError(f"TensorRT engine batch size: {engine_batch_size}, mismatch with "
-                             f"batch size for evaluation: {args.batch_size}. "
+                             f"batch size for evaluation: {cfg.evaluate.batch_size}. "
                              "Please make sure they are the same by generating a new engine or "
                              f"modifying the evaluation batch size in spec file to {engine_batch_size}.")
         model_wrapper = TrtModelWrapper(
@@ -240,8 +226,8 @@ def main():
         )
         with torch.no_grad():
             ret_dict = eval_single_ckpt_trt(
-                model_wrapper, test_loader, args,
-                eval_output_dir, logger, cfg, dist_test=False
+                model_wrapper, test_loader, cfg,
+                eval_output_dir, logger, dist_test=False
             )
         status_logging.get_status_logger().kpi = ret_dict
         status_logging.get_status_logger().write(
@@ -252,8 +238,8 @@ def main():
         # Load model from checkpoint
         with torch.no_grad():
             ret_dict = eval_single_ckpt(
-                model, test_loader, args, eval_output_dir,
-                logger, epoch_num, cfg, dist_test=False
+                model, test_loader, cfg, eval_output_dir,
+                logger, epoch_num, dist_test=False
             )
         status_logging.get_status_logger().kpi = ret_dict
         status_logging.get_status_logger().write(
@@ -267,7 +253,7 @@ if __name__ == '__main__':
     try:
         main()
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Evaluation finished successfully."
         )
     except (KeyboardInterrupt, SystemExit):

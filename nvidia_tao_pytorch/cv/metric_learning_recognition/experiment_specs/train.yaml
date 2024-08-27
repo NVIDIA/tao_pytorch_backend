@@ -1,12 +1,12 @@
 results_dir: "???"
 model:
-  backbone: resnet_50 # options: resnet_50, resnet_101, fan_tiny, fan_small, fan_base, fan_large, nvdinov2_vit_large_legacy
-  pretrained_model_path: "???"
+  backbone: resnet_101
+  pretrained_model_path: null
   pretrained_trunk_path: null
   pretrained_embedder_path: null
   input_width: 224
-  input_height: 224
-  feat_dim: 256
+  input_height: 224 
+  feat_dim: 2048
 train:
   optim:
     name: Adam
@@ -29,13 +29,15 @@ train:
     warmup_method: linear
     triplet_loss_margin: 0.3
     miner_function_margin: 0.1
-  num_epochs: 140
+  num_epochs: 150 
+  resume_training_checkpoint_path: null
   checkpoint_interval: 1
+  validation_interval: 1
+  smooth_loss: False
   batch_size: 16
   val_batch_size: 16
-  smooth_loss: True
-  resume_training_checkpoint_path: null
-  results_dir: "???"
+  train_trunk: True
+  train_embedder: True
 dataset:
   train_dataset: "???"
   val_dataset:
@@ -47,13 +49,7 @@ dataset:
   prob: 0.5
   re_prob: 0.5
   num_instance: 4
-  color_augmentation:
-    enable: True
-    brightness: 0.4
-    contrast: 0.4
-    saturation: 0.4
-    hue: 0.1
+  color_augmentation: 
+    enabled: True
   gaussian_blur:
-    enable: True
-    kernel: [15, 15]
-    sigma: [0.3, 0.7]
+    enabled: True

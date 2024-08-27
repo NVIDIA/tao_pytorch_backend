@@ -1,4 +1,4 @@
-results_dir: "???"
+results_dir: "/results/kinetics"
 encryption_key: nvidia_tao
 model:
   model_type: ST-GCN
@@ -10,11 +10,11 @@ model:
   edge_importance_weighting: True
 dataset:
   train_dataset:
-    data_path: "???"
-    label_path: "???"
+    data_path: "/data/kinetics/train_data.npy"
+    label_path: "/data/kinetics/train_label.pkl"
   val_dataset:
-    data_path: "???"
-    label_path: "???"
+    data_path: "/data/kinetics/val_data.npy"
+    label_path: "/data/kinetics/val_label.pkl"
   num_classes: 5
   label_map:
     front_raises: 0
@@ -28,7 +28,6 @@ dataset:
   batch_size: 16
   num_workers: 1
 train:
-  results_dir: "${results_dir}/train"
   optim:
     lr: 0.1
     momentum: 0.9
@@ -40,20 +39,5 @@ train:
     - 30
     - 40
     lr_decay: 0.1
-  num_epochs: 50
-  checkpoint_interval: 5
-inference:
-  results_dir: "${results_dir}/inference"
-  checkpoint: "???"
-  output_file: "???"
-  test_dataset:
-    data_path: "???"
-evaluate:
-  results_dir: "${results_dir}/evaluate"
-  checkpoint: "???"
-  test_dataset:
-    data_path: "???"
-    label_path: "???"
-export:
-  results_dir: "${results_dir}/export"
-  checkpoint: "???"
+  num_epochs: 5
+  checkpoint_interval: 1

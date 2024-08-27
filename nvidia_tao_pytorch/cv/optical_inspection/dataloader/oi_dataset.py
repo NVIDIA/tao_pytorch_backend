@@ -20,6 +20,7 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset, WeightedRandomSampler
 from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_pytorch.cv.optical_inspection.dataloader.utils import CDDataAugmentation
 
 
 class SiameseNetworkTRIDataset(Dataset):
@@ -38,16 +39,14 @@ class SiameseNetworkTRIDataset(Dataset):
         """
         self.data_frame = data_frame
         self.transform = transform
-        # self.data_path = data_path
-        # self.input_images = data_config["validation_dataset"]["images_dir"]
         self.input_image_root = input_data_path
         self.train = train
         self.num_inputs = data_config["num_input"]
         self.concat_type = data_config["concat_type"]
         self.lighting = data_config["input_map"]
         self.grid_map = data_config["grid_map"]
-        self.output_shape = data_config["output_shape"]
         self.ext = data_config["image_ext"]
+        self.output_shape = (data_config["image_height"], data_config["image_width"])
         if self.concat_type == "grid":
             print("Using {} input types and {} type {} X {} for comparison ".format(
                 self.num_inputs,
@@ -61,7 +60,19 @@ class SiameseNetworkTRIDataset(Dataset):
                 self.concat_type,
                 self.num_inputs
             ))
-        # self.tensorBR = tensorBR
+        augmentation = data_config["augmentation_config"]
+        self.augment = augmentation['augment']
+        if self.train and self.augment:
+            self.augmentor = CDDataAugmentation(
+                img_size=self.output_shape,
+                random_flip=augmentation['random_flip'],
+                random_rotate=augmentation['random_rotate'],
+                random_color=augmentation['random_color'],
+                with_random_crop=augmentation['with_random_crop'],
+                with_random_blur=augmentation['with_random_blur'],
+                mean=augmentation['rgb_input_mean'],
+                std=augmentation['rgb_input_std'],
+            )
 
     def get_absolute_image_path(self, prefix, light=None):
         """
@@ -125,7 +136,10 @@ class SiameseNetworkTRIDataset(Dataset):
                 img0[i] = img0[i].convert("RGB")
             for i in range(len(img1)):
                 img1[i] = img1[i].convert("RGB")
-            if self.transform is not None:
+            # Apply data augmentation
+            if self.augment:
+                img0T, img1T = self.augmentor.transform(img0, img1, to_tensor=True)
+            else:
                 img0T = [self.transform(img) for img in img0]
                 img1T = [self.transform(img) for img in img1]
         else:

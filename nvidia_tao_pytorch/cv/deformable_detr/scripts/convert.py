@@ -15,10 +15,10 @@
 """Convert ODDataset to sharded json format."""
 import os
 
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.deformable_detr.config.default_config import DDDatasetConvertConfig
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import check_and_create
+import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.utilities import check_and_create
+from nvidia_tao_pytorch.cv.deformable_detr.config.dataset import DDDatasetConvertConfig
 from nvidia_tao_pytorch.cv.deformable_detr.utils.converter import KITTIConverter
 
 
@@ -80,7 +80,6 @@ def run_experiment(experiment_config,
     with open(input_sources, 'r') as f:
         seq_txt = f.readlines()
         for input_source in seq_txt:
-            print(input_source)
             input_source = input_source.rstrip('\n')
             converter = build_converter(experiment_config, input_source)
             converter.convert()
@@ -100,7 +99,7 @@ def main(cfg: DDDatasetConvertConfig) -> None:
         run_experiment(experiment_config=cfg,
                        results_dir=cfg.results_dir)
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Dataset convert finished successfully"
         )
     except (KeyboardInterrupt, SystemExit):

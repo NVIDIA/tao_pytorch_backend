@@ -15,11 +15,12 @@
 """Model builder interface and joint model."""
 import torch
 import torch.nn as nn
+
 from .resnet import resnet2d
 from .resnet3d import resnet3d
 from .i3d import InceptionI3d
 import torch.nn.functional as F
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
+from nvidia_tao_pytorch.core.utilities import patch_decrypt_checkpoint
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 
 

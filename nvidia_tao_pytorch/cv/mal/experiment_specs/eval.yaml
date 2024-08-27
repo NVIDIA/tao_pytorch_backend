@@ -1,7 +1,9 @@
-data:
-  train_ann_path: '/home/scratch.p3/yuw/datasets/coco/annotations/instances_train2017.json'
-  train_img_dir: '/home/scratch.p3/yuw/datasets/coco/raw-data/train2017'
-  val_ann_path: '/home/scratch.p3/yuw/datasets/coco/annotations/instances_val2017.json'
-  val_img_dir: '/home/scratch.p3/yuw/datasets/coco/raw-data/val2017'
-results_dir: '/home/scratch.p3/yuw/tlt3_experiments/mal'
-checkpoint: '/home/scratch.p3/yuw/tlt3_experiments/mal/coco/vit-mae-base-16epoch=9.ckpt'
+results_dir: ???
+dataset:
+  train_ann_path: ???
+  train_img_dir: ???
+  val_ann_path: ???
+  val_img_dir: ???
+evaluate:
+  gpu_ids: [0]
+  checkpoint: ???

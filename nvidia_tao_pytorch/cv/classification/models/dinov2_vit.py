@@ -87,7 +87,14 @@ class DinoV2ViT(VisionTransformer):
         self._is_init = False
         if init_cfg is not None:
             self.init_cfg = copy.deepcopy(init_cfg)
+        register_tokens = kwargs.pop('register_tokens', 0)
+        self.num_register_tokens = register_tokens
         super(DinoV2ViT, self).__init__(*args, **kwargs)
+
+        if register_tokens > 0:
+            self.register_tokens = nn.Parameter(
+                torch.randn(1, register_tokens, self.embed_dim)
+            )
 
     @property
     def is_init(self):
@@ -257,6 +264,10 @@ class DinoV2ViT(VisionTransformer):
         # add positional encoding to each token
         x = x + self.__interpolate_pos_encoding(x, w, h)
 
+        # add register tokens
+        if self.num_register_tokens > 0:
+            x = torch.cat((x, self.register_tokens.expand(B, -1, -1)), dim=1)
+
         return self.pos_drop(x)
 
 
@@ -285,6 +296,59 @@ class vit_large_patch14_dinov2_swiglu(DinoV2ViT):
             **kwargs
         )
         super(vit_large_patch14_dinov2_swiglu, self).__init__(*args, **model_kwargs)
+
+        self.freeze = freeze
+        if init_cfg:
+            pretrained = init_cfg["checkpoint"]
+            model = torch.load(pretrained, "cpu")
+            self.load_state_dict(model, strict=True)
+            print(f"Loaded pretrained weights from {pretrained}")
+
+        if freeze:
+            assert pretrained is not None, "You shouldn't freeze a model without specifying pretrained"
+            self.eval()
+
+            for p in self.parameters():
+                p.requires_grad = False
+
+    def forward(self, *args, **kwargs):
+        """
+        Forward function and return the flatten output (cls_token)
+        """
+        if self.freeze:
+            self.eval()
+
+        x = super().forward(*args, **kwargs)
+
+        return x.flatten(1)
+
+
+@MODELS.register_module()
+class vit_giant_patch14_reg4_dinov2_swiglu(DinoV2ViT):
+    """
+    DINOV2 ViT Giant model with SwiGLU activation
+    """
+
+    def __init__(self, *args, freeze=False, pretrained=None, init_cfg=None, **kwargs):
+        """Initialize"""
+        model_kwargs = dict(
+            patch_size=14,
+            embed_dim=1536,
+            depth=40,
+            num_heads=24,
+            init_values=1e-5,
+            img_size=518,
+            mlp_layer=SwiGLUPacked,
+            act_layer=nn.SiLU,
+            mlp_ratio=8192 / 1536,
+            embed_layer=partial(PatchEmbed, strict_img_size=False),
+            global_pool="token",
+            num_classes=0,
+            register_tokens=4,
+            init_cfg=init_cfg,
+            **kwargs
+        )
+        super(vit_giant_patch14_reg4_dinov2_swiglu, self).__init__(*args, **model_kwargs)
 
         self.freeze = freeze
         if init_cfg:

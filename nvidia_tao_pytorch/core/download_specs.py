@@ -99,7 +99,7 @@ def main(cfg: DefaultConfig) -> None:
         f"List of files: {names}"
     status_logger.write(
         message=status_message,
-        status_level=Status.SUCCESS
+        status_level=Status.RUNNING
     )
     logging.info(f"Experiment logs saved to '{log_dir}'")
 

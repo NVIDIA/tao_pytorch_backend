@@ -16,7 +16,7 @@
 from functools import partial
 
 import numpy as np
-
+import omegaconf
 from ...utils import common_utils
 from . import augmentor_utils, database_sampler
 
@@ -31,11 +31,11 @@ class DataAugmentor(object):
         self.logger = logger
 
         self.data_augmentor_queue = []
-        aug_config_list = augmentor_configs if isinstance(augmentor_configs, list) \
+        aug_config_list = augmentor_configs if isinstance(augmentor_configs, (list, omegaconf.listconfig.ListConfig)) \
             else augmentor_configs.aug_config_list
 
         for cur_cfg in aug_config_list:
-            if not isinstance(augmentor_configs, list):
+            if not isinstance(augmentor_configs, (list, omegaconf.listconfig.ListConfig)):
                 if cur_cfg.name in augmentor_configs.disable_aug_list:
                     continue
             # cur_augmentor = getattr(self, cur_cfg.name)(config=cur_cfg)
@@ -85,7 +85,7 @@ class DataAugmentor(object):
         if data_dict is None:
             return partial(self.random_world_rotation, config=config)
         rot_range = config['world_rot_angle']
-        if not isinstance(rot_range, list):
+        if not isinstance(rot_range, (list, omegaconf.listconfig.ListConfig)):
             rot_range = [-rot_range, rot_range]
         gt_boxes, points = augmentor_utils.global_rotation(
             data_dict['gt_boxes'], data_dict['points'], rot_range=rot_range

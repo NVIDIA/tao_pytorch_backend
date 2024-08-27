@@ -1,7 +1,7 @@
 dataset: 
     class_names: ['Vehicle', 'Pedestrian', 'Cyclist']
     type: 'GeneralPCDataset'
-    data_path: '/hdd_10t/datasets/zvision/zvision_dataset_ecar_park_520'
+    data_path: '/data/zhimengf/zvision/zvision_dataset_ecar_park_520'
     data_split: {
         'train': train,
         'test': val
@@ -56,7 +56,7 @@ dataset:
 
 model:
     name: PointPillar
-    pretrained_model_path: "/data/zhimengf/pointpillar_workspace/33/pth0.5/ckpt/checkpoint_epoch_1.tlt"
+    pretrained_model_path: null
     vfe:
         name: PillarVFE
         with_distance: False
@@ -165,18 +165,19 @@ train:
 
 evaluate:
     batch_size: 1
-    checkpoint: "/data/zhimengf/tlt-experiments/ckpt/checkpoint_epoch_80.tlt"
+    checkpoint: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt"
 
 inference:
     max_points_num: 204800
     batch_size: 1
-    checkpoint: "/data/zhimengf/pointpillar_workspace/34/ckpt/checkpoint_epoch_80.tlt"
+    checkpoint: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt"
     viz_conf_thresh: 0.3
 
 export:
   gpu_id: 0
-  checkpoint: "/data/zhimengf/tlt-experiments/ckpt/checkpoint_epoch_80.tlt"
-  onnx_file: "/data/zhimengf/tlt-experiments/ckpt/checkpoint_epoch_80.tlt.etlt"
+  checkpoint: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt"
+  onnx_file: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt.etlt"
+  save_engine: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt.trt"
 
 prune:
-  model: "/data/zhimengf/tlt-experiments/ckpt/checkpoint_epoch_80.tlt"
+  model: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt"

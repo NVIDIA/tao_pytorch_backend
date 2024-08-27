@@ -1,4 +1,4 @@
-results_dir: "???"
+results_dir: "/results/nvidia"
 encryption_key: nvidia_tao
 model:
   model_type: ST-GCN
@@ -10,11 +10,11 @@ model:
   edge_importance_weighting: True
 dataset:
   train_dataset:
-    data_path: "???"
-    label_path: "???"
+    data_path: "/data/nvidia/train_data.npy"
+    label_path: "/data/nvidia/train_label.pkl"
   val_dataset:
-    data_path: "???"
-    label_path: "???"
+    data_path: "/data/nvidia/val_data.npy"
+    label_path: "/data/nvidia/val_label.pkl"
   num_classes: 6
   label_map:
     sitting_down: 0
@@ -26,7 +26,6 @@ dataset:
   batch_size: 16
   num_workers: 1
 train:
-  results_dir: "${results_dir}/train"
   optim:
     lr: 0.1
     momentum: 0.9
@@ -39,24 +38,7 @@ train:
     lr_decay: 0.1
   num_epochs: 70
   checkpoint_interval: 5
-inference:
-  results_dir: "${results_dir}/inference"
-  checkpoint: "???"
-  output_file: "???"
-  test_dataset:
-    data_path: "???"
-evaluate:
-  results_dir: "${results_dir}/evaluate"
-  checkpoint: "???"
-  test_dataset:
-    data_path: "???"
-    label_path: "???"
-export:
-  results_dir: "${results_dir}/export"
-  checkpoint: "???"
 dataset_convert:
-  results_dir: "${results_dir}/dataset_convert"
-  data: "???"
   pose_type: "3dbp"
   num_joints: 34
   input_width: 1920

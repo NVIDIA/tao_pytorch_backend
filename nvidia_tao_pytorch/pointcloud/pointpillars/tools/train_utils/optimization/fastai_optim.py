@@ -102,7 +102,7 @@ def listify(p=None, q=None):
         p = [p]
     elif not isinstance(p, Iterable):
         p = [p]
-    n = q if type(q) == int else len(p) if q is None else len(q)
+    n = q if isinstance(q, int) else len(p) if q is None else len(q)
     if len(p) == 1:
         p = p * n
     assert len(p) == n, f'List len mismatch ({len(p)} vs {n})'

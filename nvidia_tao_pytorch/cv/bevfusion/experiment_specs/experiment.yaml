@@ -1,0 +1,75 @@
+results_dir: /results
+dataset:
+  type: KittiPersonDataset
+  root_dir: /data/
+  gt_box_type: camera
+  default_cam_key: CAM2
+  train_dataset:
+    repeat_time: 2
+    ann_file: /data/kitti_person_infos_train.pkl
+    data_prefix: 
+      pts: training/velodyne_reduced
+      img: training/image_2
+    batch_size: 4
+    num_workers: 8
+  val_dataset:
+    ann_file: /data/kitti_person_infos_val.pkl
+    data_prefix: 
+      pts: training/velodyne_reduced
+      img: training/image_2
+    batch_size: 2
+    num_workers: 4
+  test_dataset:
+    ann_file: /data/kitti_person_infos_val.pkl
+    data_prefix: 
+      pts: training/velodyne_reduced
+      img: training/image_2
+    batch_size: 4
+    num_workers: 4
+model:
+  type: BEVFusion
+  point_cloud_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+  voxel_size: [0.075, 0.075, 0.2]
+  data_preprocessor:
+    type: Det3DDataPreprocessor
+    voxelize_cfg: 
+      voxelize_reduce: True
+      max_voxels: [120000, 160000]
+      max_num_points: 10
+train:
+  num_gpus: 1
+  num_nodes: 1
+  validation_interval: 1
+  num_epochs: 5
+  optimizer:
+    type: AdamW
+    lr:  0.0002
+  lr_scheduler:
+    - type: LinearLR
+      start_factor: 0.33333333
+      by_epoch: False
+      begin: 0
+      end: 500
+    - type: CosineAnnealingLR
+      T_max: 10
+      begin: 0
+      end: 10
+      by_epoch: True
+      eta_min_ratio: 1e-4
+    - type: CosineAnnealingMomentum
+      eta_min: 0.8947
+      begin: 0
+      end: 2.4
+      by_epoch: True
+    - type: CosineAnnealingMomentum
+      eta_min: 1
+      begin: 2.4
+      end: 10
+      by_epoch: True
+inference:
+  num_gpus: 1
+  checkpoint: /results/train/bevfusion_model.pth
+  conf_threshold: 0.3
+evaluate:
+  num_gpus: 1
+  checkpoint: /results/train/bevfusion_model.pth

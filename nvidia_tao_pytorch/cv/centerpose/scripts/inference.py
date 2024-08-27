@@ -18,64 +18,36 @@ import os
 
 from pytorch_lightning import Trainer
 
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.core.utilities import update_results_dir
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-
-from nvidia_tao_pytorch.cv.centerpose.dataloader.build_data_loader import CPDataModule
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import check_and_create
-
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
+from nvidia_tao_pytorch.cv.centerpose.dataloader.pl_cp_data_module import CPDataModule
 from nvidia_tao_pytorch.cv.centerpose.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.centerpose.model.pl_centerpose_model import CenterPosePlModel
 
 
-def run_experiment(experiment_config, model_path, key, results_dir=None):
+def run_experiment(experiment_config, key):
     """Start the inference."""
-    if not model_path:
-        raise FileNotFoundError("inference.checkpoint is not set!")
+    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config, key)
 
-    # set the encryption key:
-    TLTPyTorchCookbook.set_passphrase(key)
-
-    check_and_create(results_dir)
-
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(
-        status_logging.StatusLogger(
-            filename=status_file,
-            append=True
-        )
-    )
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting CenterPose inference"
-    )
-
-    # tlt inference
     if model_path.endswith('.tlt') or model_path.endswith('.pth'):
-        num_gpus = experiment_config.inference.num_gpus
 
         # build data module
         dm = CPDataModule(experiment_config.dataset)
         dm.setup(stage="predict")
 
         # Run inference using tlt model
-        acc_flag = None
-        if num_gpus > 1:
-            acc_flag = "ddp"
-
         model = CenterPosePlModel.load_from_checkpoint(model_path,
                                                        map_location="cpu",
                                                        experiment_spec=experiment_config)
 
-        trainer = Trainer(devices=num_gpus,
+        trainer = Trainer(devices=gpus,
                           default_root_dir=results_dir,
                           accelerator='gpu',
-                          strategy=acc_flag)
+                          strategy='auto')
 
         trainer.predict(model, datamodule=dm)
+
     elif model_path.endswith('.engine'):
         raise NotImplementedError("TensorRT inference is supported through tao-deploy. "
                                   "Please use tao-deploy to generate TensorRT enigne and run inference.")
@@ -91,31 +63,11 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="infer", schema=ExperimentConfig
 )
+@monitor_status(name="Centerpose", mode="inference")
 def main(cfg: ExperimentConfig) -> None:
     """Run the inference process."""
-    try:
-        cfg = update_results_dir(cfg, task="inference")
-
-        run_experiment(experiment_config=cfg,
-                       key=cfg.encryption_key,
-                       model_path=cfg.inference.checkpoint,
-                       results_dir=cfg.results_dir)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Inference finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Inference was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg,
+                   key=cfg.encryption_key)
 
 
 if __name__ == "__main__":

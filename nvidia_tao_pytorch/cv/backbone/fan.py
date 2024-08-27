@@ -834,7 +834,7 @@ class FAN(nn.Module):
         for blk in self.blocks:
             blk.H, blk.W = H, W
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
             else:
                 x = blk(x)
             H, W = blk.H, blk.W
@@ -860,7 +860,7 @@ class FAN(nn.Module):
         for blk in self.blocks:
             blk.H, blk.W = H, W
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
             else:
                 x = blk(x)
             H, W = blk.H, blk.W

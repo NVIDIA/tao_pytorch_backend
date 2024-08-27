@@ -20,6 +20,8 @@ import json
 import logging
 import os
 
+from nvidia_tao_core.cloud_handlers.utils import status_callback
+
 from torch import distributed as torch_distributed
 from pytorch_lightning.utilities import rank_zero_only, rank_zero_warn
 
@@ -70,7 +72,7 @@ status_level_to_name = {
 class BaseLogger(object):
     """File logger class."""
 
-    def __init__(self, verbosity=Verbosity.DISABLE):
+    def __init__(self, verbosity=Verbosity.INFO):
         """Base logger class.
 
         Args:
@@ -156,14 +158,7 @@ class BaseLogger(object):
         Returns
             data_string (str): Recursively formatted string.
         """
-        if isinstance(data, dict):
-            data_string = []
-            for key, value in data.items():
-                data_string.append(
-                    f"{key}: {self.format_data(value)}"
-                    if isinstance(value, dict) else value
-                )
-        return ", ".join(data_string)
+        return json.dumps(data)
 
     @rank_zero_only
     def log(self, level, string):
@@ -176,8 +171,9 @@ class BaseLogger(object):
             level (int): Log level requested.
             string (string): Message to be written.
         """
-        if level >= self.verbosity:
-            logging.log(level, string)
+        # Base class will not flush data to the
+        # terminal.
+        pass
 
     @rank_zero_only
     def write(self, data=None,
@@ -204,7 +200,6 @@ class BaseLogger(object):
 
             if message:
                 data["message"] = message
-            logging.log(verbosity_level, message)
 
             if self.categorical:
                 data["categorical"] = self.categorical
@@ -216,6 +211,7 @@ class BaseLogger(object):
                 data["kpi"] = self.kpi
 
             data_string = self.format_data(data)
+            status_callback(data_string)
             self.log(verbosity_level, data_string)
             self.flush()
 

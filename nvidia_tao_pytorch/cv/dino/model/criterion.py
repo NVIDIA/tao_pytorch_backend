@@ -20,7 +20,8 @@ from torch import nn
 
 from nvidia_tao_pytorch.cv.dino.model.model_utils import sigmoid_focal_loss
 from nvidia_tao_pytorch.cv.deformable_detr.utils import box_ops
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import (accuracy, get_world_size, is_dist_avail_and_initialized)
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import accuracy
+from nvidia_tao_pytorch.core.distributed.comm import get_world_size, is_dist_avail_and_initialized
 
 
 class SetCriterion(nn.Module):

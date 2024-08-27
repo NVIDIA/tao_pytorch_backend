@@ -22,7 +22,10 @@ from typing import Optional
 from typing import Dict, List
 import numpy as np
 
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank, load_pretrained_weights
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
+from nvidia_tao_pytorch.core.tlt_logging import logging
+
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
 from nvidia_tao_pytorch.cv.deformable_detr.model.resnet import resnet50
 from nvidia_tao_pytorch.cv.deformable_detr.model.gc_vit import gc_vit_model_dict
 
@@ -199,8 +202,8 @@ class Backbone(BackboneBase):
             checkpoint = load_pretrained_weights(pretrained_backbone_path)
             _tmp_st_output = backbone.load_state_dict(checkpoint, strict=False)
             if get_global_rank() == 0:
-                print(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                print(f"{_tmp_st_output}")
+                logging.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
+                logging.info(f"{_tmp_st_output}")
 
         super().__init__(name, backbone, train_backbone, num_channels, return_interm_indices, export)
 

@@ -1,0 +1,18 @@
+results_dir: ???
+evaluate:
+  num_gpus: 1
+  checkpoint: ???
+dataset:
+  test_data_sources:
+    image_dir: ???
+    json_file: ???
+  batch_size: 2
+  workers: 8
+model:
+  backbone: swin_tiny_224_1k
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 900
+  dropout_ratio: 0.0
+  dim_feedforward: 2048

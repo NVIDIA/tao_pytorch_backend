@@ -171,16 +171,20 @@ def build_ocrnet_model(experiment_spec, num_class):
             continue
 
     # Load pretrained weights or resume model
-    if experiment_spec.train.resume_training_checkpoint_path is not None:
+    if experiment_spec.train.resume_training_checkpoint_path:
         model_path = experiment_spec.train.resume_training_checkpoint_path
         load_graph = True
         finetune = False
-    elif experiment_spec.train.pretrained_model_path is not None:
+    elif experiment_spec.model.pruned_graph_path:
+        model_path = experiment_spec.model.pruned_graph_path
+        load_graph = True
+        finetune = False
+    elif experiment_spec.train.pretrained_model_path:
         model_path = experiment_spec.train.pretrained_model_path
         load_graph = False
         finetune = True
-    elif experiment_spec.train.quantize_model_path is not None:
-        model_path = experiment_spec.train.quantize_model_path
+    elif experiment_spec.model.quantize_model_path:
+        model_path = experiment_spec.model.quantize_model_path
         load_graph = True
         finetune = False
     else:
@@ -188,7 +192,7 @@ def build_ocrnet_model(experiment_spec, num_class):
         load_graph = False
         finetune = False
 
-    if model_path is not None:
+    if model_path:
         print(f'loading pretrained model from {model_path}')
         ckpt = load_checkpoint(model_path,
                                key=experiment_spec.encryption_key,
@@ -226,4 +230,6 @@ def build_ocrnet_model(experiment_spec, num_class):
                 state_dict = ckpt.state_dict()
                 load_for_finetune(model, state_dict)
 
+    # Default to training mode
+    model.train()
     return model

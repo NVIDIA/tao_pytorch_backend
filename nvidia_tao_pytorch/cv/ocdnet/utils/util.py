@@ -64,7 +64,7 @@ def setup_logger(log_file_path: str = None):
     ch = logging.StreamHandler()
     ch.setFormatter(formatter)
     logger.addHandler(ch)
-    if log_file_path is not None:
+    if log_file_path:
         file_handle = logging.FileHandler(log_file_path)
         file_handle.setFormatter(formatter)
         logger.addHandler(file_handle)

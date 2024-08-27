@@ -27,7 +27,7 @@ model:
     custom_args:
       model_name: "ViT-B-32"
     freeze: true
-    pretrained: laion2b_s34b_b79k
+    pretrained: ???
   init_cfg:
     checkpoint: ???
   head:

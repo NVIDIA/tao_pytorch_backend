@@ -13,29 +13,31 @@
 # limitations under the License.
 
 """Main PTL model file for re-identification."""
-from typing import Any, Dict
-import pytorch_lightning as pl
 import glob
+import json
 import re
 import os
+from matplotlib import pyplot as plt
+import numpy as np
+import pytorch_lightning as pl
+from tabulate import tabulate
 import torch
 import torch.nn.functional as F
 import torchmetrics
 
-from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import patch_decrypt_checkpoint
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
+from nvidia_tao_pytorch.cv.re_identification.dataloader.build_data_loader import list_dataset
 from nvidia_tao_pytorch.cv.re_identification.model.build_nn_model import build_model
 from nvidia_tao_pytorch.cv.re_identification.model.losses.triplet_loss import TripletLoss, CrossEntropyLabelSmooth
 from nvidia_tao_pytorch.cv.re_identification.model.losses.center_loss import CenterLoss
-from nvidia_tao_pytorch.cv.re_identification.dataloader.build_data_loader import build_dataloader
 from nvidia_tao_pytorch.cv.re_identification.utils.reid_metric import R1_mAP, R1_mAP_reranking
 from nvidia_tao_pytorch.cv.re_identification.lr_schedulers.warmup_multi_step_lr import WarmupMultiStepLR
 from nvidia_tao_pytorch.cv.re_identification.lr_schedulers.cosine_lr import create_cosine_scheduler
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 
 # pylint:disable=too-many-ancestors
-class ReIdentificationModel(pl.LightningModule):
+class ReIdentificationModel(TAOLightningModule):
     """PTL module for single stream re-identification."""
 
     def __init__(self, experiment_spec, prepare_for_training, export=False):
@@ -47,31 +49,26 @@ class ReIdentificationModel(pl.LightningModule):
             export (bool, optional): Export model if True. Defaults to False.
 
         """
-        super().__init__()
-        self.experiment_spec = experiment_spec
+        super().__init__(experiment_spec)
         self.prepare_for_training = prepare_for_training
         # init the model
-        self.model = self._build_model(experiment_spec, export)
+        self.model = self._build_model(export)
 
         self.train_accuracy = torchmetrics.Accuracy()
         self.val_accuracy = torchmetrics.Accuracy()
 
         if self.prepare_for_training:
             self.center_criterion = None
-            if self.experiment_spec["model"]["with_center_loss"]:
-                self.my_loss_func, self.center_criterion = self.__make_loss_with_center(experiment_spec, num_classes=self.num_classes)
+            if self.model_config["with_center_loss"]:
+                self.my_loss_func, self.center_criterion = self.__make_loss_with_center(self.experiment_spec, num_classes=self.num_classes)
             else:
-                self.my_loss_func = self.__make_loss(experiment_spec, num_classes=self.num_classes)
-            self.train_loader, self.val_loader, _, _ = build_dataloader(cfg=self.experiment_spec, is_train=True)
+                self.my_loss_func = self.__make_loss(self.experiment_spec, num_classes=self.num_classes)
 
-        self.status_logging_dict = {"train_loss": 0.0,
-                                    "train_acc": 0.0,
-                                    "cmc_rank_1": 0.0,
-                                    "cmc_rank_5": 0.0,
-                                    "cmc_rank_10": 0.0,
-                                    "mAP": 0.0}
+        self.status_logging_dict = {}
 
-    def _build_model(self, experiment_spec, export):
+        self.checkpoint_filename = 'reid_model'
+
+    def _build_model(self, export):
         """Internal function to build the model.
 
         Args:
@@ -83,32 +80,14 @@ class ReIdentificationModel(pl.LightningModule):
 
         """
         if self.prepare_for_training:
-            directory = experiment_spec["dataset"]["train_dataset_dir"]
+            directory = self.dataset_config["train_dataset_dir"]
             data = self.__process_dir(directory, relabel=True)
             self.num_classes, _, _ = self.__get_imagedata_info(data)
-            self.query_dict = experiment_spec["dataset"]["query_dataset_dir"]
+            self.query_dict = self.dataset_config["query_dataset_dir"]
         else:
-            self.num_classes = experiment_spec["dataset"]["num_classes"]
-        self.model = build_model(experiment_spec, self.num_classes)
+            self.num_classes = self.dataset_config["num_classes"]
+        self.model = build_model(self.experiment_spec, self.num_classes)
         return self.model
-
-    def train_dataloader(self):
-        """Build the dataloader for training.
-
-        Returns:
-            train_loader (Dataloader): Training Data.
-
-        """
-        return self.train_loader
-
-    def val_dataloader(self):
-        """Build the dataloader for validation.
-
-        Returns:
-            val_loader (Dataloader): Validation Data.
-
-        """
-        return self.val_loader
 
     def configure_optimizers(self):
         """Configure optimizers for training.
@@ -183,30 +162,30 @@ class ReIdentificationModel(pl.LightningModule):
         """
         data, label = batch
         data = data.float()
+        batch_size = data.shape[0]
         if "swin" in self.experiment_spec.model.backbone:
             score, feat, _ = self.model(data)
         elif "resnet" in self.experiment_spec.model.backbone:
             score, feat = self.model(data)
         loss = self.my_loss_func(score, feat, label)
         self.train_accuracy.update(score, label)
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
-        self.log("base_lr", self.scheduler.get_lr()[0], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
-        self.log("train_acc_1", self.train_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("base_lr", self.scheduler.get_lr()[0], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train_acc_1", self.train_accuracy, on_step=True, on_epoch=False, prog_bar=True)
+
         return loss
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """Log Training metrics to status.json"""
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
         self.status_logging_dict["train_acc"] = self.train_accuracy.compute().item()
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
 
@@ -230,12 +209,96 @@ class ReIdentificationModel(pl.LightningModule):
     def on_validation_epoch_end(self):
         """Validation step end."""
         if self.trainer.global_rank == 0:
+            self.status_logging_dict = {}
             cmc, mAP = self.metrics.compute()
+            if isinstance(cmc, torch.Tensor):
+                cmc = cmc.cpu().numpy()
             for r in [1, 5, 10]:
                 self.log(f"cmc_rank_{r}", cmc[r - 1], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
                 self.status_logging_dict[f"cmc_rank_{r}"] = str(cmc[r - 1])
             self.log("mAP", mAP, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, rank_zero_only=True)
             self.status_logging_dict["mAP"] = str(mAP)
+            if not self.trainer.sanity_checking:
+                status_logging.get_status_logger().kpi = self.status_logging_dict
+                status_logging.get_status_logger().write(
+                    message="Eval metrics generated.",
+                    status_level=status_logging.Status.RUNNING
+                )
+
+        pl.utilities.memory.garbage_collection_cuda()
+
+    def on_test_epoch_start(self):
+        """Test epoch start"""
+        query_top_dir = self.experiment_spec["evaluate"]["query_dataset"]
+        query_dict = list_dataset(query_top_dir)
+
+        if self.experiment_spec["re_ranking"]["re_ranking"]:
+            self.metrics = R1_mAP_reranking(len(query_dict), self.experiment_spec, False, feat_norm=True)
+        else:
+            self.metrics = R1_mAP(len(query_dict), self.experiment_spec, False, feat_norm=True)
+        self.metrics.reset()
+
+    def test_step(self, batch, batch_idx):
+        """Test step"""
+        data, pids, camids, img_path = batch
+        if "swin" in self.model_config.backbone:
+            output, _ = self.model(data)
+        elif "resnet" in self.model_config.backbone:
+            output = self.model(data)
+        self.metrics.update(output, pids, camids, img_path)
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        cmc, mAP = self.metrics.compute()
+
+        table = []
+        table.append(["mAP", "{:.1%}".format(mAP)])
+        status_logging.get_status_logger().kpi = {"mAP": round(mAP, 1)}
+        status_logging.get_status_logger().write(
+            message="Test metrics generated.",
+            status_level=status_logging.Status.RUNNING)
+
+        for r in [1, 5, 10]:
+            # print("CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
+            table.append(["CMC curve, Rank-" + "{:<3}".format(r), "{:.1%}".format(cmc[r - 1])])
+        print(tabulate(table, headers=["Name", "Score"], floatfmt=".4f", tablefmt="fancy_grid"))
+
+        plt.figure()
+
+        if isinstance(cmc, torch.Tensor):
+            cmc = cmc.cpu().numpy()
+
+        cmc_percentages = [value * 100 for value in cmc]
+        plt.xticks(np.arange(len(cmc_percentages)), np.arange(1, len(cmc_percentages) + 1))
+        plt.plot(cmc_percentages, marker="*")
+        plt.title('Cumulative Matching Characteristics (CMC) Curve')
+        plt.grid()
+        plt.ylabel('Matching Rate[%]')
+        plt.xlabel('Rank')
+        plt.savefig(self.experiment_spec["evaluate"]["output_cmc_curve_plot"])
+
+    def predict_step(self, batch, batch_idx):
+        """Predict step"""
+        data, _, _, img_paths = batch
+        self.results = []
+
+        if "swin" in self.model_config.backbone:
+            feats, _ = self.model(data)
+        elif "resnet" in self.model_config.backbone:
+            feats = self.model(data)
+
+        for img_path, feat in zip(img_paths, feats):
+            result = {"img_path": img_path, "embedding": feat.cpu().numpy().tolist()}
+            self.results.append(result)
+
+    def on_predict_epoch_end(self):
+        """Predict epoch end"""
+        output_file = open(self.experiment_spec["inference"]["output_file"], "w")
+        results = json.dumps(self.results, indent=4)
+        output_file.write(results)
+        output_file.close()
+
+        self.results = []
 
     def forward(self, x):
         """Forward of the re-identification model.
@@ -249,15 +312,6 @@ class ReIdentificationModel(pl.LightningModule):
         """
         output = self.model(x)
         return output
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Decrypt the checkpoint."""
-        if checkpoint.get("state_dict_encrypted", False):
-            # Retrieve encryption key from TLTPyTorchCookbook.
-            key = TLTPyTorchCookbook.get_passphrase()
-            if key is None:
-                raise PermissionError("Cannot access model state dict without the encryption key")
-            checkpoint = patch_decrypt_checkpoint(checkpoint, key)
 
     def __process_dir(self, dir_path, relabel=False):
         """Process the directory.

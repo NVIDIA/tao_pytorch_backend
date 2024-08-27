@@ -21,11 +21,11 @@ from typing import Sequence
 from omegaconf import OmegaConf
 from torchvision.ops import DeformConv2d
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.model.model import Model
 from nvidia_tao_pytorch.cv.ocdnet.data_loader.build_dataloader import get_dataloader
 from nvidia_tao_pytorch.cv.ocdnet.utils.util import mkdir, load_checkpoint
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
 from nvidia_tao_pytorch.cv.ocdnet.model.backbone.fan import TokenMixing, ChannelProcessing
@@ -283,28 +283,7 @@ def run_experiment(experiment_config):
     gpu_id = experiment_config.prune.gpu_id
     torch.cuda.set_device(gpu_id)
 
-    if experiment_config.prune.results_dir is not None:
-        results_dir = experiment_config.prune.results_dir
-    else:
-        results_dir = os.path.join(experiment_config.results_dir, "prune")
-        experiment_config.prune.results_dir = results_dir
-
-    os.makedirs(results_dir, exist_ok=True)
-
     experiment_config = OmegaConf.to_container(experiment_config)
-
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(
-        status_logging.StatusLogger(
-            filename=status_file,
-            append=True
-        )
-    )
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting OCDNet pruning"
-    )
 
     pruner = Prune(experiment_config)
     pruner.prune()
@@ -318,6 +297,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="prune", schema=ExperimentConfig
 )
+@monitor_status(name="OCDNet", mode="prune")
 def main(cfg: ExperimentConfig) -> None:
     """Run the pruning process."""
     # Obfuscate logs.
@@ -325,24 +305,7 @@ def main(cfg: ExperimentConfig) -> None:
 
     pyc_ctx.push()
 
-    try:
-        run_experiment(experiment_config=cfg)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Pruning finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Pruning was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg)
 
 
 if __name__ == "__main__":

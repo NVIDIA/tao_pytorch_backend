@@ -16,12 +16,12 @@
 import os
 import numpy as np
 
+from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.utilities import check_and_create, update_results_dir
 from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import check_and_create, load_json_from_file, write_np_to_file
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.core.utilities import update_results_dir
+from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import load_json_from_file, write_np_to_file
 
 
 def create_data_numpy(data_numpy, pose_sequence, frame_start, frame_end, pose_type, num_joints, sequence_length_max):
@@ -209,7 +209,7 @@ def main(cfg: ExperimentConfig) -> None:
                        results_dir=cfg.results_dir,
                        data_path=cfg.dataset_convert.data)
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Dataset convert finished successfully."
         )
     except (KeyboardInterrupt, SystemExit):

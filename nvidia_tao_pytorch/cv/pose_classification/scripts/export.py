@@ -16,14 +16,12 @@
 import os
 import torch
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
+from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.pose_classification.model.pl_pc_model import PoseClassificationModel
 from nvidia_tao_pytorch.cv.pose_classification.model.st_gcn import Graph
-from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import check_and_create
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.core.utilities import update_results_dir
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +32,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment", schema=ExperimentConfig
 )
+@monitor_status(name="Pose Classification", mode="export")
 def main(cfg: ExperimentConfig) -> None:
     """
     Run the export process for pose classification model.
@@ -44,29 +43,10 @@ def main(cfg: ExperimentConfig) -> None:
     Args:
         cfg (ExperimentConfig): The experiment configuration retrieved from the Hydra configuration files.
     """
-    try:
-        cfg = update_results_dir(cfg, task="export")
-        run_export(cfg, results_dir=cfg.results_dir)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Export finished successfully."
-        )
-
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Export was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_export(cfg)
 
 
-def run_export(args, results_dir):
+def run_export(args):
     """
     Run the export of the pose classification model to ONNX.
 
@@ -81,13 +61,6 @@ def run_export(args, results_dir):
         AssertionError: If the default output file already exists.
         Exception: If any error occurs during the export process.
     """
-    check_and_create(results_dir)
-
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
-    status_logging.get_status_logger().write(status_level=status_logging.Status.STARTED, message="Starting Pose Classification export")
-
     gpu_id = args['export']['gpu_id']
     torch.cuda.set_device(gpu_id)
     # Parsing command line arguments.

@@ -14,7 +14,9 @@
 
 """ MMClassification Evaluate Module """
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
 from nvidia_tao_pytorch.core.mmlab.mmclassification.classification_default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.classification.heads import *  # noqa pylint: disable=W0401, W0614
 from nvidia_tao_pytorch.cv.classification.models import *  # noqa pylint: disable=W0401, W0614
@@ -27,26 +29,14 @@ from mmengine.runner import Runner
 import os
 
 
-def run_experiment(experiment_config, results_dir):
+def run_experiment(experiment_config):
     """Start evaluation."""
-    os.makedirs(results_dir, exist_ok=True)
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(
-        status_logging.StatusLogger(
-            filename=status_file,
-            append=True
-        )
-    )
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting Classification evaluation"
-    )
+    results_dir, model_path, _ = initialize_evaluation_experiment(experiment_config)
     status_logger = status_logging.get_status_logger()
     mmpretrain_config = MMPretrainConfig(experiment_config, phase="evaluate")
     eval_cfg = mmpretrain_config.updated_config
     eval_cfg["work_dir"] = results_dir
-    eval_cfg["load_from"] = experiment_config.evaluate.checkpoint
+    eval_cfg["load_from"] = model_path
     eval_cfg["train_dataloader"] = None
     runner = Runner.from_cfg(eval_cfg)
     classes = sorted(list(runner.val_dataloader.dataset.CLASSES))
@@ -66,30 +56,10 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="test_cats_and_dogs", schema=ExperimentConfig
 )
+@monitor_status(name="Classification", mode="evaluate")
 def main(cfg: ExperimentConfig) -> None:
     """Run the Evaluate process."""
-    try:
-        if cfg.evaluate.results_dir is not None:
-            results_dir = cfg.evaluate.results_dir
-        else:
-            results_dir = os.path.join(cfg.results_dir, "evaluate")
-
-        run_experiment(cfg, results_dir=results_dir)
-        status_logging.get_status_logger().write(status_level=status_logging.Status.SUCCESS,
-                                                 message="Evaluation finished successfully.")
-
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Evaluation was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(cfg)
 
 
 if __name__ == "__main__":

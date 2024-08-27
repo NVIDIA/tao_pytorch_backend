@@ -17,7 +17,7 @@ import os
 
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.dino.config.default_config import DINODatasetConvertConfig
+from nvidia_tao_pytorch.cv.dino.config.dataset import DINODatasetConvertConfig
 from nvidia_tao_pytorch.cv.deformable_detr.scripts.convert import run_experiment
 
 
@@ -35,7 +35,7 @@ def main(cfg: DINODatasetConvertConfig) -> None:
         run_experiment(experiment_config=cfg,
                        results_dir=cfg.results_dir)
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Dataset convert finished successfully"
         )
     except (KeyboardInterrupt, SystemExit):

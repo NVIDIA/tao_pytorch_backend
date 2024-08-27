@@ -14,7 +14,6 @@
 
 """Utils for configuration."""
 import logging
-import os
 logger = logging.getLogger(__name__)
 
 
@@ -43,10 +42,4 @@ def update_config(cfg, task):
     assert len(cfg.model.frozen_stages) == 2, "Length of frozen stages must be 1 or 2."
     assert len(cfg.train.margin_rate) == 2, "Length of margin rate must be 2."
 
-    if cfg[task]['results_dir']:
-        cfg.results_dir = cfg[task]['results_dir']
-    else:
-        cfg.results_dir = os.path.join(cfg.results_dir, task)
-        cfg[task]['results_dir'] = cfg.results_dir
-    logger.info(f"{task.capitalize()} results will be saved at: %s", cfg.results_dir)
     return cfg

@@ -14,49 +14,43 @@
 
 """ Main PTL model file for action recognition """
 
-from typing import Any, Dict, Optional
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
 import torchmetrics
 
-from nvidia_tao_pytorch.cv.action_recognition.dataloader.build_data_loader import build_dataloader, list_dataset
-from nvidia_tao_pytorch.cv.action_recognition.model.build_nn_model import build_ar_model
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.cv.action_recognition.model.build_nn_model import build_ar_model
 
 
 # pylint:disable=too-many-ancestors
-class ActionRecognitionModel(pl.LightningModule):
+class ActionRecognitionModel(TAOLightningModule):
     """ PTL module for action recognition model."""
 
-    def __init__(self, experiment_spec, export=False):
+    def __init__(self, experiment_spec, dm, export=False):
         """Init training for 2D/3D action recognition model.
 
         Args:
             experiment_spec (dict): The experiment specification.
             export (bool, optional): Whether to build the model that can be exported to ONNX format. Defaults to False.
         """
-        super().__init__()
-        self.experiment_spec = experiment_spec
-        self.dataset_config = experiment_spec["dataset"]
-        self.model_config = experiment_spec["model"]
-        self.data_shape = [self.model_config.input_height, self.model_config.input_width]
+        super().__init__(experiment_spec)
 
         # init the model
-        self._build_model(experiment_spec, export)
+        self._build_model(export)
+        self.dm = dm
 
         self.train_accuracy = torchmetrics.Accuracy()
         self.val_accuracy = torchmetrics.Accuracy()
 
-        self.status_logging_dict = {"train_loss": 0.0,
-                                    "train_acc": 0.0,
-                                    "val_loss": 0.0,
-                                    "val_acc": 0.0}
+        self.status_logging_dict = {}
 
-    def _build_model(self, experiment_spec, export):
+        self.checkpoint_filename = 'ar_model'
+
+    def _build_model(self, export):
         """Internal function to build the model.
 
         This method constructs a model using the specified experiment specification and export flag. It returns the model.
@@ -65,58 +59,9 @@ class ActionRecognitionModel(pl.LightningModule):
             experiment_spec (dict): The experiment specification.
             export (bool): Whether to build the model that can be exported to ONNX format.
         """
-        self.model = build_ar_model(experiment_config=experiment_spec,
+        self.model = build_ar_model(experiment_config=self.experiment_spec,
                                     export=export)
         print(self.model)
-
-    def setup(self, stage: Optional[str] = None):
-        """ Set up the dataset for train and val"""
-        train_top_dir = self.dataset_config["train_dataset_dir"]
-        val_top_dir = self.dataset_config["val_dataset_dir"]
-        if train_top_dir is not None:
-            self.train_dict = list_dataset(train_top_dir)
-        else:
-            raise ValueError("Please set the train dataset in the spec file")
-
-        if val_top_dir is not None:
-            self.val_dict = list_dataset(val_top_dir)
-        else:
-            self.val_dict = {}
-
-        print("Train dataset samples: {}".format(len(self.train_dict)))
-        print("Validation dataset samples: {}".format(len(self.val_dict)))
-
-    def train_dataloader(self):
-        """Build the dataloader for training."""
-        train_loader = \
-            build_dataloader(sample_dict=self.train_dict,
-                             model_config=self.model_config,
-                             output_shape=self.data_shape,
-                             label_map=self.dataset_config["label_map"],
-                             dataset_mode="train",
-                             batch_size=self.dataset_config["batch_size"],
-                             workers=self.dataset_config["workers"],
-                             input_type=self.model_config["input_type"],
-                             shuffle=True,
-                             pin_mem=True,
-                             clips_per_video=self.dataset_config["clips_per_video"],
-                             augmentation_config=self.dataset_config["augmentation_config"])
-        return train_loader
-
-    def val_dataloader(self):
-        """Build the dataloader for validation."""
-        val_loader = build_dataloader(sample_dict=self.val_dict,
-                                      model_config=self.model_config,
-                                      output_shape=self.data_shape,
-                                      label_map=self.dataset_config["label_map"],
-                                      dataset_mode="val",
-                                      batch_size=self.dataset_config["batch_size"],
-                                      workers=self.dataset_config["workers"],
-                                      input_type=self.model_config["input_type"],
-                                      clips_per_video=1,
-                                      augmentation_config=self.dataset_config["augmentation_config"]
-                                      )
-        return val_loader
 
     def configure_optimizers(self):
         """Configure optimizers for training"""
@@ -150,72 +95,168 @@ class ActionRecognitionModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         """Training step."""
         data, label = batch
+        batch_size = data.shape[0]
         output = self.model(data)
         loss = F.cross_entropy(output, label)
         self.train_accuracy.update(output, label)
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train_acc_1", self.train_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("train_acc_1", self.train_accuracy, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
 
         return loss
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """Log Training metrics to status.json"""
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
         self.status_logging_dict["train_acc"] = self.train_accuracy.compute().item()
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
 
     def validation_step(self, batch, batch_idx):
         """Validation step."""
         _, data, label = batch
+        batch_size = data.shape[0]
         output = self.model(data)
         loss = F.cross_entropy(output, label)
         self.val_accuracy.update(output, label)
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val_acc_1", self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("val_acc_1", self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
         return loss
 
-    def validation_epoch_end(self, validation_step_outputs):
+    def on_validation_epoch_end(self):
         """Log Validation metrics to status.json"""
-        average_val_loss = 0.0
-        for out in validation_step_outputs:
-            average_val_loss += out.item()
-        average_val_loss /= len(validation_step_outputs)
+        average_val_loss = self.trainer.logged_metrics["val_loss"].item()
 
-        self.status_logging_dict["val_loss"] = average_val_loss
-        self.status_logging_dict["val_acc"] = self.val_accuracy.compute().item()
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["val_loss"] = average_val_loss
+            self.status_logging_dict["val_acc"] = self.val_accuracy.compute().item()
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+
+        pl.utilities.memory.garbage_collection_cuda()
 
     def forward(self, x):
         """Forward of the action recognition model."""
         output = self.model(x)
         return output
 
-    # @rank_zero_only
-    # def training_epoch_end(self, outputs: List[Any]) -> None:
-    #     pass
+    def on_test_epoch_start(self) -> None:
+        """ Test epoch start."""
+        self.label_map = self.dataset_config["label_map"]
+        num_classes = len(self.label_map.keys())
+        self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int32)
+        self.eval_mode_flag = self.experiment_spec["evaluate"]["video_eval_mode"] == "conv"
 
-    # @rank_zero_only
-    # def validation_epoch_end(self, outputs: List[Any]) -> None:
-    #     pass
+    def test_step(self, batch, batch_idx):
+        """Test step. Evaluate """
+        sample_pred_dict = {}
+        sample_path, data, action_label = batch
+        batch_size = len(sample_path)
+        cls_scores = self.model(data)
 
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Encrpyt the checkpoint. The encryption is done in TLTCheckpointConnector."""
-        pass
+        # TODO @seanf: cc says eval_mode_flag = True is never tested
+        if self.eval_mode_flag:
+            prob = torch.softmax(cls_scores, dim=1)
+            for idx in range(batch_size):
+                if sample_path[idx] not in sample_pred_dict:
+                    sample_pred_dict[sample_path[idx]] = prob[idx]
+                sample_pred_dict[sample_path[idx]] += prob[idx]
 
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Decrpyt the checkpoint"""
-        if checkpoint.get("state_dict_encrypted", False):
-            # Retrieve encryption key from TLTPyTorchCookbook.
-            key = TLTPyTorchCookbook.get_passphrase()
-            if key is None:
-                raise PermissionError("Cannot access model state dict without the encryption key")
-            checkpoint = patch_decrypt_checkpoint(checkpoint, key)
+            for k, v in sample_pred_dict.items():
+                pred_id = np.argmax(v)
+                action = self.dm.sample_dict[k]
+                self.confusion_matrix[self.label_map[action], pred_id] += 1
+
+        else:
+            pred_id = torch.argmax(cls_scores, dim=1)
+            for idx in range(batch_size):
+                self.confusion_matrix[action_label[idx], pred_id[idx]] += 1
+
+    def on_test_epoch_end(self):
+        """Test epoch end."""
+        percentage_confusion_matrix, accuracy, m_accuracy = self.compute_metrics(self.confusion_matrix)
+
+        id2name = {v: k for k, v in self.label_map.items()}
+        print("*******************************")
+        for idx in range(len(self.label_map)):
+            cls_acc = percentage_confusion_matrix[idx][idx]
+            print("{:<14}{:.4}".format(
+                id2name[idx], cls_acc))
+
+        print("*******************************")
+        print("Total accuracy: {}".format(round(accuracy, 3)))
+        print("Average class accuracy: {}".format(round(m_accuracy, 3)))
+
+        status_logging.get_status_logger().kpi = {"accuracy": round(accuracy, 3),
+                                                  "m_accuracy": round(m_accuracy, 3)}
+        status_logging.get_status_logger().write(
+            message="Test metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
+
+        self.confusion_matrix = []
+
+    def compute_metrics(self, confusion_matrix):
+        """Computes evaluation metrics.
+
+        Args:
+            confusion_matrix (numpy.ndarray): The confusion matrix.
+
+        Returns:
+            dict: A dictionary containing the evaluation metrics.
+        """
+        row_sum = np.sum(confusion_matrix, axis=1)
+        _shape = confusion_matrix.shape
+        percentage_confusion_matrix = np.zeros(
+            _shape, dtype=np.float32)
+        for x in range(_shape[0]):
+            for y in range(_shape[1]):
+                if not row_sum[x] == 0:
+                    percentage_confusion_matrix[x][y] = np.float32(confusion_matrix[x][y]) / \
+                        row_sum[x] * 100.0
+
+        trace = np.trace(confusion_matrix)
+        percent_trace = np.trace(percentage_confusion_matrix)
+
+        accuracy = float(trace) / np.sum(confusion_matrix) * 100.0
+        m_accuracy = percent_trace / _shape[0]
+
+        return percentage_confusion_matrix, accuracy, m_accuracy
+
+    def on_predict_epoch_start(self):
+        """ Inference epoch start"""
+        label_map = self.dataset_config["label_map"]
+        self.id2name = {v: k for k, v in label_map.items()}
+        self.sample_result_dict = {}
+
+    def predict_step(self, batch, batch_idx):
+        """ Inference step"""
+        sample_path, data = batch
+        batch_size = len(sample_path)
+        cls_scores = self.model(data)
+        pred_id = torch.argmax(cls_scores, dim=1).cpu().numpy()
+        pred_name = []
+        for label_idx in pred_id:
+            pred_name.append(self.id2name[label_idx])
+        for idx in range(batch_size):
+            if sample_path[idx] not in self.sample_result_dict:
+                self.sample_result_dict[sample_path[idx]] = [pred_name[idx]]
+            else:
+                self.sample_result_dict[sample_path[idx]].append(pred_name[idx])
+
+    def on_predict_epoch_end(self) -> None:
+        """ Inference epoch end"""
+        # save the output and visualize
+        for k, v in self.sample_result_dict.items():
+            print("{} : {}".format(k, v))

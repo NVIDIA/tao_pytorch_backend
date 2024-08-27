@@ -14,6 +14,8 @@
 
 """Common utilities that could be used across all nlp models."""
 
+import re
+import ast
 import importlib
 import os
 import pkgutil
@@ -21,11 +23,19 @@ import subprocess
 import shlex
 import sys
 from time import time
+import yaml
+from contextlib import contextmanager
 
-import nvidia_tao_pytorch.core.download_specs as download_specs
 from nvidia_tao_pytorch.core.telemetry.nvml_utils import get_device_details
-from nvidia_tao_pytorch.core.telemetry.telemetry import send_telemetry_data
 from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_core.telemetry.telemetry import send_telemetry_data
+
+LIGHTNING_EXCLUDED_NETWORKS = [
+    "classification_pyt",
+    "bevfusion",
+    "segformer",
+    "pointpillars",
+]
 
 
 def get_subtasks(package):
@@ -44,23 +54,65 @@ def get_subtasks(package):
     for _, task, is_package in pkgutil.walk_packages(module_path):
         if is_package:
             continue
-        module_name = package.__name__ + '.' + task
+        module_name = package.__name__ + "." + task
         module_details = {
             "module_name": module_name,
-            "runner_path": os.path.abspath(importlib.import_module(module_name).__file__),
+            "runner_path": os.path.abspath(
+                importlib.import_module(module_name).__file__
+            ),
         }
         modules[task] = module_details
 
     # Add new command for copying specs.
-    modules["download_specs"] = {
-        "source_data_dir": os.path.join(os.path.dirname(module_path[0]), "experiment_specs"),
-        "runner_path": os.path.abspath(importlib.import_module(download_specs.__name__).__file__),
-        "workflow": package.__name__.split(".")[0]
-    }
+    # modules["download_specs"] = {
+    #     "source_data_dir": os.path.join(os.path.dirname(module_path[0]), "experiment_specs"),
+    #     "runner_path": os.path.abspath(importlib.import_module(download_specs.__name__).__file__),
+    #     "workflow": package.__name__.split(".")[0]
+    # }
     return modules
 
 
-def launch(parser, subtasks, network=None):
+def command_line_parser(parser, subtasks):
+    """Construct parser for CLI arguments"""
+    parser.add_argument(
+        "subtask",
+        default="train",
+        choices=subtasks.keys(),
+        help="Subtask for a given task/model.",
+    )
+    parser.add_argument(
+        "-e",
+        "--experiment_spec_file",
+        help="Path to the experiment spec file.",
+        default=None,
+    )
+    args, unknown_args = parser.parse_known_args()
+
+    return args, unknown_args
+
+
+@contextmanager
+def dual_output(log_file=None):
+    """Context manager to handle dual output redirection for subprocess.
+
+    Args:
+    - log_file (str, optional): Path to the log file. If provided, output will be
+      redirected to both sys.stdout and the specified log file. If not provided,
+      output will only go to sys.stdout.
+
+    Yields:
+    - stdout_target (file object): Target for stdout output (sys.stdout or log file).
+    - log_target (file object or None): Target for log file output, or None if log_file
+      is not provided.
+    """
+    if log_file:
+        with open(log_file, "a") as f:
+            yield sys.stdout, f
+    else:
+        yield sys.stdout, None
+
+
+def launch(args, unknown_args, subtasks, network=None):
     """CLI function that executes subtasks.
 
     Args:
@@ -68,99 +120,144 @@ def launch(parser, subtasks, network=None):
         subtasks: list of subtasks for a given task.
         network (str): name of the network running.
     """
-    # Subtasks for a given model.
-    parser.add_argument(
-        'subtask', default='train', choices=subtasks.keys(), help="Subtask for a given task/model.",
-    )
-    # Add standard TLT arguments.
-    parser.add_argument(
-        "-r",
-        "--results_dir",
-        help="Path to a folder where the experiment outputs should be written. (DEFAULT: ./)",
-        required=True,
-    )
-    parser.add_argument("-k", "--key", help="User specific encoding key to save or load a .tlt model.")
-    parser.add_argument("-e", "--experiment_spec_file", help="Path to the experiment spec file.", default=None)
-    parser.add_argument(
-        "-g", "--gpus", help="Number of GPUs to use. The default value is 1.", default=1,
-        type=int
-    )
-    parser.add_argument(
-        "-m", "--resume_model_weights", help="Path to a pre-trained model or model to continue training."
-    )
-    parser.add_argument(
-        "-o", "--output_specs_dir", help="Path to a target folder where experiment spec files will be downloaded."
-    )
+    # Make sure the user provides spec file.
+    if args["experiment_spec_file"] is None:
+        print(
+            "ERROR: The subtask `{}` requires the following argument: -e/--experiment_spec_file".format(
+                args["subtask"]
+            )
+        )
+        exit(1)
 
-    # Parse the arguments.
-    args, unknown_args = parser.parse_known_args()
-    process_passed = True
+    # Make sure the file exists!
+    if not os.path.exists(args["experiment_spec_file"]):
+        print(
+            "ERROR: The indicated experiment spec file `{}` doesn't exist!".format(
+                args["experiment_spec_file"]
+            )
+        )
+        exit(1)
 
     script_args = ""
-    # Process spec file for all commands except the one for getting spec files ;)
-    if args.subtask not in ["download_specs", "pitch_stats"]:
-        # Make sure the user provides spec file.
-        if args.experiment_spec_file is None:
-            print("ERROR: The subtask `{}` requires the following argument: -e/--experiment_spec_file".format(args.subtask))
-            exit(1)
+    # Split spec file_path into config path and config name.
+    path, name = os.path.split(args["experiment_spec_file"])
+    if path != "":
+        script_args += " --config-path " + os.path.realpath(path)
+    script_args += " --config-name " + name
 
-        # Make sure the file exists!
-        if not os.path.exists(args.experiment_spec_file):
-            print("ERROR: The indicated experiment spec file `{}` doesn't exist!".format(args.experiment_spec_file))
-            exit(1)
-
-        # Split spec file_path into config path and config name.
-        path, name = os.path.split(args.experiment_spec_file)
-        if path != '':
-            script_args += " --config-path " + os.path.realpath(path)
-        script_args += " --config-name " + name
-    # And add other params AFTERWARDS!
-
-    # Translate results dir to exp_manager - optional for now! (as 4/6 workflows weren't adapted!)
-    script_args += " exp_manager.explicit_log_dir=" + args.results_dir
-
-    # Set gpus - override only in the case of tasks that use GPUs (assumption for now!).
-    if args.subtask in ["train", "finetune", "evaluate"]:
-        script_args += " trainer.gpus=" + str(args.gpus)
-
-    # Don't resume for 1) data_convert and 2) train from scratch.
-    if args.subtask in ["finetune", "evaluate", "infer", "infer_onnx", "export"]:
-        if args.resume_model_weights is not None:
-            script_args += " restore_from=" + args.resume_model_weights
-
-    # Add encryption key.
-    if args.subtask in ["train", "finetune", "evaluate", "infer", "infer_onnx", "export"]:
-        if args.key is not None:
-            script_args += " encryption_key=" + args.key
-
-    if args.subtask == "download_specs":
-        # Set target_data_dir
-        if args.output_specs_dir is not None:
-            script_args += " target_data_dir=" + args.output_specs_dir
-        else:
-            print("ERROR: The subtask `{}` requires the following argument: -o/--output_specs_dir".format(args.subtask))
-            exit(1)
-        # Set the remaining params.
-        script_args += " source_data_dir=" + subtasks[args.subtask]["source_data_dir"]
-        script_args += " workflow=" + subtasks[args.subtask]["workflow"]
-
-    # Find relevant module and pass args.
-    script = subtasks[args.subtask]["runner_path"]
+    # This enables a results_dir arg to be passed from the microservice side,
+    # but there is no --results_dir cmdline arg. Instead, the spec field must be used
+    if "results_dir" in args:
+        script_args += " results_dir=" + args["results_dir"]
 
     # Pass unknown args to call
-    unknown_args_as_str = " ".join(unknown_args)
-    # Create a system call.
-    call = "python " + script + script_args + " " + unknown_args_as_str
+    unknown_args_as_str = " " + " ".join(unknown_args)
 
+    # Set gpus - overwrite if fields are inconsistent
+    # Precedence for gpu setting: cmdline > specfile > default
+    overrides = ["num_gpus", "gpu_ids", "cuda_blocking"]
+    num_gpus = 1
+    gpu_ids = [0]
+    num_nodes = 1
+    if args["subtask"] in ["train", "evaluate", "inference", "distill"]:
+        # Parsing cmdline override
+        if any(arg in unknown_args_as_str for arg in overrides):
+            if "num_gpus" in unknown_args_as_str:
+                num_gpus = int(
+                    unknown_args_as_str.split("num_gpus=")[1].split()[0]
+                )
+            if "gpu_ids" in unknown_args_as_str:
+                gpu_ids = ast.literal_eval(
+                    unknown_args_as_str.split("gpu_ids=")[1].split()[0]
+                )
+            if "num_nodes" in unknown_args_as_str:
+                num_nodes = (
+                    unknown_args_as_str.split("num_nodes=")[1].split()[0]
+                )
+        # If no cmdline override, look at specfile
+        else:
+            if args["subtask"] == "distill":
+                # distill looks at train.num_gpus and train.gpu_ids
+                task = "train"
+            else:
+                task = args["subtask"]
+            with open(args["experiment_spec_file"], "r") as spec:
+                exp_config = yaml.safe_load(spec)
+                if task in exp_config:
+                    if "num_gpus" in exp_config[task]:
+                        num_gpus = exp_config[task]["num_gpus"]
+                    if "gpu_ids" in exp_config[task]:
+                        gpu_ids = exp_config[task]["gpu_ids"]
+                    if "num_nodes" in exp_config[task]:
+                        num_nodes = exp_config[task]["num_nodes"]
+
+    if num_gpus != len(gpu_ids):
+        logging.warning(f"Number of gpus {num_gpus} != len({gpu_ids}).")
+        num_gpus = max(num_gpus, len(gpu_ids))
+        gpu_ids = list(range(num_gpus)) if len(gpu_ids) != num_gpus else gpu_ids
+        logging.info(f"Using GPUs {gpu_ids} (total {num_gpus})")
+
+    # All future logic will look at this envvar for guidance on which devices to use
+    os.environ["TAO_VISIBLE_DEVICES"] = str(gpu_ids)[1:-1]
+
+    # Find relevant module and pass args
+    script = subtasks[args["subtask"]]["runner_path"]
+
+    log_file = ""
+    if os.getenv("JOB_ID"):
+        log_file = f"/{os.getenv('JOB_ID')}.txt"
+
+    # Create a system call.
+    if network in LIGHTNING_EXCLUDED_NETWORKS:
+        os.environ["CUDA_VISIBLE_DEVICES"] = os.environ["TAO_VISIBLE_DEVICES"]
+        call = (f"torchrun --nproc_per_node={num_gpus} --nnodes={num_nodes} " + script + script_args + unknown_args_as_str)
+    else:
+        call = "python " + script + script_args + unknown_args_as_str
+
+    process_passed = False
     start = time()
+    progress_bar_pattern = re.compile(r"Epoch \d+: \s*\d+%|\[.*\]")
+
     try:
         # Run the script.
-        subprocess.check_call(
-            shlex.split(call),
-            shell=False,
-            stdout=sys.stdout,
-            stderr=sys.stdout
-        )
+        with dual_output(log_file) as (stdout_target, log_target):
+            proc = subprocess.Popen(
+                shlex.split(call),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,  # Line-buffered
+                universal_newlines=True  # Text mode
+            )
+            last_progress_bar_line = None
+
+            for line in proc.stdout:
+                # Check if the line contains \r or matches the progress bar pattern
+                if '\r' in line or progress_bar_pattern.search(line):
+                    last_progress_bar_line = line.strip()
+                    # Print the progress bar line to the terminal
+                    stdout_target.write('\r' + last_progress_bar_line)
+                    stdout_target.flush()
+                else:
+                    # Write the final progress bar line to the log file before a new log line
+                    if last_progress_bar_line:
+                        if log_target:
+                            log_target.write(last_progress_bar_line + '\n')
+                            log_target.flush()
+                        last_progress_bar_line = None
+                    stdout_target.write(line)
+                    stdout_target.flush()
+                    if log_target:
+                        log_target.write(line)
+                        log_target.flush()
+
+            proc.wait()  # Wait for the process to complete
+            # Write the final progress bar line after process completion
+            if last_progress_bar_line and log_target:
+                log_target.write(last_progress_bar_line + '\n')
+                log_target.flush()
+            if proc.returncode == 0:
+                process_passed = True
+
     except (KeyboardInterrupt, SystemExit) as e:
         logging.info("Command was interrupted due to ", e)
         process_passed = True
@@ -168,6 +265,7 @@ def launch(parser, subtasks, network=None):
         if e.output is not None:
             logging.info(e.output)
         process_passed = False
+
     end = time()
     time_lapsed = int(end - start)
 
@@ -178,19 +276,22 @@ def launch(parser, subtasks, network=None):
         logging.info("Sending telemetry data.")
         send_telemetry_data(
             network,
-            args.subtask,
+            args["subtask"],
             gpu_data,
-            num_gpus=args.gpus,
+            num_gpus=num_gpus,
             time_lapsed=time_lapsed,
-            pass_status=process_passed
+            pass_status=process_passed,
         )
     except Exception as e:
-        logging.warning("Telemetry data couldn't be sent, but the command ran successfully.")
+        logging.warning(
+            "Telemetry data couldn't be sent, but the command ran successfully."
+        )
         logging.warning(f"[Error]: {e}")
         pass
 
     if not process_passed:
         logging.warning("Execution status: FAIL")
-        exit(1)  # returning non zero return code from the process.
+        return False
 
     logging.info("Execution status: PASS")
+    return True

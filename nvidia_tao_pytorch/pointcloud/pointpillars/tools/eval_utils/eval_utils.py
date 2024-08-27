@@ -58,11 +58,11 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     logger.info('*************** EPOCH %s EVALUATION *****************' % epoch_id)
     if dist_test:
         num_gpus = torch.cuda.device_count()
-        local_rank = cfg.LOCAL_RANK % num_gpus
+        local_rank = cfg.local_rank % num_gpus
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], broadcast_buffers=False)
     model.eval()
 
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval', dynamic_ncols=True)
     start_time = time.time()
     for _i, batch_dict in enumerate(dataloader):
@@ -77,11 +77,11 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
             output_path=final_output_dir if save_to_file else None
         )
         det_annos += annos
-        if cfg.LOCAL_RANK == 0:
+        if cfg.local_rank == 0:
             progress_bar.set_postfix(disp_dict)
             progress_bar.update()
 
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar.close()
 
     if dist_test:
@@ -93,7 +93,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     sec_per_example = (time.time() - start_time) / len(dataloader.dataset)
     logger.info('Generate label finished(sec_per_example: %.4f second).' % sec_per_example)
 
-    if cfg.LOCAL_RANK != 0:
+    if cfg.local_rank != 0:
         return {}
 
     ret_dict = {}
@@ -287,7 +287,7 @@ def infer_one_epoch(
     class_names = dataset.class_names
     det_annos = []
     model.eval()
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='infer', dynamic_ncols=True)
     for _i, batch_dict in enumerate(dataloader):
         load_data_to_gpu(batch_dict)
@@ -308,10 +308,10 @@ def infer_one_epoch(
             eval_range=100,
             conf_th=cfg.inference.viz_conf_thresh
         )
-        if cfg.LOCAL_RANK == 0:
+        if cfg.local_rank == 0:
             progress_bar.set_postfix(disp_dict)
             progress_bar.update()
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar.close()
     ret_dict = {}
     with open(result_dir / 'result.pkl', 'wb') as f:
@@ -335,7 +335,7 @@ def infer_one_epoch_trt(
     dataset = dataloader.dataset
     class_names = dataset.class_names
     det_annos = []
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='infer', dynamic_ncols=True)
     for _i, batch_dict in enumerate(dataloader):
         load_data_to_gpu(batch_dict)
@@ -382,11 +382,11 @@ def infer_one_epoch_trt(
                 eval_range=60,
                 conf_th=cfg.inference.viz_conf_thresh
             )
-        if cfg.LOCAL_RANK == 0:
+        if cfg.local_rank == 0:
             disp_dict = {}
             progress_bar.set_postfix(disp_dict)
             progress_bar.update()
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar.close()
     ret_dict = {}
     with open(result_dir / 'result.pkl', 'wb') as f:
@@ -427,7 +427,7 @@ def eval_one_epoch_trt(cfg, model, dataloader, logger, dist_test=False, save_to_
     det_annos = []
     logger.info('*************** EVALUATION *****************')
     total_time = 0
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval', dynamic_ncols=True)
     start_time = time.time()
     for _, batch_dict in enumerate(dataloader):
@@ -472,14 +472,14 @@ def eval_one_epoch_trt(cfg, model, dataloader, logger, dist_test=False, save_to_
             output_path=final_output_dir if save_to_file else None
         )
         det_annos += annos
-        if cfg.LOCAL_RANK == 0:
+        if cfg.local_rank == 0:
             progress_bar.update()
-    if cfg.LOCAL_RANK == 0:
+    if cfg.local_rank == 0:
         progress_bar.close()
     logger.info('*************** Performance *****************')
     sec_per_example = (time.time() - start_time) / len(dataloader.dataset)
     logger.info('Generate label finished(sec_per_example: %.4f second).' % sec_per_example)
-    if cfg.LOCAL_RANK != 0:
+    if cfg.local_rank != 0:
         return result_dict
     gt_num_cnt = metric['gt_num']
     for cur_thresh in cfg.model.post_processing.recall_thresh_list:

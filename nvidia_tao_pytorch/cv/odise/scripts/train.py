@@ -328,7 +328,7 @@ def main(hydra_cfg: ExperimentConfig):
     """Launch training with detectron2."""
     launch(
         train,
-        hydra_cfg.num_gpus,
+        hydra_cfg.train.num_gpus,
         num_machines=hydra_cfg.num_machines,
         machine_rank=hydra_cfg.machine_rank,
         dist_url=hydra_cfg.dist_url,

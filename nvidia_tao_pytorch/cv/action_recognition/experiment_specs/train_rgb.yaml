@@ -1,4 +1,4 @@
-output_dir: /results/rgb_2d
+results_dir: /results/rgb_2d
 encryption_key: nvidia_tao
 model_config:
   model_type: rgb

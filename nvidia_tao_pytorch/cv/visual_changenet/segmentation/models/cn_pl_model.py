@@ -30,18 +30,15 @@
 
 import os
 import numpy as np
-from typing import Any, Dict
 import matplotlib.pyplot as plt
 
+import pytorch_lightning as pl
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.optim import lr_scheduler
 
-import pytorch_lightning as pl
-
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.utils.metric_tool import ConfuseMatrixMeter
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.utils.losses import cross_entropy, mmIoULoss
 # from nvidia_tao_pytorch.cv.visual_changenet.models.losses import get_alpha, softmax_helper, FocalLoss, mIoULoss
@@ -54,18 +51,17 @@ from nvidia_tao_pytorch.core.path_utils import expand_path
 
 
 # pylint:disable=too-many-ancestors
-class ChangeNetPlModel(pl.LightningModule):
+class ChangeNetPlModel(TAOLightningModule):
     """ PTL module for DINO Object Detection Model."""
 
     def __init__(self, experiment_spec, export=False):
         """Init training for DINO Model."""
-        super().__init__()
-        self.experiment_spec = experiment_spec
-        self.dataset_config = experiment_spec.dataset.segment
-        self.model_config = experiment_spec.model
-        self.train_config = experiment_spec.train
-        self.eval_config = experiment_spec.evaluate
-        self.infer_config = experiment_spec.inference
+        super().__init__(experiment_spec)
+        # Overriding what's done in super()
+        self.dataset_config = self.experiment_spec.dataset.segment
+        self.train_config = self.experiment_spec.train
+        self.eval_config = self.experiment_spec.evaluate
+        self.infer_config = self.experiment_spec.inference
 
         # init the model
         self._build_model(export)
@@ -104,6 +100,8 @@ class ChangeNetPlModel(pl.LightningModule):
         self.color_map = get_color_mapping(dataset_name=self.dataset_config.data_name,
                                            color_mapping_custom=self.dataset_config.color_map,
                                            num_classes=self.n_class)
+
+        self.checkpoint_filename = 'changenet_model_segment'
 
     def _build_model(self, export):
         """Internal function to build the model."""
@@ -355,27 +353,26 @@ class ChangeNetPlModel(pl.LightningModule):
         loss = self._backward_G()
 
         self._update_metric()
-        self.log("train_loss", loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
         return loss
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """Log Training metrics to status.json"""
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
 
     def on_validation_epoch_start(self) -> None:
         """Validation epoch start."""
-        if self.trainer.current_epoch > 0:
+        if not self.trainer.sanity_checking:
             # FLUSHING TRAINING EPOCH METRICS
             _, _ = self._collect_epoch_states()  # logs all evaluation metrics
         self._clear_cache()
@@ -388,10 +385,11 @@ class ChangeNetPlModel(pl.LightningModule):
         loss = self._backward_G()
         self._update_metric()
 
-        self.log("val_loss", loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
         return loss
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         """Validation epoch end.
         compute mAP at the end of epoch
         """
@@ -400,17 +398,23 @@ class ChangeNetPlModel(pl.LightningModule):
         self.log("val_acc", scores['acc'], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self._clear_cache()
 
-        average_val_loss = 0.0
-        for out in outputs:
-            average_val_loss += out.item()
-        average_val_loss /= len(outputs)
-        self.status_logging_dict["val_loss"] = average_val_loss
+        average_val_loss = self.trainer.logged_metrics["val_loss"].item()
 
-        self.status_logging_dict["val_acc"] = scores['acc']
-        self.status_logging_dict["val_miou"] = scores['miou']
-        self.status_logging_dict["val_mf1"] = scores['mf1']
-        self.status_logging_dict["val_mprecision"] = mean_scores['mprecision']
-        self.status_logging_dict["val_mrecall"] = mean_scores['mrecall']
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["val_loss"] = average_val_loss
+            self.status_logging_dict["val_acc"] = scores['acc']
+            self.status_logging_dict["val_miou"] = scores['miou']
+            self.status_logging_dict["val_mf1"] = scores['mf1']
+            self.status_logging_dict["val_mprecision"] = mean_scores['mprecision']
+            self.status_logging_dict["val_mrecall"] = mean_scores['mrecall']
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+
+        pl.utilities.memory.garbage_collection_cuda()
 
     def on_test_epoch_start(self) -> None:
         """ Test epoch start."""
@@ -418,7 +422,6 @@ class ChangeNetPlModel(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         """Test step. Evaluate """
-        batch_size = batch['A'].shape[0]
         _ = self._forward_pass(batch)
         loss = self._backward_G()
 
@@ -426,12 +429,13 @@ class ChangeNetPlModel(pl.LightningModule):
         self._update_metric()
         self._visualize_predictions(batch_idx, vis_afer_n_batches=self.vis_after_n_batches)
 
-        self.log("test_loss", loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("test_loss", loss, on_step=True, on_epoch=False, prog_bar=True)
 
-    def test_epoch_end(self, outputs):
+    def on_test_epoch_end(self):
         """Test epoch end."""
         scores, mean_scores = self._collect_epoch_states()  # needed for update metrics
 
+        self.status_logging_dict = {}
         self.status_logging_dict["test_acc"] = scores['acc']
         self.status_logging_dict["test_miou"] = scores['miou']
         self.status_logging_dict["test_mf1"] = scores['mf1']
@@ -439,18 +443,9 @@ class ChangeNetPlModel(pl.LightningModule):
         self.status_logging_dict["test_mrecall"] = mean_scores['mrecall']
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Evaluation metrics generated.",
+            message="Test metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Decrpyt the checkpoint"""
-        if checkpoint.get("state_dict_encrypted", False):
-            # Retrieve encryption key from TLTPyTorchCookbook.
-            key = TLTPyTorchCookbook.get_passphrase()
-            if key is None:
-                raise PermissionError("Cannot access model state dict without the encryption key")
-            checkpoint = patch_decrypt_checkpoint(checkpoint, key)
 
     def predict_step(self, batch, batch_idx):
         """Predict step. Inference """

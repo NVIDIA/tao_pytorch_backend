@@ -40,6 +40,8 @@ class EvalConfig:
 
     checkpoint: str = MISSING
     results_dir: Optional[str] = None
+    num_gpus: int = 1
+    gpu_ids: List[int] = field(default_factory=lambda: [0])
 
 
 @dataclass
@@ -108,13 +110,14 @@ class TrainConfig:
     dice_weight: float = 5.0
     checkpoint: Optional[str] = None
     results_dir: Optional[str] = None
+    num_gpus: int = 1
+    gpu_ids: List[int] = field(default_factory=lambda: [0])
 
 
 @dataclass
 class ExperimentConfig:
     """Experiment configuration template."""
 
-    num_gpus: int = 8
     resume: bool = False
     num_machines: int = 1
     machine_rank: int = 0

@@ -20,45 +20,6 @@ from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
 
 
-def check_and_create(d):
-    """
-    Check if a directory path is valid and create it.
-
-    Args:
-        d (str): The path of the directory to create.
-
-    Forward:
-        If the directory doesn't exist, it will be created.
-    """
-    if not os.path.isdir(d):
-        os.makedirs(d)
-
-
-def data_to_device(data):
-    """
-    Transfer numpy data to GPU.
-
-    Args:
-        data (Numpy): Image data.
-
-    Returns:
-        data (Tensor): Processed image data.
-
-    Forward:
-        Transfers the input data to the GPU memory. If the input data is a list,
-        each item will be individually transferred.
-    """
-    if isinstance(data, list):
-        cuda_data = []
-        for item in data:
-            cuda_item = item.cuda(non_blocking=True)
-            cuda_data.append(cuda_item)
-    else:
-        cuda_data = data.cuda(non_blocking=True)
-
-    return cuda_data
-
-
 def read_image(img_path):
     """
     Check if the image path is valid and read the image.

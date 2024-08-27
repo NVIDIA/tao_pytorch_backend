@@ -13,8 +13,6 @@
 # limitations under the License.
 
 """Export script for PointPillars."""
-import argparse
-
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -37,12 +35,13 @@ except:  # noqa: E722
         "will not be available."
     )
     trt_available = False
+from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.path_utils import expand_path
+from nvidia_tao_pytorch.pointcloud.pointpillars.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.pointcloud.pointpillars.tools.export.simplifier_onnx import (
     simplify_onnx
 )
-from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.config import cfg, cfg_from_yaml_file
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.models import load_checkpoint
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.utils import common_utils
 
@@ -224,73 +223,20 @@ class ExportablePointPillar(nn.Module):
         return cls_preds, box_preds, dir_cls_preds
 
 
-def parse_config():
-    """Argument Parser."""
-    parser = argparse.ArgumentParser(description='Argument Parser')
-    parser.add_argument(
-        '--cfg_file', '-c', type=str, required=True,
-        help='PointPillars training config file'
-    )
-    parser.add_argument(
-        '--cal_data_path', '-d', type=str, required=False, default=None,
-        help='Path to the point cloud data directory'
-    )
-    parser.add_argument(
-        "--cal_cache_file",
-        type=str,
-        required=False,
-        default="./cal.bin",
-        help="Path to save the calibration file in INT8 mode"
-    )
-    parser.add_argument(
-        "--data_type", "-t",
-        required=False, default="fp32",
-        help="The data type for export(useful for TensorRT INT8 calibration)"
-    )
-    parser.add_argument(
-        "--save_engine",
-        "-e",
-        type=str,
-        required=False,
-        default=None,
-        help="Path to save the TensorRT engine."
-    )
-    parser.add_argument(
-        "--batch_size",
-        "-b",
-        type=int,
-        default=1,
-        required=False,
-        help="Batch size of the TensorRT engine to be generated(if --save_engine is provided)."
-    )
-    parser.add_argument(
-        "--cal_num_batches",
-        type=int,
-        default=8,
-        required=False,
-        help="Number of data batches for INT8 calibration"
-    )
-    parser.add_argument(
-        "--workspace_size",
-        "-w",
-        type=int,
-        default=1024,
-        required=False,
-        help="Workspace size in MB for TensorRT, default is 1024MB(1GB)."
-    )
-    parser.add_argument("--key", "-k", type=str, required=True, help="Encryption key")
-    args = parser.parse_args()
-    cfg_from_yaml_file(expand_path(args.cfg_file), cfg)
-    return args, cfg
+spec_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "cfgs")
 
 
-def main():
+# Load experiment specification, additially using schema for validation/retrieving the default values.
+# --config_path and --config_name will be provided by the entrypoint script.
+@hydra_runner(
+    config_path=spec_root, config_name="pointpillar_general", schema=ExperimentConfig
+)
+def main(cfg: ExperimentConfig) -> None:
     """Main function."""
     if not trt_available:
         raise ValueError("Failed to import tensorrt library, exporting to a Tensorrt engine not possible")
-    args, cfg = parse_config()
     # INT8 is not yet fully supported, raise error if one tries to use it
-    if args.data_type.lower() == "int8":
+    if cfg.export.data_type.lower() == "int8":
         raise ValueError("INT8 is not supported for PointPillars, please use FP32/FP16")
     logger = common_utils.create_logger()
     logger.info('Exporting the model...')
@@ -322,7 +268,7 @@ def main():
     status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
     status_logging.get_status_logger().write(status_level=status_logging.Status.STARTED, message="Starting PointPillars export")
     # Load model
-    loaded_model = load_checkpoint(cfg.export.checkpoint, args.key)[0]
+    loaded_model = load_checkpoint(cfg.export.checkpoint, cfg.key)[0]
     model = ExportablePointPillar(loaded_model)
     model.cuda()
     model.eval()
@@ -374,25 +320,25 @@ def main():
         assert check, "Failed on simplifying the ONNX model"
         model_simp = simplify_onnx(model_simp, cfg)
         onnx.save(model_simp, tmp_onnx_file)
-        if output_file.endswith('.etlt') and args.key:
+        if output_file.endswith('.etlt') and cfg.key:
             # encrypt the onnx if and only if key is provided and output file name ends with .etlt
             encrypt_onnx(tmp_file_name=tmp_onnx_file,
                          output_file_name=output_file,
-                         key=args.key)
+                         key=cfg.key)
     logger.info(f'Model exported to {output_file}')
     status_logging.get_status_logger().write(
         status_level=status_logging.Status.RUNNING,
         message=f'Model exported to {output_file}'
     )
     # Save TRT engine
-    if args.save_engine is not None:
-        if args.data_type.lower() == "int8":
-            if args.cal_data_path is not None:
+    if cfg.export.save_engine:
+        if cfg.export.data_type.lower() == "int8":
+            if cfg.export.cal_data_path:
                 calibrator = Calibrator(
-                    args.cal_data_path,
-                    args.cal_cache_file,
-                    args.cal_num_batches,
-                    args.batch_size,
+                    cfg.export.cal_data_path,
+                    cfg.export.cal_cache_file,
+                    cfg.export.cal_num_batches,
+                    cfg.export.batch_size,
                     cfg.inference.max_points_num
                 )
             else:
@@ -401,23 +347,23 @@ def main():
             calibrator = None
         builder = ONNXEngineBuilder(
             tmp_onnx_file,
-            max_batch_size=args.batch_size,
-            min_batch_size=args.batch_size,
-            opt_batch_size=args.batch_size,
-            dtype=args.data_type,
-            max_workspace_size=args.workspace_size * 1024 * 1024,
+            max_batch_size=cfg.export.batch_size,
+            min_batch_size=cfg.export.batch_size,
+            opt_batch_size=cfg.export.batch_size,
+            dtype=cfg.export.data_type,
+            max_workspace_size=cfg.export.workspace_size * 1024 * 1024,
             dynamic_batch=True,
             calibrator=calibrator
         )
         engine = builder.get_engine()
-        with open(expand_path(args.save_engine), "wb") as outf:
+        with open(expand_path(cfg.export.save_engine), "wb") as outf:
             outf.write(engine.serialize())
-        logger.info(f'TensorRT engine saved to {args.save_engine}')
+        logger.info(f'TensorRT engine saved to {cfg.export.save_engine}')
         status_logging.get_status_logger().write(
             status_level=status_logging.Status.RUNNING,
-            message=f'TensorRT engine saved to {args.save_engine}'
+            message=f'TensorRT engine saved to {cfg.export.save_engine}'
         )
-    if output_file.endswith('.etlt') and args.key:
+    if output_file.endswith('.etlt') and cfg.key:
         os.remove(tmp_onnx_file)
 
 
@@ -425,7 +371,7 @@ if __name__ == '__main__':
     try:
         main()
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Export finished successfully."
         )
     except (KeyboardInterrupt, SystemExit):

@@ -16,6 +16,12 @@
 
 import glob
 import os
+import shutil
+import struct
+import torch
+
+from eff.core.codec import encrypt_stream
+from nvidia_tao_pytorch.core.connectors.checkpoint_connector import decrypt_checkpoint
 
 # Define 1MB for filesize calculation.
 MB = 1 << 20
@@ -61,15 +67,18 @@ def update_results_dir(cfg, task):
         Updated cfg
     """
     if cfg[task]['results_dir']:
-        cfg.results_dir = cfg[task]['results_dir']
+        cfg['results_dir'] = cfg[task]['results_dir']
+    elif cfg['results_dir']:
+        cfg['results_dir'] = os.path.join(cfg['results_dir'], task)
+        cfg[task]['results_dir'] = cfg['results_dir']
     else:
-        cfg.results_dir = os.path.join(cfg.results_dir, task)
-        cfg[task]['results_dir'] = cfg.results_dir
-    print(f"{task.capitalize()} results will be saved at: {cfg.results_dir}")
+        raise ValueError("You need to set at least one of following fields: results_dir, {mode}.results_dir")
+    print(f"{task.capitalize()} results will be saved at: {cfg['results_dir']}")
 
     return cfg
 
 
+# TODO: do we still need this?
 def get_last_generated_file(folder_path, extension="txt"):
     """Returns the last generated file in the folder.
 
@@ -79,3 +88,95 @@ def get_last_generated_file(folder_path, extension="txt"):
     """
     files = glob.glob(os.path.join(folder_path, f"*.{extension}"))
     return max(files, key=os.path.getmtime, default=None)
+
+
+def get_latest_checkpoint(folder_path):
+    """Returns the latest checkpoint in the (possibly remote) folder.
+
+    Args:
+        folder_path (str): path to the folder
+    """
+    # The ModelCheckpoint callback creates a file "{model_name}_latest.pth"
+    ckpt = glob.glob(os.path.join(folder_path, "*_latest.pth"))
+    if ckpt:
+        return os.path.realpath(ckpt[0])
+    return None
+
+
+def patch_decrypt_checkpoint(checkpoint, key):
+    """Decrypt checkpoint to work when using a multi-GPU trained model in a single-GPU environment.
+
+    Args:
+        checkpoint (dict): The encrypted checkpoint.
+        key (str): The decryption key.
+
+    Returns:
+        dict: The patched decrypted checkpoint.
+
+    """
+    from functools import partial
+    legacy_load = torch.load
+    torch.load = partial(legacy_load, map_location="cpu")
+
+    checkpoint = decrypt_checkpoint(checkpoint, key)
+
+    torch.load = legacy_load
+
+    # set the encrypted status to be False when it is decrypted
+    checkpoint["state_dict_encrypted"] = False
+
+    return checkpoint
+
+
+def check_and_create(d):
+    """
+    Create a directory if it does not already exist.
+
+    Args:
+        d (str): The path of the directory to create.
+    """
+    if not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+
+
+def check_and_delete(d):
+    """Delete a directory."""
+    if os.path.isdir(d):
+        shutil.rmtree(d)
+
+
+def data_to_device(data):
+    """
+    Transfer data to GPU.
+
+    If the data is a list, each item in the list is moved to the GPU individually. Otherwise, the entire data
+    object is moved to the GPU.
+
+    Args:
+        data (torch.Tensor or list of torch.Tensor): The data to move to the GPU.
+
+    Returns:
+        torch.Tensor or list of torch.Tensor: The data on the GPU.
+    """
+    if isinstance(data, list):
+        cuda_data = []
+        for item in data:
+            cuda_item = item.cuda(non_blocking=True)
+            cuda_data.append(cuda_item)
+    else:
+        cuda_data = data.cuda(non_blocking=True)
+
+    return cuda_data
+
+
+def encrypt_onnx(tmp_file_name, output_file_name, key):
+    """Encrypt the onnx model"""
+    with open(tmp_file_name, "rb") as open_temp_file, open(output_file_name,
+                                                           "wb") as open_encoded_file:
+        # set the input name magic number
+        open_encoded_file.write(struct.pack("<i", 0))
+
+        encrypt_stream(
+            input_stream=open_temp_file, output_stream=open_encoded_file,
+            passphrase=key, encryption=True
+        )

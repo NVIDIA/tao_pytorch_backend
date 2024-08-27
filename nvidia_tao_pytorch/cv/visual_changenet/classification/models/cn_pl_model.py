@@ -28,36 +28,30 @@
 
 """Visual ChangeNet Classification Model PyTorch Lightning Module"""
 
-from typing import Optional, Any, Dict
+import logging
+import os
+import pytorch_lightning as pl
 import torch
 from torch.optim import lr_scheduler
 import torch.optim as optim
 import torch.nn as nn
-import pandas as pd
-import math
 
-import pytorch_lightning as pl
-
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
 from nvidia_tao_pytorch.cv.optical_inspection.model.build_nn_model import AOIMetrics
 from nvidia_tao_pytorch.cv.visual_changenet.classification.models.changenet import build_model
 from nvidia_tao_pytorch.cv.visual_changenet.classification.losses import ContrastiveLoss
-from nvidia_tao_pytorch.cv.optical_inspection.dataloader.build_data_loader import build_dataloader
-from nvidia_tao_pytorch.core.tlt_logging import logging
 
 
 # pylint:disable=too-many-ancestors
-class ChangeNetPlModel(pl.LightningModule):
+class ChangeNetPlModel(TAOLightningModule):
     """ PTL module for Visual ChangeNet Classification Model."""
 
-    def __init__(self, experiment_spec, export=False):
+    def __init__(self, experiment_spec, dm, export=False):
         """Init training for Visual ChangeNet Model."""
-        super().__init__()
-        self.experiment_spec = experiment_spec
+        super().__init__(experiment_spec)
+        # Overriding what's done in super()
         self.dataset_config = experiment_spec.dataset.classify
-        self.model_config = experiment_spec.model
         self.train_config = experiment_spec.train
 
         # Customisable architecture for classification
@@ -87,17 +81,11 @@ class ChangeNetPlModel(pl.LightningModule):
         self._build_criterion()
 
         self.tensorboard = experiment_spec.train.tensorboard
-        self.status_logging_dict = {"train_loss": 0.0,
-                                    "train_acc": 0.0,
-                                    "train_fpr": 0.0,
-                                    "val_loss": 0.0,
-                                    "val_acc": 0.0,
-                                    "val_fpr": 0.0
-                                    }
         self.train_metrics = AOIMetrics()
         self.val_metrics = AOIMetrics()
-        self.num_train_steps_per_epoch = None
-        self.num_val_steps_per_epoch = None
+        self.dm = dm
+
+        self.checkpoint_filename = 'changenet_model_classify'
 
     def _build_model(self, export):
         """Internal function to build the model."""
@@ -124,33 +112,6 @@ class ChangeNetPlModel(pl.LightningModule):
             self.criterion = nn.CrossEntropyLoss(weight=self.class_weights)
         else:
             raise NotImplementedError(f"loss function {self.loss_fn} is not implemented")
-
-    def setup(self, stage: Optional[str] = None):
-        """ Set up the dataset for train and val"""
-        train_data_path = self.dataset_config["train_dataset"]["csv_path"]
-        val_data_path = self.dataset_config["validation_dataset"]["csv_path"]
-        self.df_train = pd.read_csv(train_data_path)
-        self.df_valid = pd.read_csv(val_data_path)
-
-    def train_dataloader(self):
-        """Build the dataloader for training."""
-        train_loader = build_dataloader(df=self.df_train,
-                                        weightedsampling=True,
-                                        split='train',
-                                        data_config=self.dataset_config)
-        self.num_train_steps_per_epoch = math.ceil(len(train_loader.dataset) / train_loader.batch_size)
-        logging.info("Number of steps for training: {}".format(self.num_train_steps_per_epoch))
-        return train_loader
-
-    def val_dataloader(self):
-        """Build the dataloader for training."""
-        val_loader = build_dataloader(df=self.df_valid,
-                                      weightedsampling=False,
-                                      split='valid',
-                                      data_config=self.dataset_config)
-        self.num_val_steps_per_epoch = math.ceil(len(val_loader.dataset) / val_loader.batch_size)
-        logging.info("Number of steps for validation: {}".format(self.num_val_steps_per_epoch))
-        return val_loader
 
     def configure_optimizers(self):
         """Configure optimizers for training"""
@@ -217,6 +178,7 @@ class ChangeNetPlModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         """Training step."""
         img_in1, img_in2, label = batch
+        batch_size = img_in1.shape[0]
         self.visualize_image(
             "compare_sample", img_in1,
             logging_frequency=self.tensorboard.infrequent_logging_frequency
@@ -228,21 +190,17 @@ class ChangeNetPlModel(pl.LightningModule):
         _ = self._forward_pass(batch)
         loss, siam_score = self._backward_G()
         self.train_metrics.update(siam_score, label)
-        self.log("train_loss", loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
         return loss
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """Log Training metrics to status.json"""
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            if isinstance(out, tuple):
-                average_train_loss += out[0].item()
-            else:
-                average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
         train_accuracy = self.train_metrics.compute()['total_accuracy'].item()
         train_false_positive_rate = self.train_metrics.compute()['false_alarm'].item()
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
         self.status_logging_dict["train_acc"] = train_accuracy
         self.status_logging_dict["train_fpr"] = train_false_positive_rate
@@ -258,73 +216,124 @@ class ChangeNetPlModel(pl.LightningModule):
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
 
     def validation_step(self, batch, batch_idx):
         """Validation step."""
-        _, _, label = batch
+        img, _, label = batch
+        batch_size = img.shape[0]
         _ = self._forward_pass(batch)
         loss, siam_score = self._backward_G()
         self.val_metrics.update(siam_score, label)
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
         return loss
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         """Validation epoch end.
         compute mAP at the end of epoch
         """
-        average_val_loss = 0.0
-        for out in outputs:
-            if isinstance(out, tuple):
-                average_val_loss += out[0].item()
-            else:
-                average_val_loss += out.item()
-
-        average_val_loss /= len(outputs)
+        average_val_loss = self.trainer.logged_metrics["val_loss"].item()
 
         val_accuracy = self.val_metrics.compute()['total_accuracy'].item()
         val_fpr = self.val_metrics.compute()['false_alarm'].item()
-        self.status_logging_dict["val_loss"] = average_val_loss
-        self.status_logging_dict["val_acc"] = val_accuracy
-        self.status_logging_dict["val_fpr"] = val_fpr
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["val_loss"] = average_val_loss
+            self.status_logging_dict["val_acc"] = val_accuracy
+            self.status_logging_dict["val_fpr"] = val_fpr
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
         validation_logging_dict = {
             "val_acc": val_accuracy,
             "val_fpr": val_fpr
         }
         self.visualize_metrics(validation_logging_dict)
         self.val_metrics.reset()
+        pl.utilities.memory.garbage_collection_cuda()
 
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Decrpyt the checkpoint"""
-        if checkpoint.get("state_dict_encrypted", False):
-            # Retrieve encryption key from TLTPyTorchCookbook.
-            key = TLTPyTorchCookbook.get_passphrase()
-            if key is None:
-                raise PermissionError("Cannot access model state dict without the encryption key")
-            checkpoint = patch_decrypt_checkpoint(checkpoint, key)
+    def on_test_epoch_start(self):
+        """Test epoch start"""
+        self.margin = self.model_config["classify"]["eval_margin"]
+        self.valid_metrics = AOIMetrics(self.margin)
+        self.num_comp = 0
+
+    def test_step(self, batch, batch_idx):
+        """Test step"""
+        siam_score = self._forward_pass(batch)
+        self.valid_metrics.update(siam_score, batch[2])
+        self.num_comp += len(siam_score)
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        total_accuracy = self.valid_metrics.compute()['total_accuracy'].item()
+        false_alarm = self.valid_metrics.compute()['false_alarm'].item()
+        defect_accuracy = self.valid_metrics.compute()['defect_accuracy'].item()
+        false_negative = self.valid_metrics.compute()['false_negative'].item()
+
+        logging.info(
+            "Tot Comp {} Total Accuracy {} False Negative {} False Alarm {} Defect Correctly Captured {} for Margin {}".format(
+                self.num_comp,
+                round(total_accuracy, 2),
+                round(false_negative, 2),
+                round(false_alarm, 2),
+                round(defect_accuracy, 2),
+                self.margin
+            )
+        )
+
+        self.status_logging_dict = {}
+        self.status_logging_dict["test_acc"] = total_accuracy
+        self.status_logging_dict["test_fpr"] = false_alarm
+        self.status_logging_dict["test_fnr"] = false_negative
+        self.status_logging_dict["defect_acc"] = defect_accuracy
+        status_logging.get_status_logger().kpi = self.status_logging_dict
+        status_logging.get_status_logger().write(
+            message="Test metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
+
+    def on_predict_epoch_start(self):
+        """Predict epoch start"""
+        self.euclid = []
 
     def predict_step(self, batch, batch_idx):
         """Predict step. Inference """
-        outputs = self._forward_pass(batch)
-        self._visualize_infer_output(batch_idx)
+        siam_score = self._forward_pass(batch)
+        if batch_idx == 0:
+            self.euclid = siam_score
+        else:
+            self.euclid = torch.cat((self.euclid, siam_score), 0)
 
-        return outputs
+    def on_predict_epoch_end(self):
+        """Predict epoch end"""
+        # Gather results from all GPUs
+        gathered_results = self.all_gather(self.euclid)
 
-    def forward(self, x):
-        """Forward of the Visual ChangeNet model.
+        # Single GPU case
+        if len(gathered_results.shape) == 1:
+            gathered_results = gathered_results.unsqueeze(dim=0)
 
-        Args:
-            x (torch.Tensor): Input data containing two images.
+        if self.trainer.is_global_zero:
+            # Only the rank 0 process writes the file
+            combined_results = torch.cat([tensor for tensor in gathered_results], dim=0)
+            siamese_score = 'siamese_score'
+            self.dm.df_infer[siamese_score] = combined_results.cpu().numpy()
 
-        Returns:
-            output (torch.Tensor): Output of the model.
-        """
-        x1 = x[0]
-        x2 = x[1]
-        output = self.model(x1, x2)
-        return output
+            self.dm.df_infer.to_csv(
+                os.path.join(self.experiment_spec.results_dir, "inference.csv"),
+                header=True,
+                index=False
+            )
+            logging.info("Completed")
+
+        # Clear the list for the next epoch
+        self.euclid = []
 
     def visualize_histogram(self, logging_frequency=2):
         """Visualize histograms of model parameters.
@@ -345,7 +354,7 @@ class ChangeNetPlModel(pl.LightningModule):
             logging_frequency (int): The frequency at which to log the images.
 
         """
-        logging_frequency_in_steps = self.num_train_steps_per_epoch * logging_frequency
+        logging_frequency_in_steps = self.dm.num_train_steps_per_epoch * logging_frequency
         is_log_step = self.global_step % logging_frequency_in_steps == 0
         if is_log_step and self.tensorboard.enabled:
             self.logger.experiment.add_images(

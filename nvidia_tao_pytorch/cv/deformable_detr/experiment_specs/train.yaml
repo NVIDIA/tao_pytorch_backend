@@ -1,30 +1,32 @@
-results_dir: "???"
 train:
   num_gpus: 1
   num_nodes: 1
   validation_interval: 1
   optim:
-    lr_backbone: 1e-05
-    lr: 0.0001
+    lr_backbone: 2e-5
+    lr: 2e-4
     lr_steps: [10, 20, 30, 40]
     momentum: 0.9
-  num_epochs: 50
+  num_epochs: 1
+  precision: fp32
 dataset:
-  train_sampler: default_sampler
   train_data_sources:
-    - image_dir: "???"
-      json_file: "???"
+    - image_dir: /data/raw-data/train2017/
+      json_file: /data/raw-data/annotations/instances_train2017.json
   val_data_sources:
-    - image_dir: "???"
-      json_file: "???"
+    - image_dir: /data/raw-data/val2017/
+      json_file: /data/raw-data/annotations/instances_val2017.json
   num_classes: 91
-  batch_size: 2
+  batch_size: 4
   workers: 8
+  augmentation:
+    fixed_padding: False
 model:
-  pretrained_backbone_path: "???"
   backbone: resnet_50
   train_backbone: True
-  num_feature_levels: 4
+  pretrained_backbone_path: /results/pretrained/pretrained_deformable_detr_nvimagenet_vresnet50/resnet50_nvimagenetv2.pth.tar
+  num_feature_levels: 2
+  return_interm_indices: [1, 2]
   dec_layers: 6
   enc_layers: 6
   num_queries: 300

@@ -19,7 +19,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils import box_ops
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import (accuracy, get_world_size, is_dist_avail_and_initialized)
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import accuracy
+from nvidia_tao_pytorch.core.distributed.comm import get_world_size, is_dist_avail_and_initialized
 
 
 def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):

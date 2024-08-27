@@ -25,7 +25,10 @@ import urllib
 import requests
 import urllib3
 
-
+# TODO @vpraveen: This must be removed at the time of release we figure out where to
+# host this.
+TAO_CERTIFICATES_URL = "https://gitlab-master.nvidia.com/vpraveen/python_wheels/-/raw/main/certs/certificates.tar.gz"  # noqa pylint: disable=E501
+TAO_SERVER_URL = "https://sqa-telemetry.metropolis.nvidia.com/api/v1/telemetry"
 TELEMETRY_TIMEOUT = int(os.getenv("TELEMETRY_TIMEOUT", "30"))
 
 
@@ -59,7 +62,7 @@ def get_certificates():
     Returns:
         path (str): UNIX path to the certificates.
     """
-    certificates_url = get_url_from_variable("TAO_CERTIFICATES_URL")
+    certificates_url = get_url_from_variable("TAO_CERTIFICATES_URL", TAO_CERTIFICATES_URL)
     if not url_exists(certificates_url):
         raise urllib.request.URLError("Url for the certificates not found.")
     tmp_dir = tempfile.mkdtemp()
@@ -102,7 +105,7 @@ def send_telemetry_data(network, action, gpu_data, num_gpus=1, time_lapsed=None,
     """
     urllib3.disable_warnings(urllib3.exceptions.SubjectAltNameWarning)
     if os.getenv('TELEMETRY_OPT_OUT', "no").lower() in ["no", "false", "0"]:
-        url = get_url_from_variable("TAO_TELEMETRY_SERVER")
+        url = get_url_from_variable("TAO_TELEMETRY_SERVER", TAO_SERVER_URL)
         data = {
             "version": os.getenv("TAO_TOOLKIT_VERSION", "4.0.0"),
             "action": action,

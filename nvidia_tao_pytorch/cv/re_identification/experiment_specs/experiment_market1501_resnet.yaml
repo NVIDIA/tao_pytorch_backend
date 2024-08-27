@@ -1,10 +1,10 @@
-results_dir: "???"
+results_dir: "/results/market1501"
 encryption_key: nvidia_tao
 model:
   backbone: resnet_50
   last_stride: 1
   pretrain_choice: imagenet
-  pretrained_model_path: "???"
+  pretrained_model_path: "/model/market1501/resnet50_pretrained.pth"
   input_channels: 3
   input_width: 128
   input_height: 256
@@ -16,13 +16,13 @@ model:
   with_flip_feature: False
   label_smooth: True
 dataset:
-  train_dataset_dir: "???"
-  test_dataset_dir: "???"
-  query_dataset_dir: "???"
-  num_classes: 751
+  train_dataset_dir: "/data/market1501/sample_train"
+  test_dataset_dir: "/data/market1501/sample_test"
+  query_dataset_dir: "/data/market1501/sample_query"
+  num_classes: 100
   batch_size: 64
   val_batch_size: 128
-  num_workers: 8
+  num_workers: 1
   pixel_mean: [0.485, 0.456, 0.406]
   pixel_std: [0.226, 0.226, 0.226]
   padding: 10
@@ -36,7 +36,6 @@ re_ranking:
   k2: 6
   lambda_value: 0.3
 train:
-  results_dir: "${results_dir}/train"
   optim:
     name: Adam
     lr_steps: [40, 70]
@@ -52,21 +51,5 @@ train:
     center_loss_weight: 0.0005
     center_lr: 0.5
     triplet_loss_margin: 0.3
-  num_epochs: 120
-  checkpoint_interval: 10
-inference:
-  results_dir: "${results_dir}/inference"
-  checkpoint: "???"
-  output_file: "???"
-  test_dataset: "???"
-  query_dataset: "???"
-evaluate:
-  results_dir: "${results_dir}/evaluate"
-  checkpoint: "???"
-  output_sampled_matches_plot: "???"
-  output_cmc_curve_plot: "???"
-  test_dataset: "???"
-  query_dataset: "???"
-export:
-  results_dir: "${results_dir}/export"
-  checkpoint: "???"
+  num_epochs: 5
+  checkpoint_interval: 1

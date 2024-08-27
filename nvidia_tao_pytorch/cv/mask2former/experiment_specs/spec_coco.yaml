@@ -1,0 +1,60 @@
+results_dir: /tao_experiments/mask2former_coco
+dataset:
+  contiguous_id: False
+  label_map: /tao_experiments/mask2former_coco/colormap.json
+  train:
+    type: 'coco_panoptic'
+    name: "coco_2017_train_panoptic"
+    panoptic_json: "/datasets/coco/annotations/panoptic_train2017.json"
+    img_dir: "/datasets/coco/train2017"
+    panoptic_dir: "/datasets/coco/panoptic_train2017"
+    batch_size: 1
+    num_workers: 2
+  val:
+    type: 'coco_panoptic'
+    name: "coco_2017_val_panoptic"
+    panoptic_json: "/datasets/coco/annotations/panoptic_val2017.json"
+    img_dir: "/datasets/coco/val2017"
+    panoptic_dir: "/datasets/coco/panoptic_val2017"
+    batch_size: 1
+    num_workers: 2
+  test:
+    img_dir: /datasets/coco_test/
+    batch_size: 1
+  augmentation:
+    train_min_size: [640]
+    train_max_size: 2560
+    train_crop_size: [640, 640]
+    test_min_size: 640
+    test_max_size: 2560
+train:
+  precision: 'fp16'
+  num_gpus: 1
+  checkpoint_interval: 1
+  validation_interval: 1
+  num_epochs: 130
+  optim:
+    type: "AdamW"
+    lr: 0.0001
+    weight_decay: 0.05
+model:
+  object_mask_threshold: 0.
+  overlap_threshold: 0.8
+  mode: "panoptic"
+  backbone:
+    pretrained_weights: "/tao_experiments/mask2former/swin_large_patch4_window12_384_22k.pth"
+    type: "swin"
+    swin:
+      type: "large"
+      window_size: 12
+      ape: False
+      pretrain_img_size: 384
+  mask_former:
+    num_object_queries: 200
+  sem_seg_head:
+    norm: "GN"
+    num_classes: 200
+inference:
+  checkpoint: "/tao_experiments/mask2former_coco/train/model_epoch=099.pth"
+evaluate:
+  checkpoint: "/tao_experiments/mask2former_coco/train/model_epoch=099.pth"

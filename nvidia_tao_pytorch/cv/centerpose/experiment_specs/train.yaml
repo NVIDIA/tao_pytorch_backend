@@ -1,12 +1,12 @@
-results_dir: "???"
+results_dir: /results
 
 dataset:
-  train_data: "???"
-  val_data: "???"
+  train_data: /data/bike/train
+  val_data: /data/bike/val
   num_classes: 1
-  batch_size: 64
-  workers: 4
-  category: "???"
+  batch_size: 32
+  workers: 8
+  category: "bike"
   num_symmetry: 1
   max_objs: 10
 
@@ -14,9 +14,9 @@ train:
   num_gpus: 1
   validation_interval: 20
   checkpoint_interval: ${train.validation_interval}
-  num_epochs: 140
+  num_epochs: 40
   clip_grad_val: 100.0
-  randomseed: 317
+  seed: 317
   resume_training_checkpoint_path: null
   precision: "fp32"
 
@@ -26,7 +26,7 @@ train:
 
 model:
   down_ratio: 4
-  use_pretrained: False
+  use_pretrained: True
   backbone:
-    model_type: "???"
-    pretrained_backbone_path: null
+    model_type: fan_small
+    pretrained_backbone_path: /results/pretrained_models/pretrained_fan_classification_nvimagenet_vfan_small_hybrid_nvimagenet/fan_small_hybrid_nvimagenet.pth

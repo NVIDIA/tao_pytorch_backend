@@ -1,12 +1,7 @@
-gpu_ids: [0]
-results_dir: '/home/scratch.p3/yuw/tlt3_experiments/mal_vit'
-checkpoint: '/home/scratch.p3/yuw/tlt3_experiments/mal_vit/coco/vit-mae-base-16epoch=0.ckpt'
-data:
-  train_ann_path: '/home/scratch.p3/yuw/datasets/coco/annotations/instances_train2017.json'
-  train_img_dir: '/home/scratch.p3/yuw/datasets/coco/raw-data/train2017'
-  val_ann_path: '/home/scratch.p3/yuw/datasets/coco/annotations/instances_val2017.json'
-  val_img_dir: '/home/scratch.p3/yuw/datasets/coco/raw-data/val2017'
+results_dir: ???
 inference:
+  checkpoint: '/home/scratch.p3/yuw/tlt3_experiments/mal_vit/coco/vit-mae-base-16epoch=0.ckpt'
+  gpu_ids: [0]
   ann_path: '/home/scratch.p3/yuw/datasets/P1000328_segm_gt.json'
   img_dir: '/home/projects.metropolis2/datasets/kpi_datasets/People/P1000328/images'
   label_dump_path: '/home/scratch.p3/yuw/datasets/P1000328_segm_mal.json'

@@ -14,56 +14,19 @@
 
 """Evaluate a trained pose classification model."""
 import csv
+import logging
 import os
-import numpy as np
-import torch
-from tqdm import tqdm
-from tabulate import tabulate
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from pytorch_lightning import Trainer
+
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.pose_classification.dataloader.pl_pc_data_module import PCDataModule
 from nvidia_tao_pytorch.cv.pose_classification.model.pl_pc_model import PoseClassificationModel
-from nvidia_tao_pytorch.cv.pose_classification.dataloader.build_data_loader import build_dataloader
-from nvidia_tao_pytorch.cv.pose_classification.inference.inferencer import Inferencer
-from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import check_and_create
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.core.utilities import update_results_dir
 
 
-def compute_metrics(confusion_matrix):
-    """
-    Compute evaluation metrics based on the confusion matrix.
-
-    This function computes the percentage confusion matrix, accuracy, and average class accuracy
-    from the provided confusion matrix.
-
-    Args:
-        confusion_matrix (np.ndarray): The confusion matrix of shape (num_classes, num_classes).
-
-    Returns:
-        np.ndarray: The percentage confusion matrix of the same shape as the input matrix.
-        float: The overall accuracy.
-        float: The average class accuracy.
-    """
-    row_sum = np.sum(confusion_matrix, axis=1)
-    _shape = confusion_matrix.shape
-    percentage_confusion_matrix = np.zeros(
-        _shape, dtype=np.float32)
-    for x in range(_shape[0]):
-        for y in range(_shape[1]):
-            if not row_sum[x] == 0:
-                percentage_confusion_matrix[x][y] = np.float32(confusion_matrix[x][y]) / \
-                    row_sum[x] * 100.0
-
-    trace = np.trace(confusion_matrix)
-    percent_trace = np.trace(percentage_confusion_matrix)
-
-    accuracy = float(trace) / np.sum(confusion_matrix) * 100.0
-    m_accuracy = percent_trace / _shape[0]
-
-    return percentage_confusion_matrix, accuracy, m_accuracy
-
-
+# TODO @seanf: cc says this isn't used
 def dump_cm(csv_path, cm, id2name):
     """
     Dump the confusion matrix to a CSV file.
@@ -90,7 +53,7 @@ def dump_cm(csv_path, cm, id2name):
             writer.writerow(row)
 
 
-def run_experiment(experiment_config, results_dir, key, model_path, data_path, label_path):
+def run_experiment(experiment_config, key):
     """
     Run the evaluation process.
 
@@ -99,66 +62,27 @@ def run_experiment(experiment_config, results_dir, key, model_path, data_path, l
 
     Args:
         experiment_config (dict): The experiment configuration containing the model and evaluation parameters.
-        results_dir (str): The directory to save the evaluation results.
         key (str): The encryption key for intermediate checkpoints.
-        model_path (str): The path to the trained model checkpoint.
-        data_path (str): The path to the test dataset.
-        label_path (str): The path to the label data.
 
     Raises:
         Exception: If any error occurs during the evaluation process.
     """
-    check_and_create(results_dir)
+    results_dir, model_path, gpus = initialize_evaluation_experiment(experiment_config, key)
+    if len(gpus) > 1:
+        gpus = [gpus[0]]
+        logging.log(f"Pose Classification does not support multi-GPU evaluation at this time. Using only GPU {gpus}")
 
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
-    status_logging.get_status_logger().write(status_level=status_logging.Status.STARTED, message="Starting Pose classification evaluation")
-
-    gpu_id = experiment_config.evaluate.gpu_id
-    torch.cuda.set_device(gpu_id)
-    # set the encryption key:
-    TLTPyTorchCookbook.set_passphrase(key)
-
-    # build dataloader
-    label_map = experiment_config["dataset"]["label_map"]
-    batch_size = experiment_config["dataset"]["batch_size"]
-    num_workers = experiment_config["dataset"]["num_workers"]
-    dataloader = build_dataloader(data_path=data_path,
-                                  label_path=label_path,
-                                  label_map=label_map,
-                                  mmap=True,
-                                  batch_size=batch_size,
-                                  num_workers=num_workers)
-
-    # build inferencer
+    dm = PCDataModule(experiment_config)
     model = PoseClassificationModel.load_from_checkpoint(model_path,
                                                          map_location="cpu",
                                                          experiment_spec=experiment_config)
-    infer = Inferencer(model, ret_prob=False)
 
-    # do evaluation
-    num_classes = len(label_map.keys())
-    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int32)
-    progress = tqdm(dataloader)
-    for data, label in progress:
-        batch_size = len(data)
-        pred_id = infer.inference(data)
-        for idx in range(batch_size):
-            confusion_matrix[label[idx].item(), pred_id[idx]] += 1
+    trainer = Trainer(devices=gpus,
+                      default_root_dir=results_dir,
+                      accelerator='gpu',
+                      strategy='auto')
 
-    percentage_confusion_matrix, accuracy, m_accuracy = compute_metrics(confusion_matrix)
-
-    table = []
-    id2name = {v: k for k, v in label_map.items()}
-    for idx in range(len(label_map)):
-        cls_acc = percentage_confusion_matrix[idx][idx]
-        table.append(["Class accuracy: " + id2name[idx], cls_acc])
-    table.append(["Total accuracy", accuracy])
-    table.append(["Average class accuracy", m_accuracy])
-    status_logging.get_status_logger().kpi = {"accuracy": round(accuracy, 2), "avg_accuracy": round(m_accuracy, 2)}
-    status_logging.get_status_logger().write(message="Evaluation metrics generated.", status_level=status_logging.Status.RUNNING)
-    print(tabulate(table, headers=["Name", "Score"], floatfmt=".4f", tablefmt="fancy_grid"))
+    trainer.test(model, datamodule=dm)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -169,6 +93,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment", schema=ExperimentConfig
 )
+@monitor_status(name="Pose Classification", mode="evaluate")
 def main(cfg: ExperimentConfig) -> None:
     """
     Run the evaluation process.
@@ -179,30 +104,8 @@ def main(cfg: ExperimentConfig) -> None:
     Args:
         cfg (ExperimentConfig): The experiment configuration retrieved from the Hydra configuration files.
     """
-    try:
-        cfg = update_results_dir(cfg, task="evaluate")
-        run_experiment(experiment_config=cfg,
-                       results_dir=cfg.results_dir,
-                       key=cfg.encryption_key,
-                       model_path=cfg.evaluate.checkpoint,
-                       data_path=cfg.evaluate.test_dataset.data_path,
-                       label_path=cfg.evaluate.test_dataset.label_path)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Evaluation finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Evaluation was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg,
+                   key=cfg.encryption_key)
 
 
 if __name__ == "__main__":

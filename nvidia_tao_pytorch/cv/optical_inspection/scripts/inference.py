@@ -16,81 +16,35 @@
 Inference on inspection images
 """
 import os
-import torch
-import pandas as pd
+from pytorch_lightning import Trainer
 
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import OIExperimentConfig
-from nvidia_tao_pytorch.cv.optical_inspection.dataloader.build_data_loader import (
-    build_dataloader)
-
-from nvidia_tao_pytorch.cv.optical_inspection.inference.inferencer import Inferencer
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
+from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.optical_inspection.dataloader.pl_oi_data_module import OIDataModule
 from nvidia_tao_pytorch.cv.optical_inspection.model.pl_oi_model import OpticalInspectionModel
-from nvidia_tao_pytorch.cv.optical_inspection.utils.common_utils import check_and_create
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 
-def run_experiment(experiment_config,
-                   model_path,
-                   key,
-                   results_dir):
+def run_experiment(experiment_config, key):
     """Start the inference."""
-    check_and_create(results_dir)
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting Optical Inspection inference"
-    )
+    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config, key)
 
-    gpu_id = experiment_config.inference.gpu_id
-    torch.cuda.set_device(gpu_id)
-    # set the encryption key:
-    TLTPyTorchCookbook.set_passphrase(key)
-
-    infer_data_path = experiment_config["dataset"]["infer_dataset"]["csv_path"]
-    if not os.path.exists(infer_data_path):
-        raise FileNotFoundError(f"No inference csv file was found at {infer_data_path}")
-    logging.info("Loading inference csv from : {}".format(infer_data_path))
-    df = pd.read_csv(infer_data_path)
+    dm = OIDataModule(experiment_config)
 
     model = OpticalInspectionModel.load_from_checkpoint(
         model_path,
         map_location="cpu",
-        experiment_spec=experiment_config
+        experiment_spec=experiment_config,
+        dm=dm
     )
 
-    inferencer = Inferencer(model, ret_prob=False)
+    trainer = Trainer(devices=gpus,
+                      default_root_dir=results_dir,
+                      accelerator='gpu',
+                      strategy='auto')
 
-    with torch.no_grad():
-        # Building dataloader without weighted sampling for inference.
-        dataloader = build_dataloader(
-            df=df,
-            weightedsampling=False,
-            split='infer',
-            data_config=experiment_config["dataset"]
-        )
-        data_frame = dataloader.dataset.data_frame
-
-        for i, data in enumerate(dataloader, 0):
-            euclidean_distance = inferencer.inference(data)
-            if i == 0:
-                euclid = euclidean_distance
-            else:
-                euclid = torch.cat((euclid, euclidean_distance), 0)
-
-        siamese_score = 'siamese_score'
-        data_frame[siamese_score] = euclid.cpu().numpy()
-
-        data_frame.to_csv(
-            os.path.join(results_dir, "inference.csv"),
-            header=True,
-            index=False
-        )
-        logging.info("Completed")
+    trainer.predict(model, datamodule=dm)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -100,35 +54,13 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"),
-    config_name="experiment", schema=OIExperimentConfig
+    config_name="experiment", schema=ExperimentConfig
 )
-def main(cfg: OIExperimentConfig) -> None:
+@monitor_status(name="Optical Inspection", mode="inference")
+def main(cfg: ExperimentConfig) -> None:
     """Run the training process."""
-    if cfg.inference.results_dir is not None:
-        results_dir = cfg.inference.results_dir
-    else:
-        results_dir = os.path.join(cfg.results_dir, "inference")
-    try:
-        run_experiment(experiment_config=cfg,
-                       key=cfg.encryption_key,
-                       model_path=cfg.inference.checkpoint,
-                       results_dir=results_dir)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Inference finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Inference was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg,
+                   key=cfg.encryption_key)
 
 
 if __name__ == "__main__":

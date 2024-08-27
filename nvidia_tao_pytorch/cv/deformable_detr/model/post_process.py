@@ -13,11 +13,13 @@
 # limitations under the License.
 
 """ Post processing for inference. """
+import os
+import numpy as np
+from PIL import Image, ImageDraw, ImageOps
 
 import torch
+import torch.nn.functional as F
 from torch import nn
-import os
-from PIL import Image, ImageDraw, ImageOps
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils import box_ops
 
@@ -97,6 +99,11 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
         pred_labels = pred['labels']
         pred_scores = pred['scores']
 
+        masks_filt = None
+        pred_masks = None
+        if "masks" in pred:
+            pred_masks = pred["masks"]
+
         assert pred_boxes.shape[0] == pred_labels.shape[0] == pred_scores.shape[0]
 
         path_list = image_name.split(os.sep)
@@ -124,6 +131,7 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
 
         pil_input = Image.open(image_name).convert("RGB")
         pil_input = ImageOps.exif_transpose(pil_input)
+        W, H = pil_input.size
 
         im1 = ImageDraw.Draw(pil_input)
 
@@ -171,6 +179,16 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
                         im1.rectangle(((x1, y1 - 10), (x1 + (x2 - x1), y1)),
                                       fill=color_map[class_name])
                         im1.text((x1, y1 - 10), f"{class_name}: {scores[k]:.2f}")
+                        if pred_masks is not None:
+                            masks_filt = F.interpolate(pred_masks[None, ...], size=(H, W), mode='bilinear', align_corners=False)[0]
+                            masks_filt = masks_filt > 0.5
+                            masks_filt = masks_filt.cpu().numpy()
+                            color = tuple(np.random.randint(0, 255, size=3).tolist())
+                            pred_color = masks_filt[k][..., None].astype(np.uint8) * np.array([color])
+                            pred_color = pred_color.astype(np.uint8)
+                            pred_color = Image.fromarray(pred_color).convert('RGBA')
+                            pred_color = pred_color.resize((W, H), resample=Image.NEAREST)
+                            pil_input.paste(pred_color, (0, 0), Image.fromarray(masks_filt[k]).convert("L").resize((W, H), resample=Image.NEAREST))
 
         pil_input.save(output_image_name)
         f.closed

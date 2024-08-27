@@ -250,7 +250,7 @@ class AOIMetrics(Metric):
         """
         metric_collect = {}
         metric_collect['total_accuracy'] = ((self.match_pass + self.match_fail) / (self.tot_pass + self.tot_fail)) * 100
-        metric_collect['defect_accuracy'] = 0 if self.tot_fail == 0 else (self.match_fail / self.tot_fail) * 100
+        metric_collect['defect_accuracy'] = torch.Tensor([0]) if self.tot_fail == 0 else (self.match_fail / self.tot_fail) * 100
         metric_collect['false_alarm'] = (self.mismatch_pass / (self.tot_pass + self.tot_fail)) * 100
         metric_collect['false_negative'] = (self.mismatch_fail / (self.tot_pass + self.tot_fail)) * 100
 
@@ -294,15 +294,16 @@ def build_oi_model(experiment_config, imagenet_pretrained=True,
     model_config = experiment_config["model"]
     embedding_vectorsize = model_config["embedding_vectors"]
     model_type = model_config["model_type"]
-    output_shape = experiment_config["dataset"]["output_shape"]
+    image_width = experiment_config["dataset"]["image_width"]
+    image_height = experiment_config["dataset"]["image_height"]
     num_lights = experiment_config["dataset"]["num_input"]
     model_backbone = model_config["model_backbone"]
     if model_backbone == "custom":
         logging.info("Starting training with custom backbone")
         if model_type == 'Siamese_3':
-            model = SiameseNetwork3(embedding_vectorsize, num_lights, output_shape).cuda()
+            model = SiameseNetwork3(embedding_vectorsize, num_lights, [image_height, image_width]).cuda()
         else:
-            model = SiameseNetwork1(embedding_vectorsize, num_lights, output_shape).cuda()
+            model = SiameseNetwork1(embedding_vectorsize, num_lights, [image_height, image_width]).cuda()
     # TODO: @pgurumurthy to add resnet/efficientnet support.
     # elif model_backbone == "resnet":
     #     print("Starting Siamese with ResNet backbone")

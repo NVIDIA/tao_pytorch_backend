@@ -19,12 +19,13 @@ import torch
 import onnx
 from onnxsim import simplify
 import onnx_graphsurgeon as gs
-from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.action_recognition.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.action_recognition.model.pl_ar_model import ActionRecognitionModel
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import check_and_create
+
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
+from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
+from nvidia_tao_pytorch.cv.action_recognition.config.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.action_recognition.dataloader.pl_ar_data_module import ARDataModule
+from nvidia_tao_pytorch.cv.action_recognition.model.pl_ar_model import ActionRecognitionModel
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,6 +36,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment", schema=ExperimentConfig
 )
+@monitor_status(name="Action Recognition", mode="export")
 def main(cfg: ExperimentConfig) -> None:
     """CLI wrapper to run export.
     This function parses the command line interface for tlt-export, instantiates the respective
@@ -47,31 +49,10 @@ def main(cfg: ExperimentConfig) -> None:
     Returns:
         No explicit returns.
     """
-    try:
-        if cfg.export.results_dir is not None:
-            results_dir = cfg.export.results_dir
-        else:
-            results_dir = os.path.join(cfg.results_dir, "export")
-        run_export(cfg, output_dir=results_dir)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Export finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Export was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_export(cfg)
 
 
-def run_export(args, output_dir):
+def run_export(args):
     """Wrapper to run export of tlt models.
 
     Args:
@@ -80,13 +61,6 @@ def run_export(args, output_dir):
     Returns:
         No explicit returns.
     """
-    check_and_create(output_dir)
-
-    # Set status logging
-    status_file = os.path.join(output_dir, "status.json")
-    status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
-    status_logging.get_status_logger().write(status_level=status_logging.Status.STARTED, message="Starting Action recognition export")
-
     gpu_id = args.export.gpu_id
     torch.cuda.set_device(gpu_id)
     # Parsing command line arguments.
@@ -114,10 +88,12 @@ def run_export(args, output_dir):
     if not os.path.exists(output_root):
         os.makedirs(output_root)
 
+    dm = ARDataModule(experiment_config)
     # load model
     pl_model = ActionRecognitionModel.load_from_checkpoint(model_path,
                                                            map_location="cpu",
                                                            experiment_spec=experiment_config,
+                                                           dm=dm,
                                                            export=True)
     model = pl_model.model
     model.eval()

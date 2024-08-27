@@ -18,10 +18,21 @@ import PIL
 import torch
 import random
 import numpy as np
+
+import torchvision
 import torchvision.transforms as T
 import torchvision.transforms.functional as F
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils.box_ops import box_xyxy_to_cxcywh
+
+
+def interpolate(inputs, size=None, scale_factor=None, mode="nearest", align_corners=None):
+    """
+    Equivalent to nn.functional.interpolate, but with support for empty batch sizes.
+    This will eventually be supported natively by PyTorch, and this
+    class can go away.
+    """
+    return torchvision.ops.misc.interpolate(inputs, size, scale_factor, mode, align_corners)
 
 
 def build_transforms(augmentation_config, subtask_config=None, dataset_mode='train'):
@@ -41,7 +52,7 @@ def build_transforms(augmentation_config, subtask_config=None, dataset_mode='tra
     input_mean = list(augmentation_config["input_mean"])
     input_std = list(augmentation_config["input_std"])
     scales = list(augmentation_config["scales"])
-    ranom_resize_max_size = augmentation_config["random_resize_max_size"]
+    random_resize_max_size = augmentation_config["random_resize_max_size"]
     test_random_size = augmentation_config["test_random_resize"]
     train_random_sizes = list(augmentation_config["train_random_resize"])
     train_random_crop_min = augmentation_config["train_random_crop_min"]
@@ -57,32 +68,32 @@ def build_transforms(augmentation_config, subtask_config=None, dataset_mode='tra
     ])
 
     # Fixed Padding is applied to prevent memory leak
-    # It nees to be applied prior to normalize transform
+    # It needs to be applied after normalize transform
     # Padding has same effect as the collate_fn as only the original image is passed as the size
     if dataset_mode == 'train':
         if fixed_padding:
             transforms = Compose([
                 RandomHorizontalFlip(flip_prob),
                 RandomSelect(
-                    RandomResize(scales, max_size=ranom_resize_max_size),
+                    RandomResize(scales, max_size=random_resize_max_size),
                     Compose([
                         RandomResize(train_random_sizes),
                         RandomSizeCrop(train_random_crop_min, train_random_crop_max),
-                        RandomResize(scales, max_size=ranom_resize_max_size),
+                        RandomResize(scales, max_size=random_resize_max_size),
                     ])
                 ),
                 normalize,
-                FixedPad(sorted(scales)[-1], ranom_resize_max_size),
+                FixedPad(sorted(scales)[-1], random_resize_max_size),
             ])
         else:
             transforms = Compose([
                 RandomHorizontalFlip(flip_prob),
                 RandomSelect(
-                    RandomResize(scales, max_size=ranom_resize_max_size),
+                    RandomResize(scales, max_size=random_resize_max_size),
                     Compose([
                         RandomResize(train_random_sizes),
                         RandomSizeCrop(train_random_crop_min, train_random_crop_max),
-                        RandomResize(scales, max_size=ranom_resize_max_size),
+                        RandomResize(scales, max_size=random_resize_max_size),
                     ])
                 ),
                 normalize,
@@ -103,13 +114,13 @@ def build_transforms(augmentation_config, subtask_config=None, dataset_mode='tra
     elif dataset_mode in ('val', 'eval', 'infer'):
         if fixed_padding:
             transforms = Compose([
-                RandomResize([test_random_size], max_size=ranom_resize_max_size),
+                RandomResize([test_random_size], max_size=random_resize_max_size),
                 normalize,
-                FixedPad(test_random_size, ranom_resize_max_size),
+                FixedPad(test_random_size, random_resize_max_size),
             ])
         else:
             transforms = Compose([
-                RandomResize([test_random_size], max_size=ranom_resize_max_size),
+                RandomResize([test_random_size], max_size=random_resize_max_size),
                 normalize,
             ])
 
@@ -144,7 +155,7 @@ def crop(image, target, region):
 
     target["size"] = torch.tensor([h, w])
 
-    fields = ["labels"]
+    fields = ["labels", "area"]
 
     if "boxes" in target:
         boxes = target["boxes"]
@@ -152,8 +163,15 @@ def crop(image, target, region):
         cropped_boxes = boxes - torch.as_tensor([j, i, j, i])
         cropped_boxes = torch.min(cropped_boxes.reshape(-1, 2, 2), max_size)
         cropped_boxes = cropped_boxes.clamp(min=0)
+        area = (cropped_boxes[:, 1, :] - cropped_boxes[:, 0, :]).prod(dim=1)
         target["boxes"] = cropped_boxes.reshape(-1, 4)
+        target["area"] = area
         fields.append("boxes")
+
+    if "masks" in target:
+        # FIXME should we update the area here if there are no boxes?
+        target["masks"] = target["masks"][:, i: i + h, j: j + w]
+        fields.append("masks")
 
     # remove elements for which the boxes that have zero area
     if "boxes" in target:
@@ -162,9 +180,11 @@ def crop(image, target, region):
         if "boxes" in target:
             cropped_boxes = target['boxes'].reshape(-1, 2, 2)
             keep = torch.all(cropped_boxes[:, 1, :] > cropped_boxes[:, 0, :], dim=1)
-
+        else:
+            keep = target["masks"].flatten(1).any(1)
         for field in fields:
-            target[field] = target[field][keep]
+            if field in target:
+                target[field] = target[field][keep]
 
     return cropped_image, target
 
@@ -189,6 +209,9 @@ def hflip(image, target):
         boxes = boxes[:, [2, 1, 0, 3]] * torch.as_tensor([-1, 1, -1, 1]) + torch.as_tensor([w, 0, w, 0])
         target["boxes"] = boxes
 
+    if "masks" in target:
+        target["masks"] = target["masks"].flip(-1)
+
     return flipped_image, target
 
 
@@ -202,7 +225,7 @@ def resize(image, target, size, max_size=None):
         max_size (int): maximum size to resize.
 
     Returns:
-        (rescaled_image, taret): rescaled image and processed target based on the rescaled image.
+        (rescaled_image, target): rescaled image and processed target based on the rescaled image.
     """
     def get_size_with_aspect_ratio(image_size, size, max_size=None):
         """ get size with aspect ratio """
@@ -248,8 +271,18 @@ def resize(image, target, size, max_size=None):
         scaled_boxes = boxes * torch.as_tensor([ratio_width, ratio_height, ratio_width, ratio_height])
         target["boxes"] = scaled_boxes
 
+    if "area" in target:
+        area = target["area"]
+        scaled_area = area * (ratio_width * ratio_height)
+        target["area"] = scaled_area
+
     h, w = size
     target["size"] = torch.tensor([h, w])
+
+    if "masks" in target:
+        target["masks"] = (
+            interpolate(target["masks"][:, None].float(), size, mode="nearest")[:, 0] > 0.5
+        )
 
     return rescaled_image, target
 
@@ -274,9 +307,12 @@ def pad(image, target, padding):
     # We pass size as pre-padded image so that collate_fn can overwrite the
     # transform-padded region too
     if isinstance(image, torch.Tensor):
-        target["size"] = image.shape[1:]
+        target["size"] = torch.tensor(image.shape[1:])
     else:
         target["size"] = torch.tensor(image.size[::-1])
+
+    if "masks" in target:
+        target["masks"] = torch.nn.functional.pad(target["masks"], (0, padding[0], 0, padding[1]))
 
     return padded_image, target
 

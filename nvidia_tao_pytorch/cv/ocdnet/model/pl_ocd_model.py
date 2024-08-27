@@ -14,26 +14,29 @@
 
 """Main PTL model file for OCDnet."""
 
+import pathlib
+import time
+import cv2
+from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
 import os
-import shutil
 import math
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from copy import deepcopy
 from typing import Any
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import all_gather
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 from nvidia_tao_pytorch.cv.ocdnet.model.build_nn_model import build_ocd_model
-from nvidia_tao_pytorch.cv.ocdnet.data_loader.build_dataloader import get_dataloader
 from nvidia_tao_pytorch.cv.ocdnet.lr_schedulers.schedulers import WarmupPolyLR
 from nvidia_tao_pytorch.cv.ocdnet.model.model import build_loss
 from nvidia_tao_pytorch.cv.ocdnet.post_processing.seg_detector_representer import get_post_processing
 from nvidia_tao_pytorch.cv.ocdnet.utils.ocr_metric.icdar2015.quad_metric import get_metric
+from nvidia_tao_pytorch.cv.ocdnet.utils.util import create_logger, draw_bbox, save_result, show_img
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.ocdnet.utils.util import create_logger
 
 
+# TODO @seanf: cc says this is never used
 # pylint:disable=too-many-ancestors
 class ModelEmaV2(nn.Module):
     """ Model Exponential Moving Average V2
@@ -90,54 +93,45 @@ class ModelEmaV2(nn.Module):
         self._update(model, update_fn=lambda e, m: m)
 
 
-class OCDnetModel(pl.LightningModule):
+class OCDnetModel(TAOLightningModule):
     """PTL module for single stream OCDnet."""
 
-    def __init__(self, experiment_spec, export=False):
+    def __init__(self, experiment_spec, dm, task, export=False):
         """Init training for OCDnet model.
 
         Args:
             experiment_spec (dict): The experiment specification.
+            dm (DataModule)
+            task (str)
             export (bool, optional): Whether to build the model that can be exported to ONNX format. Defaults to False
         """
-        super().__init__()
-        self.experiment_config = experiment_spec
-        self.train_dataset_config = experiment_spec["dataset"]["train_dataset"]
-        self.validate_dataset_config = experiment_spec["dataset"]["validate_dataset"]
-        self.model_config = experiment_spec["model"]
-        self.train_config = experiment_spec["train"]
+        super().__init__(experiment_spec)
+        self.train_config = self.experiment_spec["train"]
         self.epochs = self.train_config["num_epochs"]
         self.post_process = get_post_processing(self.train_config['post_processing'])
         self.box_thresh = self.train_config['post_processing']["args"]["box_thresh"]
-        self.checkpoint_dir = self.experiment_config["train"]["results_dir"]
+        self.checkpoint_dir = self.train_config["results_dir"]
         self.metrics = {'recall': 0, 'precision': 0, 'hmean': 0, 'train_loss': float('inf'), 'best_model_epoch': 0}
         self.train_loss = 0.0
-        self.criterion = build_loss(self.experiment_config['train']['loss'])
+        self.criterion = build_loss(self.train_config['loss'])
         # init the model
-        self._build_model(experiment_spec, export)
+        self._build_model(export)
         self.model_ema = None
-        if experiment_spec['train']['model_ema']:
-            self.model_ema = ModelEmaV2(self.model, decay=experiment_spec['train']['model_ema_decay'])
+        if self.train_config['model_ema']:
+            self.model_ema = ModelEmaV2(self.model, decay=self.train_config['model_ema_decay'])
             self.metrics.update({'ema_recall': 0, 'precision': 0, 'ema_hmean': 0, 'ema_best_model_epoch': 0})
         self.name = self.model.name
-        if torch.cuda.device_count() > 1:
-            self.experiment_config['distributed'] = True
-        else:
-            self.experiment_config['distributed'] = False
 
-        self.train_loader = get_dataloader(self.train_dataset_config, self.experiment_config['distributed'])
-        assert self.train_loader is not None, "Train loader does not exist."
+        self.dm = dm
+        if task == 'fit':
+            self.train_loader_len = self.dm.train_loader_len
 
-        if 'validate_dataset' in self.experiment_config["dataset"]:
-            self.validate_loader = get_dataloader(self.validate_dataset_config, False)
-        else:
-            self.validate_loader = None
-
-        self.train_loader_len = len(self.train_loader)
         self.console_logger = create_logger()
         self.status_logging_dict = {}
 
-    def _build_model(self, experiment_spec, export):
+        self.checkpoint_filename = 'ocd_model'
+
+    def _build_model(self, export):
         """Internal function to build the model.
 
         This method constructs a model using the specified experiment specification and export flag. It returns the model.
@@ -146,13 +140,29 @@ class OCDnetModel(pl.LightningModule):
             experiment_spec (dict): The experiment specification.
             export (bool): Whether to build the model that can be exported to ONNX format.
         """
-        self.model = build_ocd_model(experiment_config=experiment_spec,
+        self.model = build_ocd_model(experiment_config=self.experiment_spec,
                                      export=export)
 
     def forward(self, x):
         """Forward of the ocdnet model."""
         output = self.model(x)
         return output
+
+    def configure_optimizers(self):
+        """Configure optimizers for training"""
+        optim_dict = {}
+
+        self.warmup_epochs = self.train_config['lr_scheduler']['args']['warmup_epoch']
+        self.warmup_iters = self.warmup_epochs * self.train_loader_len
+        self.optimizer = self._initialize('optimizer', torch.optim, self.model.parameters())
+        self.scheduler = WarmupPolyLR(self.optimizer, max_iters=self.epochs * self.train_loader_len,
+                                      warmup_iters=self.warmup_iters, warmup_epochs=self.warmup_epochs, epochs=self.epochs,
+                                      **self.train_config['lr_scheduler']['args'])
+
+        optim_dict["optimizer"] = self.optimizer
+        optim_dict["lr_scheduler"] = self.scheduler
+
+        return optim_dict
 
     def training_step(self, batch, batch_idx):
         """Training step.
@@ -167,49 +177,26 @@ class OCDnetModel(pl.LightningModule):
         """
         self.train_loss = 0.
         preds = self.model(batch['img'])
+        batch_size = batch['img'].shape[0]
         loss_dict = self.criterion(preds, batch)
         loss = loss_dict['loss']
         self.train_loss += loss
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
 
         return loss
 
-    def train_dataloader(self):
-        """Build the dataloader for training.
+    def on_train_epoch_end(self):
+        """Log Training metrics to status.json"""
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
-        Returns:
-            train_loader (Dataloader): Traininig Data.
+        self.status_logging_dict = {}
+        self.status_logging_dict["train_loss"] = average_train_loss
 
-        """
-        return self.train_loader
-
-    def val_dataloader(self):
-        """Build the dataloader for validation.
-
-        Returns:
-            val_loader (Dataloader): Validation Data.
-
-        """
-        return self.validate_loader
-
-    def configure_optimizers(self):
-        """Configure optimizers for training"""
-        optim_dict = {}
-
-        self.warmup_epochs = self.experiment_config['train']['lr_scheduler']['args']['warmup_epoch']
-        self.warmup_iters = self.warmup_epochs * self.train_loader_len
-        self.optimizer = self._initialize('optimizer', torch.optim, self.model.parameters())
-        self.scheduler = WarmupPolyLR(self.optimizer, max_iters=self.epochs * self.train_loader_len,
-                                      warmup_iters=self.warmup_iters, warmup_epochs=self.warmup_epochs, epochs=self.epochs,
-                                      **self.experiment_config['train']['lr_scheduler']['args'])
-
-        optim_dict["optimizer"] = self.optimizer
-        optim_dict["lr_scheduler"] = self.scheduler
-
-        return optim_dict
-
-    def on_train_epoch_start(self):
-        """Perform on start of every epoch."""
-        print('\n')
+        status_logging.get_status_logger().kpi = self.status_logging_dict
+        status_logging.get_status_logger().write(
+            message="Train metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
 
     def on_validation_epoch_start(self):
         """Perform on validation."""
@@ -218,7 +205,7 @@ class OCDnetModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         """Validation step."""
         preds = self.model(batch['img'])
-        self.metric_cls = get_metric(self.experiment_config['train']['metric'])
+        self.metric_cls = get_metric(self.train_config['metric'])
         boxes, scores = self.post_process(batch, preds, is_output_polygon=self.metric_cls.is_output_polygon)
         raw_metric = self.metric_cls.validate_measure(batch, (boxes, scores), box_thresh=self.box_thresh)
 
@@ -226,41 +213,37 @@ class OCDnetModel(pl.LightningModule):
             ema_preds = self.model_ema.module(batch['img'])
             boxes, scores = self.post_process(batch, ema_preds, is_output_polygon=self.metric_cls.is_output_polygon)
             ema_raw_metric = self.metric_cls.validate_measure(batch, (boxes, scores), box_thresh=self.box_thresh)
+            self.raw_metrics.append((raw_metric, ema_raw_metric))
             return (raw_metric, ema_raw_metric)
+
+        self.raw_metrics.append((raw_metric,))
         return (raw_metric,)
 
-    def validation_epoch_end(self, raw_metric):
+    def on_validation_epoch_end(self):
         """Validation step end."""
-        self.raw_metrics = []
-        for p in all_gather(raw_metric):
-            self.raw_metrics.extend(p)
         if self.model_ema is not None:
             ema_metrics = self.metric_cls.gather_measure([ema_metrics[1] for ema_metrics in self.raw_metrics])
             ema_recall = ema_metrics['recall'].avg
             ema_precision = ema_metrics['precision'].avg
             ema_hmean = ema_metrics['hmean'].avg
-            self.log("ema_recall", ema_recall, on_step=False, on_epoch=True, prog_bar=True, rank_zero_only=True)
-            self.log("ema_precision", ema_precision, on_step=False, on_epoch=True, prog_bar=True, rank_zero_only=True)
-            self.log("ema_hmean", ema_hmean, on_step=False, on_epoch=True, prog_bar=True, rank_zero_only=True)
+            self.log("ema_recall", ema_recall, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log("ema_precision", ema_precision, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log("ema_hmean", ema_hmean, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
         metrics = self.metric_cls.gather_measure([metrics[0] for metrics in self.raw_metrics])
         recall = metrics['recall'].avg
         precision = metrics['precision'].avg
         hmean = metrics['hmean'].avg
 
-        self.log("recall", recall, on_step=False, on_epoch=True, prog_bar=True, rank_zero_only=True)
-        self.log("precision", precision, on_step=False, on_epoch=True, prog_bar=True, rank_zero_only=True)
-        self.log("hmean", hmean, on_step=False, on_epoch=True, prog_bar=True, rank_zero_only=True)
+        self.log("recall", recall, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("precision", precision, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("hmean", hmean, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
         os.makedirs(self.checkpoint_dir, exist_ok=True)
-        net_save_path = '{}/model_latest.pth'.format(self.checkpoint_dir)
-        net_save_path_best = '{}/model_best.pth'.format(self.checkpoint_dir)
-        if self.model_ema is not None:
-            net_save_path_best_ema = '{}/model_best_ema.pth'.format(self.checkpoint_dir)
 
         save_best = False
         save_best_ema = False
-        if self.validate_loader is not None and self.metric_cls is not None:
+        if self.metric_cls is not None:
             if hmean >= self.metrics['hmean']:
                 save_best = True
                 self.metrics['train_loss'] = self.train_loss / self.train_loader_len
@@ -286,13 +269,15 @@ class OCDnetModel(pl.LightningModule):
             best_str += '{}: {:.6f}, '.format(k, v)
         self.print(best_str)
 
-        self._save_checkpoint(self.current_epoch, net_save_path)
-        if save_best:
-            shutil.copyfile(net_save_path, net_save_path_best)
-            self.print("Saving current best: {}".format(net_save_path_best))
-        else:
-            self.print("Saving checkpoint: {}".format(net_save_path))
+        net_save_path_best = '{}/model_best.pth'.format(self.checkpoint_dir)
+        if self.model_ema is not None:
+            net_save_path_best_ema = '{}/model_best_ema.pth'.format(self.checkpoint_dir)
 
+        if save_best:
+            self._save_checkpoint(self.current_epoch, net_save_path_best)
+            self.print("Saving current best: {}".format(net_save_path_best))
+
+        # TODO @seanf: the code coverage report shows that we never test the ema mode at all
         if save_best_ema:
             self._save_checkpoint(self.current_epoch, net_save_path_best_ema, save_ema=True)
 
@@ -308,23 +293,111 @@ class OCDnetModel(pl.LightningModule):
                 self.console_logger.info('ema_precision : {:2.5f}'.format(ema_precision))
                 self.console_logger.info('ema_hmean : {:2.5f}'.format(ema_hmean))
 
-        self.status_logging_dict["recall"] = str(recall)
-        self.status_logging_dict["precision"] = str(precision)
-        self.status_logging_dict["hmean"] = str(hmean)
-        if self.model_ema:
-            self.status_logging_dict["ema_recall"] = str(ema_recall)
-            self.status_logging_dict["ema_precision"] = str(ema_precision)
-            self.status_logging_dict["ema_hmean"] = str(ema_hmean)
-        status_logging.get_status_logger().kpi = self.status_logging_dict
-        status_logging.get_status_logger().write(
-            message="Evaluation metrics generated.",
-            status_level=status_logging.Status.RUNNING
-        )
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["recall"] = str(recall)
+            self.status_logging_dict["precision"] = str(precision)
+            self.status_logging_dict["hmean"] = str(hmean)
+            if self.model_ema:
+                self.status_logging_dict["ema_recall"] = str(ema_recall)
+                self.status_logging_dict["ema_precision"] = str(ema_precision)
+                self.status_logging_dict["ema_hmean"] = str(ema_hmean)
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+        self.raw_metrics.clear()
+        pl.utilities.memory.garbage_collection_cuda()
         return metrics
 
+    def on_test_epoch_start(self):
+        """Test epoch start"""
+        self.test_post_process = get_post_processing(self.experiment_spec['evaluate']['post_processing'])
+        self.test_metric_cls = get_metric(self.experiment_spec['evaluate']['metric'])
+        self.test_box_thresh = self.experiment_spec['evaluate']['post_processing']["args"]["box_thresh"]
+        self.test_thresh_range = [i * 0.1 for i in range(1, 10)]
+        self.test_raw_metrics = {thresh: [] for thresh in self.test_thresh_range}
+        self.test_total_frame = 0.0
+        self.test_total_time = 0.0
+
+    def test_step(self, batch, batch_idx):
+        """Test step"""
+        start = time.time()
+        preds = self.model(batch['img'])
+        for thresh in self.test_thresh_range:
+            self.test_post_process.thresh = thresh
+            boxes, scores = self.test_post_process(batch, preds, is_output_polygon=self.test_metric_cls.is_output_polygon)
+            self.test_total_frame += batch['img'].size()[0]
+            self.test_total_time += time.time() - start
+            raw_metric = self.test_metric_cls.validate_measure(batch, (boxes, scores), box_thresh=self.test_box_thresh)
+            self.test_raw_metrics[thresh].append(raw_metric)
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        metrics = {thresh: {} for thresh in self.test_thresh_range}
+        metrics['best'] = None
+        best_hmean = 0
+        for thresh in self.test_thresh_range:
+            metric = self.test_metric_cls.gather_measure(self.test_raw_metrics[thresh])
+            metrics[thresh] = {'recall': metric['recall'].avg, 'precision': metric['precision'].avg, 'hmean': metric['hmean'].avg}
+            msg = f"thresh: {round(thresh, 1)}, recall: {metric['recall'].avg}, precision: {metric['precision'].avg}, hmean: {metric['hmean'].avg}"
+            status_logging.get_status_logger().write(message=msg)
+            if metric['hmean'].avg > best_hmean:
+                best_hmean = metric['hmean'].avg
+                metrics['best'] = {'Thresh': round(thresh, 1), 'Recall': metric['recall'].avg, 'Precision': metric['precision'].avg, 'Hmean': metric['hmean'].avg}
+
+        status_logging.get_status_logger().kpi = metrics['best']
+        status_logging.get_status_logger().write(
+            message="Test metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
+
+    def on_predict_epoch_start(self):
+        """Predict epoch start"""
+        self.predict_post_process = get_post_processing(self.experiment_spec['inference']['post_processing'])
+        self.predict_post_process.box_thresh = self.experiment_spec['inference']['post_processing']['args']['box_thresh']
+        self.predict_polygon = self.experiment_spec['inference']['polygon']
+        self.predict_show = self.experiment_spec['inference']['show']
+
+    def predict_step(self, batch, batch_idx):
+        """Predict step"""
+        # For now, we assume (and set) the batch size is 1
+        tensor, img_path = batch["img"], batch["img_path"][0]
+        preds = self.model(tensor)
+        box_list, score_list = self.predict_post_process(batch, preds, is_output_polygon=self.predict_polygon)
+        box_list, score_list = box_list[0], score_list[0]
+        if len(box_list) > 0:
+            if self.predict_polygon:
+                idx = [x.sum() > 0 for x in box_list]
+                box_list = [box_list[i] for i, v in enumerate(idx) if v]
+                score_list = [score_list[i] for i, v in enumerate(idx) if v]
+            else:
+                idx = box_list.reshape(box_list.shape[0], -1).sum(axis=1) > 0  # filer bbox has all 0
+                box_list, score_list = box_list[idx], score_list[idx]
+        else:
+            box_list, score_list = [], []
+
+        preds = preds[0, 0, :, :].detach().cpu().numpy()
+
+        im = cv2.imread(img_path)
+        img = draw_bbox(im[:, :, ::-1], box_list)
+        if self.predict_show:
+            show_img(preds)
+            show_img(img, title=os.path.basename(img_path))
+            plt.show()
+        # save result
+        img_path = pathlib.Path(img_path)
+        inference_results_dir = self.experiment_spec["results_dir"]
+        output_path = os.path.join(inference_results_dir, img_path.stem + '_result.jpg')
+        pred_path = os.path.join(inference_results_dir, img_path.stem + '_pred.jpg')
+        cv2.imwrite(output_path, img[:, :, ::-1])
+        cv2.imwrite(pred_path, preds * 255)
+        save_result(output_path.replace('_result.jpg', '.txt'), box_list, score_list, self.predict_polygon)
+
     def _initialize(self, name, module, *args, **kwargs):
-        module_name = self.experiment_config['train'][name]['type']
-        module_args = self.experiment_config['train'][name]['args']
+        module_name = self.train_config[name]['type']
+        module_args = self.train_config[name]['args']
         assert all([k not in module_args for k in kwargs]), 'Overwriting kwargs given in config file is not allowed'
         module_args.update(kwargs)
         if module_name == "SGD":
@@ -333,6 +406,7 @@ class OCDnetModel(pl.LightningModule):
             module_args.pop("momentum")
         return getattr(module, module_name)(*args, **module_args)
 
+    # TODO @seanf: is this function necessary? It seems like on_validation_epoch_end is manually saving, but we have a callback for this?
     def _save_checkpoint(self, epoch, file_name, save_ema=False):
         """Saving checkpoints
 
@@ -350,7 +424,7 @@ class OCDnetModel(pl.LightningModule):
             'state_dict': state_dict,
             'optimizer': self.optimizer.state_dict(),
             'scheduler': self.scheduler.state_dict(),
-            'config': self.experiment_config,
+            'config': self.experiment_spec,
             'metrics': self.metrics
         }
         torch.save(state, file_name)

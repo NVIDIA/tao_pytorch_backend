@@ -1,13 +1,11 @@
 model:
   load_pruned_graph: false
   pruned_graph_path: '/results/prune/pruned_0.1.pth'
-  backbone: fan_tiny_8_p4_hybrid
-  enlarge_feature_map_size: True
-  activation_checkpoint: True
+
 
 inference:
   checkpoint: '/results/train/model_best.pth'
-  input_folder: /workspace/datasets/ICDAR2015/datasets/test/img
+  input_folder: /data/ocdnet_vit/test/img
   width: 1280
   height: 736
   img_mode: BGR
@@ -18,7 +16,7 @@ inference:
   post_processing:
     type: SegDetectorRepresenter
     args:
-      thresh: 0.3
+      thresh: 0.5
       box_thresh: 0.55
       max_candidates: 1000
       unclip_ratio: 1.5

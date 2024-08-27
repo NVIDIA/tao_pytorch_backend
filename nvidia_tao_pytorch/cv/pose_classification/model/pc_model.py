@@ -14,8 +14,8 @@
 
 """Model builder interface and joint model."""
 import torch
+from nvidia_tao_pytorch.core.utilities import patch_decrypt_checkpoint
 from nvidia_tao_pytorch.cv.pose_classification.model.st_gcn import st_gcn
-from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import patch_decrypt_checkpoint
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 
 

@@ -29,7 +29,7 @@ from nvidia_tao_pytorch.core.path_utils import expand_path
 class DatasetTemplate(torch_data.Dataset):
     """Dataset Template class."""
 
-    def __init__(self, dataset_cfg=None, class_names=None, training=True, root_path=None, logger=None):
+    def __init__(self, dataset_cfg=None, class_names=None, training=True, root_path=None, info_path=None, logger=None):
         """Initialize."""
         super().__init__()
         self.dataset_cfg = dataset_cfg
@@ -37,6 +37,7 @@ class DatasetTemplate(torch_data.Dataset):
         self.class_names = class_names
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(expand_path(self.dataset_cfg.data_path))
+        self.info_path = Path(expand_path(info_path))
         self.logger = logger
         if self.dataset_cfg is None or class_names is None:
             return
@@ -47,7 +48,7 @@ class DatasetTemplate(torch_data.Dataset):
             point_cloud_range=self.point_cloud_range
         )
         self.data_augmentor = DataAugmentor(
-            self.root_path, self.dataset_cfg.data_augmentor, self.class_names, logger=self.logger
+            self.info_path, self.dataset_cfg.data_augmentor, self.class_names, logger=self.logger
         ) if self.training else None
         self.data_processor = DataProcessor(
             self.dataset_cfg.data_processor,

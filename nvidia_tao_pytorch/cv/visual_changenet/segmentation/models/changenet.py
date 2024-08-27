@@ -40,7 +40,11 @@ from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils 
 )
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.fan import fan_model_dict
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.vit_adapter import vit_adapter_model_dict
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank, load_pretrained_weights
+from nvidia_tao_pytorch.cv.visual_changenet.utils.pos_embed_interpolation_converter import (
+    interpolate_patch_embed, interpolate_pos_embed
+)
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +274,8 @@ class ChangeNetSegment(nn.Module):
         logger.info(f"Number of output classes: {output_nc}")
         assert img_size % feature_strides[-1] == 0, f"Input image size must be a multiple of {feature_strides[-1]}"
 
+        pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone_path) if pretrained_backbone_path else None
+
         if 'fan' in self.model_name:
             self.backbone = fan_model_dict[self.model_name](
                 pretrained=False,
@@ -284,14 +290,17 @@ class ChangeNetSegment(nn.Module):
                 out_indices=return_interm_indices,
                 resolution=img_size,
                 activation_checkpoint=activation_checkpoint)
+
+            # do interpolation
+            pretrained_backbone_ckp = interpolate_vit_checkpoint(checkpoint=pretrained_backbone_ckp,
+                                                                 target_patch_size=16,
+                                                                 target_resolution=img_size)
         else:
             raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)
 
-        # missing_keys = None
-        if pretrained_backbone_path:
-            checkpoint = load_pretrained_weights(pretrained_backbone_path)
-            _tmp_st_output = self.backbone.load_state_dict(checkpoint, strict=False)
-            # missing_keys = list(_tmp_st_output[0])
+        if pretrained_backbone_ckp is not None:
+            _tmp_st_output = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
+
             if get_global_rank() == 0:
                 logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
                 logger.info(f"{_tmp_st_output}")
@@ -380,3 +389,29 @@ def build_model(experiment_config,
     count_params(model)
 
     return model
+
+
+def interpolate_vit_checkpoint(checkpoint, target_patch_size, target_resolution):
+    """ Interpolate ViT backbone position embedding and patch embedding
+
+    Args:
+        checkpoint: pretrained ViT checkpoint
+        target_patch_size: target patch size to interpolate to. ex: 14, 16, etc
+        target_resolution: target image size to interpolate to. ex: 224, 512, 518, etc
+
+    Returns:
+        interpolated model checkpoints
+
+    """
+    if checkpoint is None:
+        return checkpoint
+
+    logger.info("Do ViT pretrained backbone interpolation")
+    # interpolate patch embedding
+    checkpoint = interpolate_patch_embed(checkpoint=checkpoint, new_patch_size=target_patch_size)
+
+    # interpolate pos embedding
+    checkpoint = interpolate_pos_embed(checkpoint_model=checkpoint,
+                                       new_resolution=target_resolution,
+                                       new_patch_size=target_patch_size)
+    return checkpoint

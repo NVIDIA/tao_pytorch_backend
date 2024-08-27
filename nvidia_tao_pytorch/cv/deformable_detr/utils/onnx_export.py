@@ -22,6 +22,8 @@ import numpy as np
 
 import onnx_graphsurgeon as gs
 
+from nvidia_tao_pytorch.core.tlt_logging import logging
+
 
 # register plugin
 def nvidia_msda(g, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights):
@@ -37,7 +39,7 @@ class ONNXExporter(object):
         """SetUpclass to set the manual seed for reproduceability"""
         torch.manual_seed(123)
 
-    def export_model(self, model, batch_size, onnx_file, dummy_input, do_constant_folding=False, opset_version=12,
+    def export_model(self, model, batch_size, onnx_file, dummy_input, do_constant_folding=False, opset_version=17,
                      output_names=None, input_names=None, verbose=False):
         """ Export_model.
 
@@ -63,8 +65,9 @@ class ONNXExporter(object):
 
         # CPU version requires opset_version > 16
         if not next(model.parameters()).is_cuda and opset_version < 16:
-            print(f"CPU version of Deformable MHA requires opset version larger than 16. Overriding provided opset {opset_version} to 16.")
-            opset_version = 16
+            logging.info("CPU version of Deformable MHA requires opset version larger than 16. "
+                         f"Overriding provided opset {opset_version} to 17.")
+            opset_version = 17
 
         register_custom_op_symbolic('nvidia::MultiscaleDeformableAttnPlugin_TRT', nvidia_msda, opset_version)
         with torch.no_grad():

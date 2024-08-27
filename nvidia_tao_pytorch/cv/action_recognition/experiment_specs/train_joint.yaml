@@ -1,4 +1,4 @@
-output_dir: ./train_output_pl/joint_2d
+results_dir: ./train_output_pl/joint_2d
 key: nvidia_tlt
 model_config:
   model_type: joint

@@ -14,196 +14,267 @@
 
 """Default config file."""
 
-from typing import Optional, List
-from dataclasses import dataclass, field
-from omegaconf import MISSING
+from dataclasses import dataclass
+
+from nvidia_tao_pytorch.core.common_config import EvaluateConfig, CommonExperimentConfig, InferenceConfig
+from nvidia_tao_pytorch.config.types import (
+    BOOL_FIELD,
+    FLOAT_FIELD,
+    INT_FIELD,
+    STR_FIELD,
+    DATACLASS_FIELD,
+)
+from nvidia_tao_pytorch.cv.centerpose.config.dataset import (
+    CenterPoseDatasetConfig
+)
+from nvidia_tao_pytorch.cv.centerpose.config.deploy import CenterPoseGenTrtEngineExpConfig
+from nvidia_tao_pytorch.cv.centerpose.config.model import CenterPoseModelConfig
+from nvidia_tao_pytorch.cv.centerpose.config.train import CenterPoseTrainExpConfig
 
 
 @dataclass
-class CenterPoseDatasetConfig:
-    """Dataset config."""
-
-    train_data: Optional[str] = None
-    test_data: Optional[str] = None
-    val_data: Optional[str] = None
-    inference_data: Optional[str] = None
-    batch_size: int = 4
-    workers: int = 8
-    pin_memory: bool = True
-    num_classes: int = 1
-    num_joints: int = 8
-    max_objs: int = 10
-    mean: List[float] = field(default_factory=lambda: [0.40789654, 0.44719302, 0.47026115])
-    std: List[float] = field(default_factory=lambda: [0.28863828, 0.27408164, 0.27809835])
-    _eig_val: List[float] = field(default_factory=lambda: [0.2141788, 0.01817699, 0.00341571],
-                                  metadata={"Description": "eigen values for color data augmentation from CenterNet"})
-    _eig_vec: List[List[float]] = field(default_factory=lambda: [[-0.58752847, -0.69563484, 0.41340352], [-0.5832747, 0.00994535, -0.81221408], [-0.56089297, 0.71832671, 0.41158938]],
-                                        metadata={"Description": "eigen vector for color data augmentation from CenterNet"})
-    category: str = "cereal_box"
-    num_symmetry: int = 1
-    mse_loss: bool = False
-    center_3D: bool = False
-    obj_scale: bool = True
-    use_absolute_scale: bool = False
-    obj_scale_uncertainty: bool = False
-    dense_hp: bool = False
-    hps_uncertainty: bool = False
-    reg_bbox: bool = True
-    reg_offset: bool = True
-    hm_hp: bool = True
-    reg_hp_offset: bool = True
-    flip_idx: List[List[int]] = field(default_factory=lambda: [[1, 5], [3, 7], [2, 6], [4, 8]])
-
-    # Data augmentation
-    no_color_aug: bool = False
-    not_rand_crop: bool = False
-    aug_rot: int = 0
-    flip: float = 0.5
-    input_res: int = 512
-    output_res: int = 128
-
-
-@dataclass
-class OptimConfig:
-    """Optimizer config."""
-
-    lr: float = 6e-05
-    lr_scheduler: str = "MultiStep"
-    lr_steps: List[int] = field(default_factory=lambda: [90, 120],
-                                metadata={"description": "learning rate decay steps"})
-    lr_decay: float = 0.1
-
-
-@dataclass
-class CenterPoseLossConfig:
-    """CenterPose loss config."""
-
-    mse_loss: bool = False
-    dense_hp: bool = False
-    reg_loss: str = "l1"
-    num_stacks: int = 1
-    hps_uncertainty: bool = False
-    wh_weight: float = 0.1
-    reg_bbox: bool = True
-    reg_offset: bool = True
-    reg_hp_offset: bool = True
-    obj_scale: bool = True
-    obj_scale_weight: int = 1
-    obj_scale_uncertainty: bool = False
-    use_residual: bool = False
-    dimension_ref: Optional[str] = None
-    off_weight: int = 1
-    hm_hp: bool = True
-    hm_hp_weight: int = 1
-    hm_weight: int = 1
-    hp_weight: int = 1
-
-
-@dataclass
-class CenterPoseTrainExpConfig:
-    """Train experiment config."""
-
-    num_gpus: int = 1
-    num_nodes: int = 1
-    results_dir: Optional[str] = None
-    resume_training_checkpoint_path: Optional[str] = None
-    pretrained_model_path: Optional[str] = None
-    validation_interval: int = 1
-    clip_grad_val: float = 100.0
-    randomseed: int = 317
-    is_dry_run: bool = False
-    num_epochs: int = 140
-    checkpoint_interval: int = 1
-    precision: str = "fp32"
-    optim: OptimConfig = OptimConfig()
-    loss_config: CenterPoseLossConfig = CenterPoseLossConfig()
-
-
-@dataclass
-class BackboneConfig:
-    """CenterPose backbone model config."""
-
-    model_type: str = "DLA34"
-    pretrained_backbone_path: Optional[str] = None
-
-
-@dataclass
-class CenterPoseModelConfig:
-    """CenterPose model config."""
-
-    down_ratio: int = 4
-    final_kernel: int = 1
-    last_level: int = 5
-    head_conv: int = 256
-    out_channel: int = 0
-    use_convGRU: bool = True
-    use_pretrained: bool = False
-    backbone: BackboneConfig = BackboneConfig()
-
-
-@dataclass
-class CenterPoseInferenceExpConfig:
+class CenterPoseInferenceExpConfig(InferenceConfig):
     """Inference experiment config."""
 
-    num_gpus: int = 1
-    results_dir: Optional[str] = None
-    checkpoint: Optional[str] = None
-    trt_engine: Optional[str] = None
-    visualization_threshold: float = 0.3
-    num_select: int = 100
-    use_pnp: bool = True
-    save_json: bool = True
-    save_visualization: bool = True
-    opencv: bool = True
+    trt_engine: str = STR_FIELD(
+        value="",
+        description="Path to the TensorRT engine.",
+        display_name="TensorRT Engine"
+    )
+    visualization_threshold: float = FLOAT_FIELD(
+        value=0.3,
+        default_value=0.3,
+        valid_min=0.3,
+        valid_max=0.3,
+        description="Visualization threshold.",
+        display_name="Visualization Threshold",
+        popular="0.3"
+    )
+    num_select: int = INT_FIELD(
+        value=100,
+        default_value=100,
+        valid_min=100,
+        valid_max=100,
+        description="Number of selected objects.",
+        display_name="Number of Selected Objects",
+        popular="100"
+    )
+    use_pnp: bool = BOOL_FIELD(
+        value=True,
+        description="Use PnP.",
+        display_name="PnP"
+    )
+    save_json: bool = BOOL_FIELD(
+        value=True,
+        description="Save JSON file to local.",
+        display_name="Save JSON"
+    )
+    save_visualization: bool = BOOL_FIELD(
+        value=True,
+        description="Save visualization image to local.",
+        display_name="Save Visualization"
+    )
+    opencv: bool = BOOL_FIELD(
+        value=True,
+        description="Use OpenCV for visualization.",
+        display_name="UseOpenCV"
+    )
 
     # Camera intrinsic matrix
-    principle_point_x: float = 0.00
-    principle_point_y: float = 0.00
-    focal_length_x: float = 0.00
-    focal_length_y: float = 0.00
-    skew: float = 0.00
+    principle_point_x: float = FLOAT_FIELD(
+        value=0.0,
+        default_value=0.0,
+        valid_min=0.0,
+        valid_max="inf",
+        description="Intrinsic matrix principle point x.",
+        display_name="Principle Point X"
+    )
+    principle_point_y: float = FLOAT_FIELD(
+        value=0.0,
+        default_value=0.0,
+        valid_min=0.0,
+        valid_max="inf",
+        description="Intrinsic matrix principle point y.",
+        display_name="Principle Point Y"
+    )
+    focal_length_x: float = FLOAT_FIELD(
+        value=0.0,
+        default_value=0.0,
+        valid_min=0.0,
+        valid_max="inf",
+        description="Intrinsic matrix focal length x.",
+        display_name="Focal Length X"
+    )
+    focal_length_y: float = FLOAT_FIELD(
+        value=0.0,
+        default_value=0.0,
+        valid_min=0.0,
+        valid_max="inf",
+        description="Intrinsic matrix focal length y.",
+        display_name="Focal Length Y"
+    )
+    skew: float = FLOAT_FIELD(
+        value=0.0,
+        default_value=0.0,
+        valid_min=0.0,
+        valid_max="inf",
+        description="Intrinsic matrix Skew.",
+        display_name="Skew"
+    )
+    axis_size: float = FLOAT_FIELD(
+        value=0.5,
+        default_value=0.5,
+        valid_min=0.1,
+        valid_max="inf",
+        description="Axis size setting.",
+        display_name="Axis Size",
+        popular="0.5"
+    )
 
 
 @dataclass
 class CenterPoseExportExpConfig:
     """Export experiment config."""
 
-    results_dir: Optional[str] = None
-    gpu_id: int = 0
-    checkpoint: str = MISSING
-    onnx_file: str = MISSING
-    on_cpu: bool = False
-    input_channel: int = 3
-    input_width: int = 512
-    input_height: int = 512
-    opset_version: int = 16
-    batch_size: int = -1
-    verbose: bool = False
-    num_select: int = 100
-    do_constant_folding: bool = False
+    results_dir: str = STR_FIELD(
+        value="",
+        description="Results directory.",
+        display_name="Results Directory"
+    )
+    gpu_id: int = INT_FIELD(
+        value=0,
+        default_value=0,
+        description="GPU ID used for training.",
+        display_name="GPU ID"
+    )
+    checkpoint: str = STR_FIELD(
+        value="",
+        description="Path to the checkpoint.",
+        display_name="Checkpoint"
+    )
+    onnx_file: str = STR_FIELD(
+        value="",
+        description="Path to the ONNX file.",
+        display_name="ONNX File"
+    )
+    on_cpu: bool = BOOL_FIELD(
+        value=False,
+        description="Export the ONNX using CPU only.",
+        display_name="ONNX_CPU"
+    )
+    input_channel: int = INT_FIELD(
+        value=3,
+        default_value=3,
+        valid_min=3,
+        valid_max=3,
+        description="Input channel.",
+        display_name="Input Channel"
+    )
+    input_width: int = INT_FIELD(
+        value=512,
+        default_value=512,
+        valid_min=512,
+        valid_max=512,
+        description="Input width.",
+        display_name="Input Width"
+    )
+    input_height: int = INT_FIELD(
+        value=512,
+        default_value=512,
+        valid_min=512,
+        valid_max=512,
+        description="Input height.",
+        display_name="Input Height"
+    )
+    opset_version: int = INT_FIELD(
+        value=16,
+        default_value=16,
+        valid_min=16,
+        valid_max=16,
+        description="ONNX opset version.",
+        display_name="Opset Version",
+        popular="16"
+    )
+    batch_size: int = INT_FIELD(
+        value=-1,
+        default_value=-1,
+        description="ONNX model batch size (-1: dynamic).",
+        display_name="ONNX Batch Size"
+    )
+    verbose: bool = BOOL_FIELD(
+        value=False,
+        description="Verbose mode.",
+        display_name="Verbose"
+    )
+    num_select: int = INT_FIELD(
+        value=100,
+        default_value=100,
+        valid_min=100,
+        valid_max=100,
+        description="Number of selected objects.",
+        display_name="Number of Selected Objects"
+    )
+    do_constant_folding: bool = BOOL_FIELD(
+        value=True,
+        description="Do constant folding on ONNX model.",
+        display_name="Constant Folding"
+    )
 
 
 @dataclass
-class CenterPoseEvalExpConfig:
+class CenterPoseEvalExpConfig(EvaluateConfig):
     """Inference experiment config."""
 
-    num_gpus: int = 1
-    results_dir: Optional[str] = None
-    checkpoint: Optional[str] = None
-    trt_engine: Optional[str] = None
-    opencv: bool = True
-    eval_num_symmetry: int = 1
+    trt_engine: str = STR_FIELD(
+        value="",
+        description="Path to the TensorRT engine.",
+        display_name="TensorRT Engine"
+    )
+    opencv: bool = BOOL_FIELD(
+        value=True,
+        description="Use OpenCV for visualization.",
+        display_name="UseOpenCV"
+    )
+    eval_num_symmetry: int = INT_FIELD(
+        value=1,
+        default_value=1,
+        valid_min=3,
+        valid_max="inf",
+        description="Number of the object symmetries used for evaluation.",
+        display_name="Number of Symmetries for Eval",
+        popular="1"
+    )
 
 
 @dataclass
-class ExperimentConfig:
+class ExperimentConfig(CommonExperimentConfig):
     """Experiment config."""
 
-    encryption_key: Optional[str] = None
-    results_dir: str = MISSING
-    dataset: CenterPoseDatasetConfig = CenterPoseDatasetConfig()
-    train: CenterPoseTrainExpConfig = CenterPoseTrainExpConfig()
-    model: CenterPoseModelConfig = CenterPoseModelConfig()
-    inference: CenterPoseInferenceExpConfig = CenterPoseInferenceExpConfig()
-    export: CenterPoseExportExpConfig = CenterPoseExportExpConfig()
-    evaluate: CenterPoseEvalExpConfig = CenterPoseEvalExpConfig()
+    dataset: CenterPoseDatasetConfig = DATACLASS_FIELD(
+        CenterPoseDatasetConfig(),
+        description="Configurable parameters to construct the dataset for a CenterPose experiment.",
+    )
+    train: CenterPoseTrainExpConfig = DATACLASS_FIELD(
+        CenterPoseTrainExpConfig(),
+        description="Configurable parameters to train the CenterPose model.",
+    )
+    model: CenterPoseModelConfig = DATACLASS_FIELD(
+        CenterPoseModelConfig(),
+        description="Configurable parameters to build the CenterPose model.",
+    )
+    inference: CenterPoseInferenceExpConfig = DATACLASS_FIELD(
+        CenterPoseInferenceExpConfig(),
+        description="Configurable parameters to run the CenterPose inference.",
+    )
+    export: CenterPoseExportExpConfig = DATACLASS_FIELD(
+        CenterPoseExportExpConfig(),
+        description="Configurable parameters to export the CenterPose ONNX model.",
+    )
+    evaluate: CenterPoseEvalExpConfig = DATACLASS_FIELD(
+        CenterPoseEvalExpConfig(),
+        description="Configurable parameters to evaluate the CenterPose model.",
+    )
+    gen_trt_engine: CenterPoseGenTrtEngineExpConfig = DATACLASS_FIELD(
+        CenterPoseGenTrtEngineExpConfig(),
+        description="Configurable parameters to generate TensorRT engine.",
+    )

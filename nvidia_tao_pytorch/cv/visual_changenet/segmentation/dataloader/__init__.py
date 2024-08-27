@@ -14,7 +14,7 @@
 
 """Visual ChangeNet dataloader module."""
 
-from .changenet_dm import CNDataModule
+from .pl_changenet_data_module import CNDataModule
 from .cn_dataset import CNDataset
 from .data_utils_cn import CDDataAugmentation
 

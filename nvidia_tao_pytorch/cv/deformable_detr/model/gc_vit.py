@@ -354,7 +354,7 @@ class GCViT(nn.Module):
             if torch.onnx.is_in_onnx_export() or not self.activation_checkpoint:
                 x, xo = level(x)
             else:
-                x, xo = checkpoint.checkpoint(level, x)
+                x, xo = checkpoint.checkpoint(level, x, use_reentrant=True)
 
             if idx in self.out_indices:
                 norm_layer = getattr(self, f'norm{idx}')

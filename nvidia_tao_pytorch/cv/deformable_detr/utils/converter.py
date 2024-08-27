@@ -162,12 +162,12 @@ class DatasetConverter(six.with_metaclass(ABCMeta, object)):
             "For the dataset_config in the experiment_spec, "
             "please use labels in the Json file, while writing the classmap.\n"
         )
-        print(note_string)
+        logger.info(note_string)
         s_logger.write(message=note_string)
 
         logger.info("Json generation complete.")
         s_logger.write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Json generation complete."
         )
 

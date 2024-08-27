@@ -227,6 +227,16 @@ class ResNet(nn.Module):
         return x
 
 
+def resnet34(norm_layer=None, replace_stride_with_dilation=None, **kwargs):
+    """ Resnet-34 model from
+        Deep Residual Learning for Image Recognition
+    Args:
+        norm_layer (nn.Module): Normalization layer to be used
+        replace_stride_with_dilation (list): list of boolean to indicate whether to replace 2x2 stride with a dilated convolution instead
+    """
+    return ResNet(block=BasicBlock, layers=[3, 4, 6, 3], norm_layer=norm_layer, replace_stride_with_dilation=replace_stride_with_dilation, **kwargs)
+
+
 def resnet50(norm_layer=None, replace_stride_with_dilation=None, **kwargs):
     """ ResNet-50 model from
         Deep Residual Learning for Image Recognition

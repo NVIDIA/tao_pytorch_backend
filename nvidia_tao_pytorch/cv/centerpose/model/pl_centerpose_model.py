@@ -14,17 +14,15 @@
 
 """ Main PTL model file for CenterPose. """
 
-from typing import Any, Dict
 import datetime
 import os
+import pytorch_lightning as pl
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
-import pytorch_lightning as pl
 
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.utils import common_utils
 
 from nvidia_tao_pytorch.cv.centerpose.model.centerpose import create_model
@@ -35,18 +33,16 @@ from nvidia_tao_pytorch.cv.centerpose.utils.centerpose_evaluator import Evaluato
 
 
 # pylint:disable=too-many-ancestors
-class CenterPosePlModel(pl.LightningModule):
+class CenterPosePlModel(TAOLightningModule):
     """ PTL module for CenterPose Model."""
 
     def __init__(self, experiment_spec):
         """Init training for CenterPose Model."""
-        super().__init__()
-        self.experiment_spec = experiment_spec
-        self.dataset_config = experiment_spec.dataset
-        self.batch_size = experiment_spec.dataset.batch_size
-        self.training_config = experiment_spec.train
-        self.infer_config = experiment_spec.inference
-        self.eval_config = experiment_spec.evaluate
+        super().__init__(experiment_spec)
+        self.batch_size = self.experiment_spec.dataset.batch_size
+        self.training_config = self.experiment_spec.train
+        self.infer_config = self.experiment_spec.inference
+        self.eval_config = self.experiment_spec.evaluate
 
         # init the model and loss functions
         self._build_criterion()
@@ -60,6 +56,8 @@ class CenterPosePlModel(pl.LightningModule):
 
         self.status_logging_dict = {}
         self.val_cp_evaluator = Evaluator(self.experiment_spec)
+
+        self.checkpoint_filename = 'centerpose_model'
 
     def _build_model(self):
         """Internal function to build the model."""
@@ -91,25 +89,22 @@ class CenterPosePlModel(pl.LightningModule):
             torch.nn.utils.clip_grad_norm_(self.model.module.parameters(), self.training_config.clip_grad_val)
         else:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.training_config.clip_grad_val)
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
 
-        return {'loss': loss}
+        return loss
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """Log Training metrics to status.json"""
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
-        training_step_outputs.clear()
 
     def on_validation_epoch_start(self) -> None:
         """
@@ -140,7 +135,7 @@ class CenterPosePlModel(pl.LightningModule):
         # Launch the evaluation
         self.val_cp_evaluator.evaluate(final_output, batch)
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         """Validation epoch end.
         Compute 3D IoU@0.5 and 2D MPE (mean pixel error) at the end of epoch.
         """
@@ -154,8 +149,17 @@ class CenterPosePlModel(pl.LightningModule):
         self.log("val_3DIoU", iou, rank_zero_only=True, sync_dist=True)
         self.log("val_2DMPE", mpe, rank_zero_only=True, sync_dist=True)
 
-        self.status_logging_dict["val_3DIoU"] = str(iou)
-        self.status_logging_dict["val_2DMPE"] = str(mpe)
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["val_3DIoU"] = str(iou)
+            self.status_logging_dict["val_2DMPE"] = str(mpe)
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+
+        pl.utilities.memory.garbage_collection_cuda()
 
     def forward(self, x):
         """Forward of the CenterPose model."""
@@ -190,7 +194,7 @@ class CenterPosePlModel(pl.LightningModule):
         # Launch the evaluation
         self.cp_evaluator.evaluate(final_output, batch)
 
-    def test_epoch_end(self, outputs):
+    def on_test_epoch_end(self):
         """Test epoch end.
         compute 3D IoU at the end of epoch
         """
@@ -208,11 +212,12 @@ class CenterPosePlModel(pl.LightningModule):
             logger.info('3D IoU: %.5f' % iou)
             logger.info('*************** 2D MPE *****************')
             logger.info('2D MPE: %.5f' % mpe)
+        self.status_logging_dict = {}
         self.status_logging_dict["test_3DIoU"] = str(iou)
         self.status_logging_dict["test_2DMPE"] = str(mpe)
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Evaluation metrics generated.",
+            message="Test metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
 
@@ -230,22 +235,9 @@ class CenterPosePlModel(pl.LightningModule):
             merged_output = self.pnp_process(merged_output)
         return merged_output
 
-    def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
+    def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx=0):
         """Predict batch end.
         save the result inferences at the end of batch
         """
         output_dir = self.experiment_spec.results_dir
         save_inference_prediction(outputs, output_dir, batch, self.infer_config)
-
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Encrpyt the checkpoint. The encryption is done in TLTCheckpointConnector."""
-        pass
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """Decrpyt the checkpoint"""
-        if checkpoint.get("state_dict_encrypted", False):
-            # Retrieve encryption key from TLTPyTorchCookbook.
-            key = TLTPyTorchCookbook.get_passphrase()
-            if key is None:
-                raise PermissionError("Cannot access model state dict without the encryption key")
-            checkpoint = patch_decrypt_checkpoint(checkpoint, key)

@@ -126,7 +126,13 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def main(cfg: ExperimentConfig) -> None:
     """Run the training process."""
     try:
-        if cfg.dataset_convert.results_dir is not None:
+        if "train_gt_file" in cfg["dataset"]:
+            if cfg["dataset"]["train_gt_file"] == "":
+                cfg["dataset"]["train_gt_file"] = None
+        if "val_gt_file" in cfg["dataset"]:
+            if cfg["dataset"]["val_gt_file"] == "":
+                cfg["dataset"]["val_gt_file"] = None
+        if cfg.dataset_convert.results_dir:
             results_dir = cfg.dataset_convert.results_dir
         else:
             results_dir = os.path.join(cfg.results_dir, "dataset_convert", "lmdb")
@@ -146,7 +152,7 @@ def main(cfg: ExperimentConfig) -> None:
                       gtFile=cfg.dataset_convert.gt_file,
                       outputPath=results_dir)
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Dataset convert finished successfully."
         )
     except (KeyboardInterrupt, SystemExit):

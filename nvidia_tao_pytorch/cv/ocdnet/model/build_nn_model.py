@@ -54,4 +54,6 @@ def build_ocd_model(experiment_config,
             state_dict = load_checkpoint(model_path, to_cpu=True)
             model.load_state_dict(state_dict, strict=False)
 
+    # Default to training mode
+    model.train()
     return model

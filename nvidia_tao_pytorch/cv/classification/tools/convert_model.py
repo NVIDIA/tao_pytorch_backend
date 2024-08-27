@@ -86,7 +86,7 @@ def main(args=None):
 
     # Defining the results directory.
     results_dir = os.path.abspath(os.path.join(args.out_file, os.pardir))
-    if results_dir is not None:
+    if results_dir:
 
         if not os.path.exists(results_dir):
             os.makedirs(results_dir)

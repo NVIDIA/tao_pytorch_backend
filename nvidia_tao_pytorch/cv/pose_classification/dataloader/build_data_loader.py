@@ -13,11 +13,13 @@
 # limitations under the License.
 
 """Build torch data loader."""
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, distributed, RandomSampler, BatchSampler
+
 from nvidia_tao_pytorch.cv.pose_classification.dataloader.skeleton_feeder import SkeletonFeeder
+from nvidia_tao_pytorch.core.distributed.comm import is_dist_avail_and_initialized
 
 
-def build_dataloader(data_path, label_map, label_path=None,
+def build_dataloader(stage, data_path, label_map, label_path=None,
                      random_choose=False, random_move=False,
                      window_size=-1, debug=False, mmap=True,
                      batch_size=1, shuffle=False,
@@ -54,10 +56,22 @@ def build_dataloader(data_path, label_map, label_path=None,
                              debug=debug,
                              mmap=mmap)
 
-    dataloader = DataLoader(dataset=dataset,
-                            batch_size=batch_size,
-                            shuffle=shuffle,
-                            num_workers=num_workers,
-                            pin_memory=pin_mem)
+    if stage in ("train", None):
+        if is_dist_avail_and_initialized():
+            train_sampler = distributed.DistributedSampler(dataset, shuffle=True)
+        else:
+            train_sampler = RandomSampler(dataset)
+
+        dataloader = DataLoader(dataset=dataset,
+                                num_workers=num_workers,
+                                pin_memory=pin_mem,
+                                batch_sampler=BatchSampler(train_sampler, batch_size, drop_last=True))
+
+    if stage in ("val", "test", "predict", None):
+        dataloader = DataLoader(dataset=dataset,
+                                batch_size=batch_size,
+                                shuffle=shuffle,
+                                num_workers=num_workers,
+                                pin_memory=pin_mem)
 
     return dataloader

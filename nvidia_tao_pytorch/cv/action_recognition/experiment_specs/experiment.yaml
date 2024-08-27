@@ -1,4 +1,4 @@
-results_dir: /results/rgb_2d
+results_dir: /results/rgb_3d_ptm
 encryption_key: nvidia_tao
 model:
   model_type: rgb
@@ -32,17 +32,13 @@ train:
     lr_scheduler: MultiStep
     lr_steps: [5, 15, 20]
     lr_decay: 0.1
-  num_epochs: 20
+  num_epochs: 1
   checkpoint_interval: 1
-  results_dir: "${results_dir}/train"
 evaluate:
   checkpoint: "??"
   test_dataset_dir: "??"
-  results_dir: "${results_dir}/evaluate"
-export:
-  checkpoint: "??"
-  results_dir: "${results_dir}/export"
 inference:
   checkpoint: "??"
   inference_dataset_dir: "??"
-  results_dir: "${results_dir}/inference"
+export:
+  checkpoint: "??"

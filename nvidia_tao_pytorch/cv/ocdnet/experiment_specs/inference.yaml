@@ -4,7 +4,7 @@ model:
 
 inference:
   checkpoint: '/results/train/model_best.pth'
-  input_folder: /workspace/datasets/ICDAR2015/datasets/test/img
+  input_folder: /data/ocdnet/test/img
   width: 1280
   height: 736
   img_mode: BGR

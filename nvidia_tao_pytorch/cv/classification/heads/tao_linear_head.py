@@ -20,6 +20,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from mmpretrain.registry import MODELS
 from mmpretrain.models.heads import ClsHead
@@ -41,6 +42,7 @@ class TAOLinearClsHead(ClsHead):
     """
 
     def __init__(self,
+                 binary,
                  num_classes,
                  in_channels,
                  head_init_scale=None,
@@ -55,12 +57,21 @@ class TAOLinearClsHead(ClsHead):
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.head_init_scale = head_init_scale
+        self.binary = binary
 
         if self.num_classes <= 0:
             raise ValueError(
                 f'num_classes={num_classes} must be a positive integer')
 
-        self.fc = nn.Linear(self.in_channels, self.num_classes)
+        if self.num_classes != 2 and self.binary:
+            raise ValueError(
+                f'Only support binary head when num_classes == 2, Got num_classes == {self.num_classes}'
+            )
+
+        if self.binary:
+            self.fc = nn.Linear(self.in_channels, 1)
+        else:
+            self.fc = nn.Linear(self.in_channels, self.num_classes)
         if head_init_scale:
             self.fc.weight.data.mul_(head_init_scale)
             self.fc.bias.data.mul_(head_init_scale)
@@ -133,3 +144,35 @@ class TAOLinearClsHead(ClsHead):
         cls_score = self.fc(pre_logits)
 
         return cls_score
+
+    def _get_predictions(self, cls_score, data_samples):
+        """Post-process the output of head.
+        Overwrite the _get_predictions for binary classification purpose
+        """
+        if self.binary:
+            # default threshold set to 0.5 for binary classification
+            pred_scores = F.sigmoid(cls_score)
+
+            # transform binary to two neurons output to fit the format requirement in
+            # Inferencer visualization method - self.visualizer.visualize_cls
+            pred_scores = torch.cat((1.0 - pred_scores, pred_scores), dim=1)
+
+            # pred_labels = pred_scores.gt(0.5).int().detach()
+        else:
+            pred_scores = F.softmax(cls_score, dim=1)
+
+        pred_labels = pred_scores.argmax(dim=1, keepdim=True).detach()
+
+        out_data_samples = []
+        if data_samples is None:
+            data_samples = [None for _ in range(pred_scores.size(0))]
+
+        for data_sample, score, label in zip(data_samples, pred_scores,
+                                             pred_labels):
+            if data_sample is None:
+                data_sample = DataSample()
+
+            data_sample.set_pred_score(score).set_pred_label(label)
+            out_data_samples.append(data_sample)
+
+        return out_data_samples
