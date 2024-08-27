@@ -46,11 +46,6 @@ RUN pip uninstall -y jupyterlab \
   && rm requirements-pip.txt \
   && mim install "mmengine==0.10.4" "mmpretrain>=1.0.0rc8"
 
-  COPY tao-core tao-core
-  RUN cd tao-core && bash release/python/build_wheel.sh && \
-      find dist/ -name "nvidia_tao_core*.whl" -type f | xargs -n 1 pip install && \
-      rm -rf *
-
 ENV FORCE_CUDA="1"
 RUN mkdir mmcv_src && \
   cd mmcv_src && \

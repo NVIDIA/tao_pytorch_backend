@@ -29,11 +29,6 @@ COPY release/docker/entrypoint.d/* /opt/nvidia/entrypoint.d/
 # Copying tlt-converter and building it in the docker.
 ENV TRT_LIB_PATH="/usr/lib/x86_64-linux-gnu"
 ENV TRT_INCLUDE_PATH="/usr/include/x86_64-linux-gnu"
-COPY tao-converter /opt/nvidia/tools
-WORKDIR /opt/nvidia/tools
-RUN make \
-    && rm -rf Makefile *.cc *.h *.o
-RUN ln -s tao-converter converter
 
 ENV NVIDIA_PRODUCT_NAME "TAO Toolkit"
 ENV TAO_TOOLKIT_VERSION="5.2.0"
