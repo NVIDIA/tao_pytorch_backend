@@ -39,7 +39,7 @@ mypy==1.8.0
 mypy-extensions==1.0.0
 natsort==8.4.0
 ninja==1.11.1.1
-nltk==3.8.1
+nltk==3.9
 nvidia-eff==0.6.5
 nvidia-eff-tao-encryption==0.1.8
 numpy==1.24.4
