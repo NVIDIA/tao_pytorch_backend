@@ -16,4 +16,4 @@ iopath==0.1.9
 jmespath==0.10.0
 s3transfer==0.10.0
 pathspec==0.12.1
-black==22.3.0
+black==24.3.0
