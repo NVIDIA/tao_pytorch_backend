@@ -445,7 +445,7 @@ class FAN(BaseModule):
         for idx, blk in enumerate(self.blocks):
             blk.H, blk.W = Hp, Wp
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
             else:
                 x = blk(x)
             Hp, Wp = blk.H, blk.W

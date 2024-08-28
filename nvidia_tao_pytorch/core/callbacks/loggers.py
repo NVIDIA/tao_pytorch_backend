@@ -77,7 +77,7 @@ class TAOStatusLogger(Callback):
         # Make sure that the status logger obtained is always
         # an instance of iva.common.logging.logging.StatusLogger.
         # Otherwise, this data get's rendered in stdout.
-        if isinstance(logger, StatusLogger):
+        if isinstance(get_status_logger(), StatusLogger):
             self.logger = logger
         else:
             self.logger = StatusLogger(
@@ -113,7 +113,6 @@ class TAOStatusLogger(Callback):
 
     def on_train_epoch_end(self, trainer, pl_module):
         """Collect data at the end of an epoch."""
-        self.epoch_counter += 1
         data = {}
         data["epoch"] = self.epoch_counter
         data["max_epoch"] = self.max_epochs
@@ -122,6 +121,7 @@ class TAOStatusLogger(Callback):
         eta = (self.max_epochs - self.epoch_counter) * time_per_epoch
         data["time_per_epoch"] = str(timedelta(seconds=time_per_epoch))
         data["eta"] = str(timedelta(seconds=eta))
+        self.epoch_counter += 1
         self.logger.write(data=data, message="Training loop in progress")
 
     def on_train_end(self, trainer, pl_module):

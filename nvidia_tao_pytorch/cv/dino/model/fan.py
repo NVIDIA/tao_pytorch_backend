@@ -380,7 +380,7 @@ class FAN(nn.Module):
             if torch.onnx.is_in_onnx_export() or not self.activation_checkpoint:
                 x = blk(x)
             else:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
 
             Hp, Wp = blk.H, blk.W
 

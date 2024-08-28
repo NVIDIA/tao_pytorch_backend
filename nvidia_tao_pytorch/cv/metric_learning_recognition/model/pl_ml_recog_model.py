@@ -22,16 +22,18 @@ import numpy as np
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_only
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
+from nvidia_tao_pytorch.cv.metric_learning_recognition.utils.match_finder import EmbeddingKNN
 from pytorch_metric_learning import losses, miners, testers
 from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
+from pytorch_metric_learning.utils.inference import InferenceModel
 
 from nvidia_tao_pytorch.cv.metric_learning_recognition.model.build_nn_model import build_model
-from nvidia_tao_pytorch.cv.metric_learning_recognition.dataloader.build_data_loader import build_dataloader
 from nvidia_tao_pytorch.cv.re_identification.lr_schedulers.warmup_multi_step_lr import WarmupMultiStepLR
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 
-class MLRecogModel(pl.LightningModule):
+class MLRecogModel(TAOLightningModule):
     """PTL module for single stream Metric Learning Recognition. The training
     process is to minimize the distances between the embeddings of the same class
     and maximize the distances between the embeddings of different classes. The
@@ -40,7 +42,7 @@ class MLRecogModel(pl.LightningModule):
     only supports running on a single GPU.
     """
 
-    def __init__(self, experiment_spec, results_dir, subtask="train"):
+    def __init__(self, experiment_spec, results_dir, dm, subtask="train"):
         """Initializes training for Metric Learning Recognition model.
 
         Args:
@@ -48,18 +50,18 @@ class MLRecogModel(pl.LightningModule):
             results_dir (String): Path to save results
             subtask (String): The purpose of the model. Can be "train", "evaluate", "export", "inference" only
         """
-        super().__init__()
-        self.experiment_spec = experiment_spec
+        super().__init__(experiment_spec)
         self.results_dir = results_dir
         self.subtask = subtask
+        self.dm = dm
 
-        self.status_logging_dict = {"train_loss": 0.0,
-                                    "val Precision at Rank 1": 0.0}
+        self.status_logging_dict = {}
 
         if subtask == "train":
             checkpoint = self.experiment_spec["train"]["resume_training_checkpoint_path"]
         elif subtask in ("evaluate", "export", "inference"):
             checkpoint = self.experiment_spec[subtask]["checkpoint"]
+            self.topk = self.experiment_spec["inference"]["topk"]
         if checkpoint:
             # Failure should always be caught before or after this warning
             if not os.path.exists(checkpoint):
@@ -68,7 +70,7 @@ class MLRecogModel(pl.LightningModule):
                 checkpoint_to_load = True
         else:
             checkpoint_to_load = False
-        self._build_model(experiment_spec, checkpoint_to_load=checkpoint_to_load)
+        self._build_model(checkpoint_to_load)
         # Activates manual optimization
         self.automatic_optimization = False
         if self.subtask == "train":
@@ -76,12 +78,9 @@ class MLRecogModel(pl.LightningModule):
                 message="Preparing for training",
                 status_level=status_logging.Status.RUNNING)
             self.my_loss_func = self.__make_loss(experiment_spec)
-            (self.train_loader, self.query_loader, self.gallery_loader,
-                self.dataset_dict) = build_dataloader(
-                    cfg=self.experiment_spec,
-                    mode="train")
-            self.class_dict = self.dataset_dict["query"].class_dict
             self.load_tester()
+
+        self.checkpoint_filename = 'ml_model'
 
     def load_tester(self):
         """Loads a `pytorch_metric_learning.testers.GlobalTwoStreamEmbeddingSpaceTester` to prepare for gallery-query similarity search evaluation."""
@@ -91,26 +90,18 @@ class MLRecogModel(pl.LightningModule):
         self.tester = testers.GlobalEmbeddingSpaceTester(
             batch_size=self.experiment_spec["train"]["val_batch_size"],
             end_of_testing_hook=end_test_hook,
-            dataloader_num_workers=self.experiment_spec["dataset"]["workers"],
+            dataloader_num_workers=self.dataset_config["workers"],
             accuracy_calculator=AccuracyCalculator(
                 k="max_bin_count",
                 return_per_class=self.experiment_spec[self.subtask]["report_accuracy_per_class"]),
         )
 
-    def _build_model(self, experiment_spec, checkpoint_to_load=False):
+    def _build_model(self, checkpoint_to_load=False):
         self.model = build_model(
-            experiment_spec,
+            self.experiment_spec,
             checkpoint_to_load=checkpoint_to_load)
         if self.subtask != "train":
             self.model.eval()
-
-    def train_dataloader(self):
-        """Builds the dataloader for training.
-
-        Returns:
-            train_loader (torch.utils.data.Dataloader): Traininig Data.
-        """
-        return self.train_loader
 
     def configure_optimizers(self):
         """Configure optimizers for training.
@@ -185,16 +176,17 @@ class MLRecogModel(pl.LightningModule):
         """
         data, labels = batch
         data = data.float()
+        batch_size = data.shape[0]
         opt1, opt2 = self.optimizers()
         self.optimizer_dict = {'trunk': opt1, "embedder": opt2}
         self._zero_grad()
         outputs = self.model(data)
         loss = self.my_loss_func(outputs, labels)
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
         self.log("trunk_base_lr", self.schedulers["trunk"].get_lr()[0],
-                 on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+                 on_step=True, on_epoch=False, prog_bar=True)
         self.log("embedder_base_lr", self.schedulers["embedder"].get_lr()[0],
-                 on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+                 on_step=True, on_epoch=False, prog_bar=True)
         self.manual_backward(loss)
         # clip gradients
         for opt in self.optimizer_dict.values():
@@ -221,21 +213,18 @@ class MLRecogModel(pl.LightningModule):
             epoch_log = self.current_epoch
         else:
             epoch_log = "eval mode"
-        all_accuracies = self.tester.test(self.dataset_dict,
+        all_accuracies = self.tester.test(self.dm.dataset_dict,
                                           epoch_log,  # used for logging
                                           self.model,  # your model
                                           splits_to_eval=[('query', ['gallery'])]
                                           )
         return all_accuracies
 
-    def on_train_epoch_end(self):
-        """Action on training epoch end."""
-        self._step_schedulers()
-
     @rank_zero_only
-    def update_validation_metrics(self):
+    def update_validation_metrics(self, report_acc_per_class, test=False):
         """Updates the validation metrics at the end of each validation epoch."""
         all_accuracies = self.get_query_accuracy()
+        # df = self.report_accuracies(all_acc, save_results=True)
         ami = all_accuracies['query']['AMI_level0']
         nmi = all_accuracies['query']['NMI_level0']
         mean_avg_prec = all_accuracies['query']['mean_average_precision_level0']
@@ -243,65 +232,136 @@ class MLRecogModel(pl.LightningModule):
         mean_r_precision = all_accuracies['query']['r_precision_level0']
         val_accuracy = all_accuracies['query']['precision_at_1_level0']
 
-        self.status_logging_dict['val_AMI'] = ami
-        self.status_logging_dict['val_NMI'] = nmi
-        if self.experiment_spec['train']['report_accuracy_per_class']:
-            self.status_logging_dict['val Mean Average Precision'] = sum(mean_avg_prec) / len(mean_avg_prec)
-            self.status_logging_dict['val Mean Reciprocal Rank'] = sum(mean_reciprocal_rank) / len(mean_reciprocal_rank)
-            self.status_logging_dict['val r-Precision'] = sum(mean_r_precision) / len(mean_r_precision)
-            self.status_logging_dict['val Precision at Rank 1'] = sum(val_accuracy) / len(val_accuracy)
+        if test:
+            prefix = "test"
+        else:
+            prefix = "val"
+
+        self.status_logging_dict = {}
+        self.status_logging_dict[f'{prefix}_AMI'] = ami
+        self.status_logging_dict[f'{prefix}_NMI'] = nmi
+        if report_acc_per_class:
+            self.status_logging_dict[f'{prefix} Mean Average Precision'] = sum(mean_avg_prec) / len(mean_avg_prec)
+            self.status_logging_dict[f'{prefix} Mean Reciprocal Rank'] = sum(mean_reciprocal_rank) / len(mean_reciprocal_rank)
+            self.status_logging_dict[f'{prefix} r-Precision'] = sum(mean_r_precision) / len(mean_r_precision)
+            self.status_logging_dict[f'{prefix} Precision at Rank 1'] = sum(val_accuracy) / len(val_accuracy)
 
         else:
-            self.status_logging_dict['val Mean Average Precision'] = mean_avg_prec
-            self.status_logging_dict['val Mean Reciprocal Rank'] = mean_reciprocal_rank
-            self.status_logging_dict['val r-Precision'] = mean_r_precision
-            self.status_logging_dict['val Precision at Rank 1'] = val_accuracy
+            self.status_logging_dict[f'{prefix} Mean Average Precision'] = mean_avg_prec
+            self.status_logging_dict[f'{prefix} Mean Reciprocal Rank'] = mean_reciprocal_rank
+            self.status_logging_dict[f'{prefix} r-Precision'] = mean_r_precision
+            self.status_logging_dict[f'{prefix} Precision at Rank 1'] = val_accuracy
+
+        if not self.trainer.sanity_checking:
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            if test:
+                status_logging.get_status_logger().write(
+                    message="Test metrics generated.",
+                    status_level=status_logging.Status.RUNNING
+                )
+            else:
+                status_logging.get_status_logger().write(
+                    message="Eval metrics generated.",
+                    status_level=status_logging.Status.RUNNING
+                )
 
         # print out validation results
-        print("============================================")
-        print(f"Validation results at epoch {self.current_epoch}:")
+        print("******************* Evaluation results **********************")
+        print(f"Results at epoch {self.current_epoch}:")
         for k, v in self.status_logging_dict.items():
-            if "val" in k:
+            if "val" in k or "test" in k:
                 print(f"{k}: {v:.4f}")
 
-        if self.experiment_spec['train']['report_accuracy_per_class']:
-            print("\nValidation results per class:")
+        if report_acc_per_class:
+            print("\n******************* Accuracy per class **********************")
             for k, v in all_accuracies['query'].items():
                 if "level" in k:
                     if isinstance(v, list):
                         print(f"  {k[:-7]}:")
                         for i, vv in enumerate(v):
-                            print(f"    {self.class_dict[i]}: {vv:.4f}")
+                            print(f"    {self.dm.class_dict[i]}: {vv:.4f}")
         print("============================================")
 
-    def training_epoch_end(self, training_step_outputs):
+        pl.utilities.memory.garbage_collection_cuda()
+
+    def on_train_epoch_end(self):
         """Generates train and validation metrics and the end of training epoch.
 
         training_step_outputs (List[Dict[str, torch.Tensor]]): List of outputs from training_step.
         """
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
         report_loss = np.around(average_train_loss, decimals=4)
         report_trunk_lr = '{:.4e}'.format(self.schedulers['trunk'].get_lr()[0])
         report_embedder_lr = '{:.4e}'.format(self.schedulers['embedder'].get_lr()[0])
 
+        # validation_epoch_end does not work here. Manually set it up.
+        # add one to match the checkpoint saving epochs
+        if (self.current_epoch + 1) % self.experiment_spec['train']['checkpoint_interval'] == 0:
+            self.update_validation_metrics(self.experiment_spec['train']['report_accuracy_per_class'])
+
+        self.status_logging_dict = {}
         self.status_logging_dict['train_loss'] = report_loss
         self.status_logging_dict['trunk_base_lr'] = report_trunk_lr
         self.status_logging_dict['embedder_base_lr'] = report_embedder_lr
 
-        # validation_epoch_end does not work here. Manually set it up.
-        # add one to match the checkpoint saving epochs
-        if (self.current_epoch + 1) % self.experiment_spec['train']['checkpoint_interval'] == 0:
-            self.update_validation_metrics()
-
         # status loggings are rank zero only
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and eval metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
+
+    def on_test_epoch_start(self):
+        """Test epoch start"""
+        self.load_tester()
+
+    def test_step(self, batch):
+        """Test step"""
+        # Although this function does nothing, it is necessary for Trainer.test() to not error
+        return
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        self.update_validation_metrics(self.experiment_spec["evaluate"]["report_accuracy_per_class"], test=True)
+
+    def on_predict_epoch_start(self):
+        """Predict epoch start"""
+        infernce_knn_func = EmbeddingKNN(reset_before=False,
+                                         reset_after=False)
+        self.inference_model = InferenceModel(self.model,
+                                              knn_func=infernce_knn_func)
+        self.inference_model.train_knn(self.dm.dataset_dict["gallery"])
+        self.csv_f = os.path.join(self.results_dir, 'result.csv')
+
+        if os.path.exists(self.csv_f):
+            os.remove(self.csv_f)
+
+    def predict_step(self, batch):
+        """Predict step"""
+        distances, indices = self.inference_model.get_nearest_neighbors(
+            batch[0], k=self.topk)
+        class_indices = [self.dm.dataset_dict["gallery"][i][1] for i in indices.flatten()]
+        class_labels = np.array([self.dm.class_dict[idx] for idx in
+                                class_indices]).reshape(len(batch[0]), -1)
+        df = pd.DataFrame(zip(list(batch[1]), class_labels.tolist(), distances.tolist()))
+
+        return df
+
+    def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx=0):
+        """Writes results to a csv file
+        """
+        outputs.to_csv(self.csv_f, header=False, index=False, mode='a')
+
+    def on_predict_epoch_end(self):
+        """Infers all images in an image folder or a classification folder.
+
+        Returns:
+            final_df (pd.DataFrame): a table displaying image file path,
+                top k predicted classes, topk distances
+        """
+        status_logging.get_status_logger().write(
+            message=f"result saved at {self.csv_f}",
+            status_level=status_logging.Status.RUNNING)
 
     def _step_optimizers(self):
         for v in self.optimizer_dict.values():
@@ -315,10 +375,6 @@ class MLRecogModel(pl.LightningModule):
         self.model.zero_grad()
         for v in self.optimizer_dict.values():
             v.zero_grad()
-
-    def on_train_epoch_start(self):
-        """Perform on start of every epoch."""
-        print('\n')
 
     def forward(self, x):
         """Forward of the Metric Learning Recognition model.
@@ -347,6 +403,7 @@ class MLRecogModel(pl.LightningModule):
 
         return calculate_loss
 
+    # TODO @seanf: cc reports this is never used
     def report_accuracies(self, acc_dict, save_results=False):
         """Converts the metrics results map to a pd.DataFrame table to display
         top1 precisions of all classes.
@@ -362,9 +419,9 @@ class MLRecogModel(pl.LightningModule):
         """
         output = defaultdict(dict)
         count = 0
-        for idx in self.class_dict:
-            class_name = self.class_dict[idx]
-            if class_name in self.dataset_dict["query"].empty_classes:
+        for idx in self.dm.class_dict:
+            class_name = self.dm.class_dict[idx]
+            if class_name in self.dm.dataset_dict["query"].empty_classes:
                 output[class_name]['top1_acc'] = None
                 count += 1
             else:

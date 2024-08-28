@@ -621,7 +621,7 @@ class BasicLayer(nn.Module):
         """Forward function"""
         for blk in self.blocks:
             if not torch.jit.is_scripting() and self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
             else:
                 x = blk(x)
         if self.downsample is not None:

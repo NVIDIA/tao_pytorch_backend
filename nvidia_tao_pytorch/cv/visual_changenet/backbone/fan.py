@@ -465,7 +465,7 @@ class FAN(nn.Module):
         for idx, blk in enumerate(self.blocks):
             blk.H, blk.W = Hp, Wp
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
             else:
                 x = blk(x)
             Hp, Wp = blk.H, blk.W
@@ -556,10 +556,8 @@ def _create_fan(variant, pretrained=False, default_cfg=None, **kwargs):
     return model
 
 
-# FAN-Hybrid Models
 # FANHybrid-T
-# @register_model
-def fan_tiny_8_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
+def fan_tiny_8_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Tiny"""
     depth = 8
     model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
@@ -569,15 +567,14 @@ def fan_tiny_8_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
         patch_size=16, in_chans=3, embed_dim=192, depth=depth,  out_idx=7, feat_downsample=False,
         num_heads=8, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
         act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
-        num_classes=num_classes, img_size=img_size)  # sharpen_attn=False,
+        num_classes=num_classes)
 
-    model = _create_fan('fan_tiny_8_p16_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)  # sr_ratio=sr_ratio,
+    model = _create_fan('fan_tiny_8_p16_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
     return model
 
 
 # FANHybrid-S
-# @register_model
-def fan_small_12_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
+def fan_small_12_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Small"""
     depth = 10
     model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
@@ -587,15 +584,14 @@ def fan_small_12_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
         patch_size=16, in_chans=3, embed_dim=384, depth=depth,  out_idx=9, feat_downsample=False,
         num_heads=8, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
         act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
-        num_classes=num_classes, img_size=img_size)  # sharpen_attn=False,
+        num_classes=num_classes)
 
-    model = _create_fan('fan_small_12_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)  # sr_ratio=sr_ratio,
+    model = _create_fan('fan_small_12_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
     return model
 
 
 # FANHybrid-B
-# @register_model
-def fan_base_16_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
+def fan_base_16_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Base"""
     depth = 16
     model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
@@ -605,15 +601,14 @@ def fan_base_16_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
         patch_size=16, in_chans=3, embed_dim=448, depth=depth,  out_idx=15, feat_downsample=False,
         num_heads=8, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
         act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
-        num_classes=num_classes, img_size=img_size)  # sharpen_attn=False,
+        num_classes=num_classes)
 
-    model = _create_fan('fan_base_16_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)  # sr_ratio=sr_ratio,
+    model = _create_fan('fan_base_16_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
     return model
 
 
 # FANHybrid-L
-# @register_model
-def fan_large_16_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
+def fan_large_16_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Large"""
     depth = 22
     model_args = dict(depths=[3, 5], dims=[128, 256, 512, 1024], use_head=False)
@@ -623,9 +618,9 @@ def fan_large_16_p4_hybrid(num_classes, img_size, pretrained=False, **kwargs):
         patch_size=16, in_chans=3, embed_dim=480, depth=depth,  out_idx=18, feat_downsample=False,
         num_heads=10, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
         act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
-        num_classes=num_classes, img_size=img_size)  # sharpen_attn=False,
+        num_classes=num_classes)
 
-    model = _create_fan('fan_large_16_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)  # sr_ratio=sr_ratio,
+    model = _create_fan('fan_large_16_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
     return model
 
 

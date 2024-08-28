@@ -14,22 +14,21 @@
 
 """Main PTL model file for pose classification."""
 
-from typing import Any, Dict
+import numpy as np
 import pytorch_lightning as pl
+from tabulate import tabulate
 import torch
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
 import torchmetrics
 
-from nvidia_tao_pytorch.cv.pose_classification.dataloader.build_data_loader import build_dataloader
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 from nvidia_tao_pytorch.cv.pose_classification.model.build_nn_model import build_pc_model
-from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import patch_decrypt_checkpoint
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 
 # pylint:disable=too-many-ancestors
-class PoseClassificationModel(pl.LightningModule):
+class PoseClassificationModel(TAOLightningModule):
     """PyTorch Lightning module for single stream pose classification."""
 
     def __init__(self, experiment_spec, export=False):
@@ -40,23 +39,19 @@ class PoseClassificationModel(pl.LightningModule):
             experiment_spec (dict): The experiment specifications.
             export (bool, optional): If set to True, the model is prepared for export. Defaults to False.
         """
-        super().__init__()
-        self.experiment_spec = experiment_spec
-        self.model_config = experiment_spec["model"]
-        self.dataset_config = experiment_spec["dataset"]
+        super().__init__(experiment_spec)
 
         # init the model
-        self._build_model(experiment_spec, export)
+        self._build_model(export)
 
         self.train_accuracy = torchmetrics.Accuracy()
         self.val_accuracy = torchmetrics.Accuracy()
 
-        self.status_logging_dict = {"train_loss": 0.0,
-                                    "train_acc": 0.0,
-                                    "val_loss": 0.0,
-                                    "val_acc": 0.0}
+        self.status_logging_dict = {}
 
-    def _build_model(self, experiment_spec, export):
+        self.checkpoint_filename = 'pc_model'
+
+    def _build_model(self, export):
         """
         Internal function to build the model.
 
@@ -64,45 +59,9 @@ class PoseClassificationModel(pl.LightningModule):
             experiment_spec (dict): The experiment specifications.
             export (bool): If set to True, the model is prepared for export.
         """
-        self.model = build_pc_model(experiment_config=experiment_spec,
+        self.model = build_pc_model(experiment_config=self.experiment_spec,
                                     export=export)
         print(self.model)
-
-    def train_dataloader(self):
-        """
-        Build the dataloader for training.
-
-        Returns:
-            DataLoader: The dataloader for training.
-        """
-        train_loader = \
-            build_dataloader(data_path=self.dataset_config["train_dataset"]["data_path"],
-                             label_path=self.dataset_config["train_dataset"]["label_path"],
-                             label_map=self.dataset_config["label_map"],
-                             random_choose=self.dataset_config["random_choose"],
-                             random_move=self.dataset_config["random_move"],
-                             window_size=self.dataset_config["window_size"],
-                             mmap=True,
-                             batch_size=self.dataset_config["batch_size"],
-                             shuffle=False,
-                             num_workers=self.dataset_config["num_workers"],
-                             pin_mem=False)
-        return train_loader
-
-    def val_dataloader(self):
-        """
-        Build the dataloader for validation.
-
-        Returns:
-            DataLoader: The dataloader for validation.
-        """
-        val_loader = \
-            build_dataloader(data_path=self.dataset_config["val_dataset"]["data_path"],
-                             label_path=self.dataset_config["val_dataset"]["label_path"],
-                             label_map=self.dataset_config["label_map"],
-                             batch_size=self.dataset_config["batch_size"],
-                             num_workers=self.dataset_config["num_workers"])
-        return val_loader
 
     def configure_optimizers(self):
         """
@@ -154,32 +113,31 @@ class PoseClassificationModel(pl.LightningModule):
             Tensor: The computed loss.
         """
         data, label = batch
+        batch_size = data.shape[0]
         output = self.model(data)
         loss = F.cross_entropy(output, label)
         self.train_accuracy.update(output, label)
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train_acc@1", self.train_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("train_acc_1", self.train_accuracy, on_step=True, on_epoch=False, prog_bar=True)
 
         return loss
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """
         Log Training metrics to status.json at the end of the epoch.
 
         Args:
             training_step_outputs (list): List of outputs from each training step.
         """
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
         self.status_logging_dict["train_acc"] = self.train_accuracy.compute().item()
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
 
@@ -195,27 +153,95 @@ class PoseClassificationModel(pl.LightningModule):
             Tensor: The computed loss.
         """
         data, label = batch
+        batch_size = data.shape[0]
         output = self.model(data)
         loss = F.cross_entropy(output, label)
         self.val_accuracy.update(output, label)
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val_acc@1", self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("val_acc@1", self.val_accuracy, on_step=True, on_epoch=False, prog_bar=True)
+
         return loss
 
-    def validation_epoch_end(self, validation_step_outputs):
+    def on_validation_epoch_end(self):
         """
         Log Validation metrics to status.json at the end of the epoch.
 
         Args:
             validation_step_outputs (list): List of outputs from each validation step.
         """
-        average_val_loss = 0.0
-        for out in validation_step_outputs:
-            average_val_loss += out.item()
-        average_val_loss /= len(validation_step_outputs)
+        average_val_loss = self.trainer.logged_metrics["val_loss"].item()
 
-        self.status_logging_dict["val_loss"] = average_val_loss
-        self.status_logging_dict["val_acc"] = self.val_accuracy.compute().item()
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["val_loss"] = average_val_loss
+            self.status_logging_dict["val_acc"] = self.val_accuracy.compute().item()
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+
+        pl.utilities.memory.garbage_collection_cuda()
+
+    def on_test_epoch_start(self):
+        """Test epoch start"""
+        self.label_map = self.dataset_config["label_map"]
+        num_classes = len(self.label_map.keys())
+        self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int32)
+
+    def test_step(self, batch, batch_idx):
+        """Test step"""
+        data, label = batch
+        batch_size = len(data)
+        cls_scores = self.model(data)
+        pred_id = torch.argmax(cls_scores, dim=1).cpu().numpy()
+        for idx in range(batch_size):
+            self.confusion_matrix[label[idx].item(), pred_id[idx]] += 1
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        percentage_confusion_matrix, accuracy, m_accuracy = self.compute_metrics(self.confusion_matrix)
+        table = []
+        id2name = {v: k for k, v in self.label_map.items()}
+        for idx in range(len(self.label_map)):
+            cls_acc = percentage_confusion_matrix[idx][idx]
+            table.append(["Class accuracy: " + id2name[idx], cls_acc])
+        table.append(["Total accuracy", accuracy])
+        table.append(["Average class accuracy", m_accuracy])
+        status_logging.get_status_logger().kpi = {"accuracy": round(accuracy, 2), "avg_accuracy": round(m_accuracy, 2)}
+        status_logging.get_status_logger().write(
+            message="Test metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
+        print(tabulate(table, headers=["Name", "Score"], floatfmt=".4f", tablefmt="fancy_grid"))
+
+        self.confusion_matrix = []
+
+    def on_predict_epoch_start(self):
+        """Predict epoch start"""
+        label_map = self.dataset_config["label_map"]
+        self.id2name = {v: k for k, v in label_map.items()}
+        self.results = []
+
+    def predict_step(self, batch, batch_idx):
+        """Predict step"""
+        data, _ = batch
+        cls_scores = self.model(data)
+        pred_id = torch.argmax(cls_scores, dim=1).cpu().numpy()
+        pred_name = []
+        for label_idx in pred_id:
+            pred_name.append(self.id2name[label_idx])
+        self.results.extend(pred_name)
+
+    def on_predict_epoch_end(self):
+        """Predict epoch end"""
+        # save the output
+        output_file = open(self.experiment_spec["inference"]["output_file"], "w")
+        for idx in range(len(self.results)):
+            output_file.write("{}\n".format(self.results[idx]))
+        output_file.close()
+
+        self.results = []
 
     def forward(self, x):
         """
@@ -230,28 +256,35 @@ class PoseClassificationModel(pl.LightningModule):
         output = self.model(x)
         return output
 
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+    def compute_metrics(self, confusion_matrix):
         """
-        Encrypt the checkpoint. The encryption is done in TLTCheckpointConnector.
+        Compute evaluation metrics based on the confusion matrix.
+
+        This function computes the percentage confusion matrix, accuracy, and average class accuracy
+        from the provided confusion matrix.
 
         Args:
-            checkpoint (dict): The checkpoint to save.
-        """
-        pass
+            confusion_matrix (np.ndarray): The confusion matrix of shape (num_classes, num_classes).
 
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        Returns:
+            np.ndarray: The percentage confusion matrix of the same shape as the input matrix.
+            float: The overall accuracy.
+            float: The average class accuracy.
         """
-        Decrypt the checkpoint.
+        row_sum = np.sum(confusion_matrix, axis=1)
+        _shape = confusion_matrix.shape
+        percentage_confusion_matrix = np.zeros(
+            _shape, dtype=np.float32)
+        for x in range(_shape[0]):
+            for y in range(_shape[1]):
+                if not row_sum[x] == 0:
+                    percentage_confusion_matrix[x][y] = np.float32(confusion_matrix[x][y]) / \
+                        row_sum[x] * 100.0
 
-        Args:
-            checkpoint (dict): The checkpoint to load.
+        trace = np.trace(confusion_matrix)
+        percent_trace = np.trace(percentage_confusion_matrix)
 
-        Raises:
-            PermissionError: If the checkpoint is encrypted and the encryption key is not available.
-        """
-        if checkpoint.get("state_dict_encrypted", False):
-            # Retrieve encryption key from TLTPyTorchCookbook.
-            key = TLTPyTorchCookbook.get_passphrase()
-            if key is None:
-                raise PermissionError("Cannot access model state dict without the encryption key")
-            checkpoint = patch_decrypt_checkpoint(checkpoint, key)
+        accuracy = float(trace) / np.sum(confusion_matrix) * 100.0
+        m_accuracy = percent_trace / _shape[0]
+
+        return percentage_confusion_matrix, accuracy, m_accuracy

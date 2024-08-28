@@ -107,13 +107,13 @@ def build_model_and_optimizer(
     epoch = 0
     it = 0.
     opt_state = None
-    if resume_training_checkpoint_path is not None:
+    if resume_training_checkpoint_path:
         # Case 1: resume an interrupted training
         model, opt_state, epoch, it = load_checkpoint(
             resume_training_checkpoint_path, key, to_cpu
         )
         logger.info(f"Model resumed from: {resume_training_checkpoint_path}")
-    elif pruned_model_path is not None:
+    elif pruned_model_path:
         # Case 2: retrain a possibly pruned model
         # No optimizer states in pruned model
         model = load_checkpoint(pruned_model_path, key, to_cpu)[0]
@@ -122,7 +122,7 @@ def build_model_and_optimizer(
         # Case 3: Build a new model from scratch
         model = build_network(model_cfg, num_class, dataset)
         # Case 4: Using pretrained weights
-        if pretrained_model_path is not None:
+        if pretrained_model_path:
             pretrained_model = load_checkpoint(pretrained_model_path, key, to_cpu)[0]
             loaded_state_dict = pretrained_model.state_dict()
             current_model_dict = model.state_dict()

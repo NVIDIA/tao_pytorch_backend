@@ -23,12 +23,20 @@ from torchvision.models._utils import IntermediateLayerGetter
 from typing import Optional
 from typing import Dict, List
 
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank, load_pretrained_weights
-from nvidia_tao_pytorch.cv.deformable_detr.model.resnet import resnet50
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
+from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_pytorch.core.models import TimmBackbone
+
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
+from nvidia_tao_pytorch.cv.dino.utils.pos_embed_interpolation_converter import (
+    interpolate_patch_embed, interpolate_pos_embed
+)
+from nvidia_tao_pytorch.cv.deformable_detr.model.resnet import resnet34, resnet50
 from nvidia_tao_pytorch.cv.deformable_detr.model.backbone import FrozenBatchNorm2d
 from nvidia_tao_pytorch.cv.deformable_detr.model.gc_vit import gc_vit_model_dict
 from nvidia_tao_pytorch.cv.dino.model.fan import fan_model_dict
 from nvidia_tao_pytorch.cv.dino.model.vision_transformer.vit_adapter import vit_model_dict
+from nvidia_tao_pytorch.cv.grounding_dino.model.swin_transformer import swin_model_dict
 
 
 class BackboneBase(nn.Module):
@@ -67,7 +75,7 @@ class BackboneBase(nn.Module):
             for layer_index in return_interm_indices:
                 return_layers.update({"layer{}".format(layer_index + 1): "{}".format(layer_index)})
             self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
-        elif model_name.startswith(('fan', 'gc_vit')):
+        elif model_name.startswith(('fan', 'gc_vit', 'swin', 'efficientvit')):
             for name, parameter in backbone.named_parameters():
                 if not train_backbone:
                     parameter.requires_grad_(False)
@@ -84,6 +92,7 @@ class BackboneBase(nn.Module):
                 if not any(p in name for p in missing_keys) and not train_backbone:
                     parameter.requires_grad_(False)
             self.body = backbone
+
         self.num_channels = num_channels
         self.return_interm_indices = return_interm_indices
 
@@ -108,6 +117,13 @@ class BackboneBase(nn.Module):
             input_tensor = input_tensors[:, :3]
 
         xs = self.body(input_tensor)
+
+        # Handling timm/efficientvit cases
+        if isinstance(xs, list):
+            new_xs = {}
+            for i, x in enumerate(xs):
+                new_xs[f'layer{i}'] = x
+            xs = new_xs
 
         out: Dict[str, torch.Tensor] = {}
         for name, x in xs.items():
@@ -153,9 +169,23 @@ class Backbone(BackboneBase):
         supported_arch = list(fan_model_dict.keys()) + \
             list(gc_vit_model_dict.keys()) + \
             list(vit_model_dict.keys()) + \
-            ["resnet_50"]
+            list(swin_model_dict.keys()) + \
+            ["resnet_34", "resnet_50"] + \
+            ['efficientvit_b0', 'efficientvit_b1', 'efficientvit_b2', 'efficientvit_b3']
 
-        if name == 'resnet_50':
+        pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone_path) if pretrained_backbone_path else None
+
+        if name == 'resnet_34':
+            if export:
+                _norm_layer = nn.BatchNorm2d
+            else:
+                _norm_layer = FrozenBatchNorm2d
+
+            backbone = resnet34(norm_layer=_norm_layer,
+                                replace_stride_with_dilation=[False, False, dilation])
+            num_channels_all = np.array([64, 128, 256, 512])
+            num_channels = num_channels_all[return_interm_indices]
+        elif name == 'resnet_50':
             if export:
                 _norm_layer = nn.BatchNorm2d
             else:
@@ -181,25 +211,42 @@ class Backbone(BackboneBase):
                                                activation_checkpoint=activation_checkpoint)
             num_channels_all = np.array(backbone.num_features)
             num_channels = num_channels_all[return_interm_indices]
+        elif 'efficientvit' in name:
+            backbone = TimmBackbone(model_name=name, pretrained=True, out_indices=return_interm_indices, pretrained_path=pretrained_backbone_path)
+
+            num_channels_all = np.array(backbone.model.feature_info.channels())
+            num_channels = num_channels_all[return_interm_indices - 1]
         elif 'vit' in name:
             if name not in vit_model_dict:
                 raise NotImplementedError(f"{name} is not supported ViT-Adapter backbone. "
                                           f"Supported architecutres: {vit_model_dict.keys()}")
+
+            pretrained_backbone_ckp = interpolate_vit_checkpoint(checkpoint=pretrained_backbone_ckp,
+                                                                 target_patch_size=16,
+                                                                 target_resolution=resolution)
+
             backbone = vit_model_dict[name](out_indices=return_interm_indices,
                                             resolution=resolution,
                                             activation_checkpoint=activation_checkpoint)
             num_channels = np.array([backbone.embed_dim] * len(return_interm_indices))
+        elif 'swin' in name:
+            if name not in swin_model_dict:
+                raise NotImplementedError(f"{name} is not supported Swin backbone. "
+                                          f"Supported architecutres: {swin_model_dict.keys()}")
+            backbone = swin_model_dict[name](out_indices=return_interm_indices,
+                                             activation_checkpoint=activation_checkpoint)
+            num_channels_all = np.array(backbone.num_features)
+            num_channels = num_channels_all[return_interm_indices]
         else:
             raise NotImplementedError(f"Backbone {name} is not implemented. Supported architectures {supported_arch}")
 
         missing_keys = None
-        if pretrained_backbone_path:
-            checkpoint = load_pretrained_weights(pretrained_backbone_path)
-            _tmp_st_output = backbone.load_state_dict(checkpoint, strict=False)
+        if pretrained_backbone_ckp:
+            _tmp_st_output = backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
             missing_keys = list(_tmp_st_output[0])
             if get_global_rank() == 0:
-                print(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                print(f"{_tmp_st_output}")
+                logging.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
+                logging.info(f"{_tmp_st_output}")
 
         super().__init__(name, backbone, train_backbone, num_channels, return_interm_indices, export, missing_keys)
 
@@ -232,3 +279,29 @@ class Joiner(nn.Sequential):
         for _, x in sorted(xs.items()):
             out.append(x)
         return out
+
+
+def interpolate_vit_checkpoint(checkpoint, target_patch_size, target_resolution):
+    """ Interpolate ViT backbone position embedding and patch embedding
+
+    Args:
+        checkpoint: pretrained ViT checkpoint
+        target_patch_size: target patch size to interpolate to. ex: 14, 16, etc
+        target_resolution: target image size to interpolate to. ex: 224, 512, 518, etc
+
+    Returns:
+        interpolated model checkpoints
+
+    """
+    if checkpoint is None:
+        return checkpoint
+
+    logging.info("Do ViT pretrained backbone interpolation")
+    # interpolate patch embedding
+    checkpoint = interpolate_patch_embed(checkpoint=checkpoint, new_patch_size=target_patch_size)
+
+    # interpolate pos embedding
+    checkpoint = interpolate_pos_embed(checkpoint_model=checkpoint,
+                                       new_resolution=target_resolution,
+                                       new_patch_size=target_patch_size)
+    return checkpoint

@@ -63,7 +63,6 @@ class TAOTextLoggerHook(LoggerHook):
         runner.visualizer.add_scalars(
             tag, step=runner.iter + 1, file_path=self.json_log_path)
 
-        # @seanf look into if we can call super() and access log_str instead of copying above
         # log_str looks like:
         # Epoch(train) [1][5/5]  base_lr: 1.6017e-07 lr: 1.6017e-07  eta: 0:12:26  time: 0.7499  data_time: 0.0277  memory: 3490  loss: 0.5401  decode.loss_ce: 0.5401  decode.acc_seg: 69.6967
 
@@ -76,6 +75,8 @@ class TAOTextLoggerHook(LoggerHook):
             self.monitor_data["time_per_iter"] = f"00:00:0{time}"
         else:
             self.monitor_data["time_per_iter"] = strftime("%H:%M:%S", gmtime(time))
+
+        self.monitor_data["eta"] = log_str.split(" eta: ")[1].split(" ")[0]
 
         self.monitor_data["lr"] = float(log_str.split(" lr: ")[1].split(" ")[0])
 
@@ -109,7 +110,6 @@ class TAOTextLoggerHook(LoggerHook):
                 runner, batch_idx, 'test')
             runner.logger.info(log_str)
 
-            # @seanf look into if we can call super() and access log_str instead of copying above
             # log_str looks like:
             # "aAcc: 87.08 mIoU: 63.78 mAcc: 71.76 data_time: 0.028624820709228515 time: 0.10705928802490235"
 
@@ -156,7 +156,6 @@ class TAOTextLoggerHook(LoggerHook):
             runner.visualizer.add_scalars(
                 tag, step=iter, file_path=self.json_log_path)
 
-        # @seanf look into if we can call super() and access log_str instead of copying above
         # log_str looks like:
         # "aAcc: 85.69 mIoU: 61.1 mAcc: 69.86 data_time: 0.07468271255493164 time: 0.7449096838633219 step: 500"
 

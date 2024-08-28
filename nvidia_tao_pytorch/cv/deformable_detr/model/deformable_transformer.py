@@ -269,7 +269,8 @@ class DeformableTransformerEncoder(nn.Module):
                                                pos,
                                                reference_points,
                                                spatial_shapes,
-                                               level_start_index)
+                                               level_start_index,
+                                               use_reentrant=True)
 
         return output
 
@@ -400,7 +401,8 @@ class DeformableTransformerDecoder(nn.Module):
                                                reference_points_input,
                                                src,
                                                src_spatial_shapes,
-                                               src_level_start_index)
+                                               src_level_start_index,
+                                               use_reentrant=True)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:

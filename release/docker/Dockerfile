@@ -1,7 +1,4 @@
-FROM nvcr.io/nvidia/tao/tao-toolkit:5.0.0-pyt-base
-
-# Cleaning up older OpenCV pakcages
-RUN rm -rvf /usr/local/lib/python3.8/dist-packages/cv2 /usr/local/lib/python3.8/dist-packages/opencv*
+FROM nvcr.io/nvidia/tao/tao-toolkit:5.5.0-pyt-base
 
 # Installing the TLT packages.
 WORKDIR /opt/nvidia
@@ -10,60 +7,47 @@ RUN cd wheels && ls ./*.whl|xargs -I'{}' python -m pip install '{}' \
     && rm *.whl
 
 # NGC Security scan related fixes.
-# Update apt packages per security scan vulnerabilities.
+# Low-level packages in apt are updated to resolve published security vulnerabilities ASAP
+# We retrieve these updates and upgrade the critical/high vulnerability ones
 RUN apt-get update && \
-    apt --only-upgrade install libssl-dev -y && \
-    apt --only-upgrade install libsystemd0 -y && \
-    apt --only-upgrade install libudev1 -y && \
-    apt --only-upgrade install openssl -y && \
-    apt --only-upgrade install libexpat1 -y && \
-    apt --only-upgrade install libsasl2-2 -y && \
-    apt --only-upgrade install wget hdf5-helpers libhdf5-103 vim-runtime util-linux libmount1 libsqlite3-0 vim-common fdisk -y && \
     apt --only-upgrade install linux-libc-dev -y && \
-    apt --only-upgrade install libksba8 -y
+    apt --only-upgrade install curl -y && \
+    apt --only-upgrade install libc-bin -y && \
+    apt --only-upgrade install libc6-dev -y && \
+    apt --only-upgrade install libc6 -y && \
+    apt --only-upgrade install libc-dev-bin -y && \
+    apt --only-upgrade install libcurl3-gnutls -y && \
+    apt --only-upgrade install libcurl4 -y && \
+    apt --only-upgrade install libcurl4-openssl-dev -y
 
-RUN apt-get install --upgrade libpython3.8-minimal -y && \
-    apt-get install --upgrade curl -y && \
-    apt-get install --upgrade vim -y && \
-    apt-get install --upgrade git -y && \
-    apt-get install --upgrade libcurl3-gnutls -y
-
-# Removing libwebp6 due to CVE-2023-5217 
-RUN apt-get remove -y libwebp6
-
-# Updated python packages for critical vulnerabilities.
 RUN pip install --upgrade pip && \
-    python -m pip install --upgrade notebook==6.4.10 && \
-    python -m pip install --upgrade django && \
-    python -m pip install dask==2021.10.0 && \
-    python -m pip install distributed==2021.10.0 && \
-    python -m pip install ipython==7.31.1 && \
-    python -m pip install --upgrade pillow==9.3.0 && \
-    python -m pip install --upgrade nltk && \
-    python -m pip install sqlparse==0.4.2 && \
-    python -m pip install urllib3==1.26.5 && \
-    python -m pip install --upgrade mpmath && \
-    python -m pip install joblib==1.2.0 && \
-    python -m pip install jupyter-core==5.1.0 && \
-    python -m pip uninstall codecov -y && \
-    python -m pip install --upgrade werkzeug && \
-    python -m pip install --upgrade opencv-python && \
-    python -m pip install --upgrade scikit-learn && \
-    python -m pip install --upgrade grpcio
-    
-RUN rm -rf /usr/local/lib/python3.8/dist-packages/mpmath-1.2.1.dist-info
+    python -m pip install --upgrade Werkzeug==3.0.1
 
 RUN rm -rf /opt/nvidia/entrypoint.d/*.txt
 COPY release/docker/entrypoint.d/* /opt/nvidia/entrypoint.d/
 
-ENV NVIDIA_PRODUCT_NAME "TAO Toolkit"
-ENV TAO_TOOLKIT_VERSION="4.0.0"
-ENV NVIDIA_TAO_TOOLKIT_VERSION="${TAO_TOOLKIT_VERSION}-PyTorch"
+# Copying tlt-converter and building it in the docker.
+ENV TRT_LIB_PATH="/usr/lib/x86_64-linux-gnu"
+ENV TRT_INCLUDE_PATH="/usr/include/x86_64-linux-gnu"
 
+ENV NVIDIA_PRODUCT_NAME "TAO Toolkit"
+ENV TAO_TOOLKIT_VERSION="5.2.0"
+ENV NVIDIA_TAO_TOOLKIT_VERSION="${TAO_TOOLKIT_VERSION}-PyTorch"
+ENV CUBLAS_WORKSPACE_CONFIG=":4096:8"
+
+# nvm version has to be >20.8.0 to avoid security vulnerabilities
 ENV NVM_DIR=/usr/local/nvm
 RUN source "$NVM_DIR/nvm.sh" \
-    && nvm install 20.8.0 --reinstall-packages-from=16.15.1 node \
-    && nvm uninstall 16.15.1
+    && nvm install 20.15.0 --reinstall-packages-from=16.20.2 node \
+    && nvm uninstall 16.20.2
+
+RUN rm -rf /usr/local/nvm/versions/node/v20.9.0/lib/node_modules/npm/node_modules/ip
+
+# Defining the telemetry URL.
+ENV TAO_TELEMETRY_SERVER="https://api.tao.ngc.nvidia.com"
+
+# Microservices entrypoint
+ENV FLASK_APP=/usr/local/lib/python3.10/dist-packages/nvidia_tao_pytorch/api/app.py 
 
 # Include NGC CLI as an entrypoint.
 CMD [ "/bin/bash" ]

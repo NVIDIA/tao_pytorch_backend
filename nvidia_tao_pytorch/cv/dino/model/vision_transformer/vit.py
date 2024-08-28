@@ -83,7 +83,7 @@ class Block(nn.Module):
             return x
 
         if self.with_cp and x.requires_grad and not torch.onnx.is_in_onnx_export():
-            x = checkpoint.checkpoint(_inner_forward, x)
+            x = checkpoint.checkpoint(_inner_forward, x, use_reentrant=True)
         else:
             x = _inner_forward(x)
 

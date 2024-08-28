@@ -1,4 +1,8 @@
 results_dir: ???
+
+evaluate:
+  checkpoint: ???
+  
 dataset:
   data:
     samples_per_gpu: 512

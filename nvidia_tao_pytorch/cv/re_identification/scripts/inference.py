@@ -13,24 +13,19 @@
 # limitations under the License.
 
 """Inference on single patch."""
+import logging
 import os
-import torch
+from pytorch_lightning import Trainer
 
-from tqdm import tqdm
-import json
-
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
 from nvidia_tao_pytorch.cv.re_identification.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.re_identification.dataloader.build_data_loader import build_dataloader
-from nvidia_tao_pytorch.cv.re_identification.inference.inferencer import Inferencer
+from nvidia_tao_pytorch.cv.re_identification.dataloader.pl_reid_data_module import REIDDataModule
 from nvidia_tao_pytorch.cv.re_identification.model.pl_reid_model import ReIdentificationModel
-from nvidia_tao_pytorch.cv.re_identification.utils.common_utils import check_and_create
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.core.utilities import update_results_dir
 
 
-def run_experiment(experiment_config, results_dir, key):
+def run_experiment(experiment_config, key):
     """
     Start the inference process.
 
@@ -45,59 +40,26 @@ def run_experiment(experiment_config, results_dir, key):
     Raises:
         Exception: If any error occurs during the inference process.
     """
-    results_dir = experiment_config.inference.results_dir
-    check_and_create(results_dir)
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting Re-identification inference"
-    )
+    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config, key)
+    if len(gpus) > 1:
+        gpus = [gpus[0]]
+        logging.log(f"Re-Identification does not support multi-GPU inference at this time. Using only GPU {gpus}")
 
-    gpu_id = experiment_config.inference.gpu_id
-    torch.cuda.set_device(gpu_id)
-    # set the encryption key:
-    TLTPyTorchCookbook.set_passphrase(key)
-
-    # build dataloader
-    _, dataloader, _, _ = build_dataloader(experiment_config, is_train=False)
-
-    # build inferencer @TODO TRT support
-    model = ReIdentificationModel.load_from_checkpoint(experiment_config["inference"]["checkpoint"],
+    dm = REIDDataModule(experiment_config)
+    model = ReIdentificationModel.load_from_checkpoint(model_path,
                                                        map_location="cpu",
                                                        experiment_spec=experiment_config,
                                                        prepare_for_training=False)
 
     if "swin" in experiment_config.model.backbone:
-        model.model.load_param(experiment_config["inference"]["checkpoint"])
+        model.model.load_param(model_path)
 
-    infer = Inferencer(model)
+    trainer = Trainer(devices=gpus,
+                      default_root_dir=results_dir,
+                      accelerator='gpu',
+                      strategy='auto')
 
-    # do inference
-    progress = tqdm(dataloader)
-    results = []
-
-    if "swin" in experiment_config.model.backbone:
-        with torch.no_grad():
-            for data, _, _, img_paths in progress:
-                feats, _ = infer.inference(data)
-                for img_path, feat in zip(img_paths, feats):
-                    result = {"img_path": img_path, "embedding": feat.cpu().numpy().tolist()}
-                    results.append(result)
-    elif "resnet" in experiment_config.model.backbone:
-        with torch.no_grad():
-            for data, _, _, img_paths in progress:
-                feats = infer.inference(data)
-                for img_path, feat in zip(img_paths, feats):
-                    result = {"img_path": img_path, "embedding": feat.cpu().numpy().tolist()}
-                    results.append(result)
-
-    # save the output
-    output_file = open(experiment_config["inference"]["output_file"], "w")
-    results = json.dumps(results, indent=4)
-    output_file.write(results)
-    output_file.close()
+    trainer.predict(model, datamodule=dm)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -108,6 +70,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment", schema=ExperimentConfig
 )
+@monitor_status(name="ReIdentification", mode="inference")
 def main(cfg: ExperimentConfig) -> None:
     """
     Run the inference process.
@@ -119,27 +82,8 @@ def main(cfg: ExperimentConfig) -> None:
     Args:
         cfg (DictConfig): Configuration file.
     """
-    try:
-        cfg = update_results_dir(cfg, task="inference")
-        run_experiment(experiment_config=cfg,
-                       results_dir=cfg.results_dir,
-                       key=cfg.encryption_key)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Inference finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Inference was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg,
+                   key=cfg.encryption_key)
 
 
 if __name__ == "__main__":

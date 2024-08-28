@@ -17,14 +17,15 @@
 import os
 import tempfile
 import torch
+from nvidia_tao_pytorch.cv.metric_learning_recognition.dataloader.pl_ml_data_module import MLDataModule
 from onnxsim import simplify
 import onnx
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.cv.metric_learning_recognition.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.metric_learning_recognition.model.pl_ml_recog_model import MLRecogModel
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
-from nvidia_tao_pytorch.cv.metric_learning_recognition.utils.decorators import monitor_status
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,12 +38,7 @@ def run_export(args):
         args (DictConfig): Configuration dictionary
     """
     experiment_config = args
-
-    # no need to check `else` as it's verified in the decorator already
-    if experiment_config['export']["results_dir"]:
-        results_dir = experiment_config['export']["results_dir"]
-    elif experiment_config["results_dir"]:
-        results_dir = os.path.join(experiment_config["results_dir"], "export")
+    results_dir = experiment_config.results_dir
 
     if experiment_config['export']["on_cpu"]:
         device = "cpu"
@@ -55,6 +51,7 @@ def run_export(args):
         raise ValueError(error_msg)
 
     checkpoint = experiment_config["export"]["checkpoint"]
+    dm = MLDataModule(experiment_config)
     if checkpoint is not None:
         status_logging.get_status_logger().write(
             message=f"Loading checkpoint: {experiment_config['export']['checkpoint']}",
@@ -63,6 +60,7 @@ def run_export(args):
                                                      map_location="cpu",
                                                      experiment_spec=experiment_config,
                                                      results_dir=results_dir,
+                                                     dm=dm,
                                                      subtask="export")
         # Set default output filename if the filename
         # isn't provided over the command line.
@@ -75,6 +73,7 @@ def run_export(args):
     else:
         pl_model = MLRecogModel(experiment_config,
                                 results_dir,
+                                dm,
                                 subtask="export")
         if experiment_config['export']['onnx_file'] is None:
             output_file = os.path.join(results_dir, "metric_learning_recognition.onnx")
@@ -138,7 +137,7 @@ def run_export(args):
     onnx.save(simplified_model, output_file)
     status_logging.get_status_logger().write(
         message=f"ONNX model saved at {output_file}",
-        status_level=status_logging.Status.SUCCESS)
+        status_level=status_logging.Status.RUNNING)
 
 
 # Load experiment specification, additially using schema for validation/retrieving the default values.
@@ -146,7 +145,7 @@ def run_export(args):
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="export", schema=ExperimentConfig
 )
-@monitor_status(mode="export")
+@monitor_status(name="Metric Learning Recognition", mode="export")
 def main(cfg: ExperimentConfig) -> None:
     """CLI wrapper to run export.
 

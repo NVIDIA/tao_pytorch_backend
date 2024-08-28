@@ -42,7 +42,7 @@ def interpolate_pos_embed(checkpoint_model,
         orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)  # 16
 
         if orig_resolution:
-            assert orig_resolution == orig_size * orig_patch_size,\
+            assert orig_resolution == orig_size * orig_patch_size, \
                 f"Resolution {orig_resolution} and patch size {orig_patch_size} do not match"
         else:
             orig_resolution = orig_size * orig_patch_size

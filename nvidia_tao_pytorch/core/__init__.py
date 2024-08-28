@@ -13,3 +13,7 @@
 # limitations under the License.
 
 """Root module for common utilities that could be used across all nlp models."""
+import os
+
+
+TAO_PYT_CACHE = os.getenv("TAO_TOOLKIT_CACHE", "/.cache")

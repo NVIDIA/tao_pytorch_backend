@@ -1,5 +1,6 @@
 {
     "registry": "nvcr.io",
     "repository": "nvidia/tao/tao-toolkit",
-    "tag": "5.0.0-pyt-base"
+    "digest": "sha256:ff920080025e2dd12d5740c3d722f0630f1f84630ae6f55e56f872d4914fca03",
+    "tag": "5.5.0-pyt-base"
 }

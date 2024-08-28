@@ -29,9 +29,11 @@ import json
 
 from pycocotools.cocoeval import COCOeval
 from pycocotools.coco import COCO
+import pycocotools.mask as mask_util
 from collections import defaultdict
 
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import all_gather
+from nvidia_tao_pytorch.core.distributed.comm import all_gather
+from nvidia_tao_pytorch.core.tlt_logging import logging
 
 
 class CocoEvaluator(object):
@@ -94,6 +96,8 @@ class CocoEvaluator(object):
         """ prepare """
         if iou_type == "bbox":
             prepared_data = self.prepare_for_coco_detection(predictions)
+        elif iou_type == "segm":
+            return self.prepare_for_coco_segmentation(predictions)
         else:
             raise NotImplementedError("iou type {} is not implemented".format(iou_type))
         return prepared_data
@@ -119,6 +123,42 @@ class CocoEvaluator(object):
                         "score": scores[k],
                     }
                     for k, box in enumerate(boxes)
+                ]
+            )
+        return coco_results
+
+    def prepare_for_coco_segmentation(self, predictions):
+        """Prepare results for COCO segmentation."""
+        coco_results = []
+        for original_id, prediction in predictions.items():
+            if len(prediction) == 0:
+                continue
+
+            scores = prediction["scores"]
+            labels = prediction["labels"]
+            masks = prediction["masks"].float().cpu().numpy()
+
+            masks = masks > 0.5
+
+            scores = prediction["scores"].tolist()
+            labels = prediction["labels"].tolist()
+
+            rles = [
+                mask_util.encode(np.array(mask[:, :, np.newaxis], dtype=np.uint8, order="F"))[0]
+                for mask in masks
+            ]
+            for rle in rles:
+                rle["counts"] = rle["counts"].decode("utf-8")
+
+            coco_results.extend(
+                [
+                    {
+                        "image_id": original_id,
+                        "category_id": labels[k],
+                        "segmentation": rle,
+                        "score": scores[k],
+                    }
+                    for k, rle in enumerate(rles)
                 ]
             )
         return coco_results
@@ -204,11 +244,11 @@ def loadRes(self, resFile):
 
     if isinstance(resFile, torch._six.string_classes):
         anns = json.load(open(resFile))
-    elif type(resFile) == np.ndarray:
+    elif isinstance(resFile, np.ndarray):
         anns = self.loadNumpyAnnotations(resFile)
     else:
         anns = resFile
-    assert type(anns) == list, 'results in not an array of objects'
+    assert isinstance(anns, list), 'results in not an array of objects'
     annsImgIds = [ann['image_id'] for ann in anns]
     assert set(annsImgIds) == (
         set(annsImgIds) & set(self.getImgIds())
@@ -239,8 +279,7 @@ def evaluate(self):
     # add backward compatibility if useSegm is specified in params
     if p.useSegm is not None:
         p.iouType = 'segm' if p.useSegm == 1 else 'bbox'
-        print('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
-    # print('Evaluate annotation type *{}*'.format(p.iouType))
+        logging.info('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
     p.imgIds = list(np.unique(p.imgIds))
     if p.useCats:
         p.catIds = list(np.unique(p.catIds))

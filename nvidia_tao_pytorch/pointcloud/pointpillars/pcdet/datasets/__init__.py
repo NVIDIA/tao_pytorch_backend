@@ -56,13 +56,14 @@ class DistributedSampler(_DistributedSampler):
         return iter(indices)
 
 
-def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None, workers=4,
+def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None, info_path=None, workers=4,
                      logger=None, training=True, merge_all_iters_to_one_epoch=False, total_epochs=0):
     """Build data loader."""
     dataset = __all__[dataset_cfg.type](
         dataset_cfg=dataset_cfg,
         class_names=class_names,
         root_path=root_path,
+        info_path=info_path,
         training=training,
         logger=logger,
     )

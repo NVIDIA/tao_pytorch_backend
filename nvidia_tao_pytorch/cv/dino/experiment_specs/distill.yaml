@@ -1,0 +1,55 @@
+results_dir: "???"
+train:
+  num_gpus: 1
+  num_nodes: 1
+  validation_interval: 1
+  optim:
+    lr_backbone: 1e-05
+    lr: 0.0001
+    lr_steps: [11]
+    momentum: 0.9
+  num_epochs: 12
+dataset:
+  train_sampler: default_sampler
+  train_data_sources:
+    - image_dir: "???"
+      json_file: "???"
+  val_data_sources:
+    - image_dir: "???"
+      json_file: "???"
+  test_data_sources:
+    image_dir: "???"
+    json_file: "???"
+  num_classes: 91
+  batch_size: 2
+  workers: 2
+  augmentation:
+    random_resize_max_size: 1344
+    fixed_padding: True
+model:
+  pretrained_backbone_path: "???"
+  backbone: resnet_50
+  train_backbone: True
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 300
+  num_select: 100
+  dropout_ratio: 0.0
+  dim_feedforward: 2048
+distill:
+  teacher:
+    backbone: fan_small
+    train_backbone: False
+    num_feature_levels: 4
+    dec_layers: 6
+    enc_layers: 6
+    num_queries: 900
+    dropout_ratio: 0.0
+    dim_feedforward: 2048
+    pretrained_teacher_model_path: "???"
+  bindings:
+  - student_module_name: "???"
+    teacher_module_name: "???"
+    criterion: "???"
+    weight: "???"

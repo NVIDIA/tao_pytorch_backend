@@ -28,9 +28,7 @@ def build_dataloader(cfg, mode="train"):
 
     Args:
         cfg (DictConfig): Hydra config object
-        is_train (Boolean): True for train tasks. False for evaluation tasks
-        is_inference (Boolean): True for inference tasks. False for non-inference
-            tasks.Cannot be true the same time when is_train = True
+        mode (str): Choice between 'train', 'eval', or 'inference'
 
     Returns:
         train_loader (Dataloader): Train dataloader
@@ -137,7 +135,7 @@ def build_inference_dataloader(cfg):
         transform=val_transform)
 
     dataloader = DataLoader(inference_dataset,
-                            cfg['inference']['batch_size'],
+                            batch_size=cfg['inference']['batch_size'],
                             shuffle=False)
 
     return dataloader

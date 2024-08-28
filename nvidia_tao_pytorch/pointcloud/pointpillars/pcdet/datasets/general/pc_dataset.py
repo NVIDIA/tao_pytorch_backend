@@ -27,7 +27,7 @@ from ..dataset import DatasetTemplate
 class GeneralPCDataset(DatasetTemplate):
     """Generic data loader."""
 
-    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
+    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, info_path=None, logger=None):
         """
         Args:
             root_path:
@@ -37,7 +37,8 @@ class GeneralPCDataset(DatasetTemplate):
             logger:
         """
         super().__init__(
-            dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
+            dataset_cfg=dataset_cfg, class_names=class_names, training=training,
+            root_path=root_path, info_path=info_path, logger=logger
         )
         self.num_point_features = self.dataset_cfg.data_augmentor.aug_config_list[0].num_point_features
         self.split = self.dataset_cfg.data_split[self.mode]
@@ -64,7 +65,7 @@ class GeneralPCDataset(DatasetTemplate):
             self.logger.info('Loading point cloud dataset')
         pc_infos = []
         for info_path in self.dataset_cfg.info_path[mode]:
-            info_path = self.root_path / info_path
+            info_path = self.info_path / info_path
             if not info_path.exists():
                 continue
             with open(info_path, 'rb') as f:
@@ -106,7 +107,8 @@ class GeneralPCDataset(DatasetTemplate):
     def set_split(self, split):
         """Setup train/val split."""
         super().__init__(
-            dataset_cfg=self.dataset_cfg, class_names=self.class_names, training=self.training, root_path=self.root_path, logger=self.logger
+            dataset_cfg=self.dataset_cfg, class_names=self.class_names, training=self.training,
+            root_path=self.root_path, info_path=self.info_path, logger=self.logger
         )
         self.split = split
         self.root_split_path = self.root_path / self.split
@@ -183,8 +185,8 @@ class GeneralPCDataset(DatasetTemplate):
         """Create groundtruth database for augmentation."""
         import torch
         from pathlib import Path
-        database_save_path = Path(self.root_path) / ('gt_database' if split == 'train' else ('gt_database_%s' % split))
-        db_info_save_path = Path(self.root_path) / ('dbinfos_%s.pkl' % split)
+        database_save_path = Path(self.info_path) / ('gt_database' if split == 'train' else ('gt_database_%s' % split))
+        db_info_save_path = Path(self.info_path) / ('dbinfos_%s.pkl' % split)
 
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
@@ -215,7 +217,7 @@ class GeneralPCDataset(DatasetTemplate):
                     gt_points.tofile(f)
 
                 if (used_classes is None) or names[i] in used_classes:
-                    db_path = str(filepath.relative_to(self.root_path))  # gt_database/xxxxx.bin
+                    db_path = str(filepath.relative_to(self.info_path))  # gt_database/xxxxx.bin
                     db_info = {'name': names[i], 'path': db_path, 'image_idx': sample_idx, 'gt_idx': i,
                                'box3d_lidar': gt_boxes[i], 'num_points_in_gt': gt_points.shape[0],
                                }
@@ -277,7 +279,7 @@ class GeneralPCDataset(DatasetTemplate):
             single_pred_dict['frame_id'] = frame_id
             annos.append(single_pred_dict)
 
-            if output_path is not None:
+            if output_path:
                 cur_det_file = output_path / ('%s.txt' % frame_id)
                 with open(cur_det_file, 'w') as f:
                     box_lidar = single_pred_dict['boxes_lidar']
@@ -338,7 +340,13 @@ class GeneralPCDataset(DatasetTemplate):
 
 def create_pc_infos(dataset_cfg, class_names, data_path, save_path, status_logging, workers=4):
     """Create point cloud statistics for data augmentations."""
-    dataset = GeneralPCDataset(dataset_cfg=dataset_cfg, class_names=class_names, root_path=data_path, training=False)
+    dataset = GeneralPCDataset(
+        dataset_cfg=dataset_cfg,
+        class_names=class_names,
+        root_path=data_path,
+        info_path=dataset_cfg.data_info_path,
+        training=False
+    )
     train_split = dataset_cfg.data_split['train']
     val_split = dataset_cfg.data_split['test']
     train_filename = save_path / (f"infos_{train_split}.pkl")

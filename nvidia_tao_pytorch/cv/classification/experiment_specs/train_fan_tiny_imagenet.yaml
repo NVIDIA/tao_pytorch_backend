@@ -40,14 +40,10 @@ model:
       mode: 'original'
   train_cfg:
     augments:
-      - type: BatchMixup
+      - type: Mixup
         alpha: 0.8
-        num_classes: 1000
-        prob: 0.5
-      - type: BatchCutMix
+      - type: CutMix
         alpha: 1.0
-        num_classes: 1000
-        prob: 0.5
 train:
   train_config:
     runner:

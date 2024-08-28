@@ -36,6 +36,9 @@ model:
     lr_head:
       C: 0.316
       max_iter: 5000
+      hpo: False
+      cs_tune: [0.001, 0.01,  0.316, 1, 10, 1000, 10000]
+      criteria: "accuracy"
     num_classes: ???
 
 train:
@@ -44,10 +47,13 @@ train:
   train_config:
     runner:
       max_epochs: 300
-      checkpoint_interval: 5
-      log_interval: 500
-      val_interval: 1
-    optim_wrapper:
-      optimizer:
-        type: 'AdamW'
-        lr: 10e-5
+    checkpoint_config:
+      interval: 1
+    logging:
+      interval: 5000
+    validate: True
+    evaluation:
+      interval: 10
+    optimizer:
+      type: 'AdamW'
+      lr: 10e-5

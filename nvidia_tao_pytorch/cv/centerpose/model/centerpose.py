@@ -19,7 +19,8 @@ import numpy as np
 
 from nvidia_tao_pytorch.cv.centerpose.model.model_utils import ConvGRU, DLAUp, IDAUp, fill_fc_weights, get_dla_base, group_norm
 from nvidia_tao_pytorch.cv.dino.model.fan import fan_model_dict
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank, load_pretrained_weights
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 
 
 class CenterPose_DLA34(nn.Module):
@@ -153,7 +154,7 @@ class CenterPose_FAN(nn.Module):
         self.base = fan_model_dict[arch](out_indices=[0, 1, 2, 3],
                                          activation_checkpoint=True)
 
-        if model_config.use_pretrained and pretrained_backbone_path is not None:
+        if model_config.use_pretrained and pretrained_backbone_path:
             checkpoint = load_pretrained_weights(pretrained_backbone_path)
             _tmp_st_output = self.base.load_state_dict(checkpoint, strict=False)
             if get_global_rank() == 0:

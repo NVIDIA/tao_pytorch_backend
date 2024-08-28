@@ -15,8 +15,8 @@
 """Launcher ."""
 """TAO Pytorch SDK version"""
 
-MAJOR = "4"
-MINOR = "0.0"
+MAJOR = "5"
+MINOR = "2.0"
 PATCH = "01"
 PRE_RELEASE = ''
 

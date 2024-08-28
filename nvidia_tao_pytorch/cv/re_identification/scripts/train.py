@@ -14,27 +14,19 @@
 
 """Train Re-Identification model."""
 import os
-import re
 
 from nvidia_tao_pytorch.core.connectors.checkpoint_connector import TLTCheckpointConnector
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.core.utilities import update_results_dir
-
-from nvidia_tao_pytorch.core.callbacks.loggers import TAOStatusLogger
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.cv.re_identification.config.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.re_identification.dataloader.pl_reid_data_module import REIDDataModule
 from nvidia_tao_pytorch.cv.re_identification.model.pl_reid_model import ReIdentificationModel
-from nvidia_tao_pytorch.cv.re_identification.utils.common_utils import check_and_create
 
 from pytorch_lightning import Trainer
-from pytorch_lightning.strategies import DDPStrategy
-from pytorch_lightning.callbacks import ModelCheckpoint
 
 
-def run_experiment(experiment_config,
-                   results_dir,
-                   key):
+def run_experiment(experiment_config, key):
     """
     Start the training process.
 
@@ -50,108 +42,38 @@ def run_experiment(experiment_config,
     Raises:
         AssertionError: If checkpoint_interval is greater than num_epochs.
     """
-    # set the encryption key:
-    TLTPyTorchCookbook.set_passphrase(key)
+    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
 
+    dm = REIDDataModule(experiment_config)
     reid_model = ReIdentificationModel(experiment_config, prepare_for_training=True)
 
-    check_and_create(results_dir)
-
     num_epochs = experiment_config['train']['num_epochs']
-    checkpoint_interval = experiment_config['train']['checkpoint_interval']
-    assert checkpoint_interval <= num_epochs, (
-        f"Checkpoint interval {checkpoint_interval} > Number of epochs {num_epochs}. "
-        f"Please set experiment_config.train.checkpoint_interval < {num_epochs}"
-    )
-    gpus_ids = experiment_config['train']["gpu_ids"]
-    num_gpus = experiment_config['train']['num_gpus']
+    validation_interval = experiment_config['train']['validation_interval']
     grad_clip = experiment_config['train']['grad_clip']
 
-    status_logger_callback = TAOStatusLogger(results_dir, append=True, num_epochs=num_epochs)
+    acc_flag = 'auto'
+    if len(gpus) > 1:
+        acc_flag = 'ddp_find_unused_parameters_true'
 
-    status_logging.set_status_logger(status_logger_callback.logger)
-
-    acc_flag = None
-    if num_gpus > 1 or len(gpus_ids) > 1:
-        acc_flag = DDPStrategy(find_unused_parameters=True)
-
-    if "swin" in experiment_config["model"]["backbone"]:
-        if num_gpus > 1:
-            trainer = Trainer(devices=num_gpus,
-                              max_epochs=num_epochs,
-                              check_val_every_n_epoch=checkpoint_interval,
-                              default_root_dir=results_dir,
-                              num_sanity_val_steps=0,
-                              precision=16,
-                              accelerator='gpu',
-                              strategy=acc_flag,
-                              replace_sampler_ddp=False,
-                              sync_batchnorm=True,
-                              gradient_clip_val=grad_clip)
-        else:
-            trainer = Trainer(devices=gpus_ids,
-                              max_epochs=num_epochs,
-                              check_val_every_n_epoch=checkpoint_interval,
-                              default_root_dir=results_dir,
-                              num_sanity_val_steps=0,
-                              precision=16,
-                              accelerator='gpu',
-                              strategy=acc_flag,
-                              replace_sampler_ddp=False,
-                              sync_batchnorm=True,
-                              gradient_clip_val=grad_clip)
-    elif "resnet" in experiment_config["model"]["backbone"]:
-        if num_gpus > 1:
-            trainer = Trainer(devices=num_gpus,
-                              max_epochs=num_epochs,
-                              check_val_every_n_epoch=checkpoint_interval,
-                              default_root_dir=results_dir,
-                              num_sanity_val_steps=0,
-                              accelerator='gpu',
-                              strategy=acc_flag,
-                              replace_sampler_ddp=False,
-                              sync_batchnorm=True,
-                              gradient_clip_val=grad_clip)
-        else:
-            trainer = Trainer(gpus=gpus_ids,
-                              max_epochs=num_epochs,
-                              check_val_every_n_epoch=checkpoint_interval,
-                              default_root_dir=results_dir,
-                              num_sanity_val_steps=0,
-                              accelerator='gpu',
-                              strategy=acc_flag,
-                              replace_sampler_ddp=False,
-                              sync_batchnorm=True,
-                              gradient_clip_val=grad_clip)
+    trainer = Trainer(logger=ptl_loggers,
+                      devices=len(gpus),
+                      max_epochs=num_epochs,
+                      check_val_every_n_epoch=validation_interval,
+                      default_root_dir=results_dir,
+                      num_sanity_val_steps=0,
+                      val_check_interval=0.99,
+                      precision='16-mixed',
+                      accelerator='gpu',
+                      strategy=acc_flag,
+                      use_distributed_sampler=False,
+                      sync_batchnorm=True,
+                      enable_checkpointing=False,
+                      gradient_clip_val=grad_clip)
 
     # Overload connector to enable intermediate ckpt encryption and decryption.
-    resume_ckpt = experiment_config['train']['resume_training_checkpoint_path']
     trainer._checkpoint_connector = TLTCheckpointConnector(trainer)
-    if resume_ckpt is not None:
-        trainer._checkpoint_connector.resume_checkpoint_path = resume_ckpt
 
-    # setup checkpointer:
-    ModelCheckpoint.FILE_EXTENSION = ".tlt"
-    checkpoint_callback = ModelCheckpoint(every_n_epochs=checkpoint_interval,
-                                          dirpath=results_dir,
-                                          monitor=None,
-                                          save_top_k=-1,
-                                          filename='reid_model_{epoch:03d}')
-    if resume_ckpt:
-        status_logging.get_status_logger().write(
-            message=f"Resuming training from checkpoint: {resume_ckpt}",
-            status_level=status_logging.Status.STARTED
-        )
-        resumed_epoch = re.search('epoch=(\\d+)', resume_ckpt)
-        if resumed_epoch:
-            resumed_epoch = int(resumed_epoch.group(1))
-        else:
-            resumed_epoch = 0
-        status_logger_callback.epoch_counter = resumed_epoch + 1  # make sure callback epoch matches resumed epoch
-
-    trainer.callbacks.append(status_logger_callback)
-    trainer.callbacks.append(checkpoint_callback)
-    trainer.fit(reid_model)
+    trainer.fit(reid_model, dm, ckpt_path=resume_ckpt)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -162,6 +84,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment", schema=ExperimentConfig
 )
+@monitor_status(name="ReIdentification", mode="train")
 def main(cfg: ExperimentConfig) -> None:
     """
     Run the training process.
@@ -177,27 +100,8 @@ def main(cfg: ExperimentConfig) -> None:
         SystemExit: If the system or program finishes abruptly.
         Exception: For any other types of exceptions thrown during training.
     """
-    try:
-        cfg = update_results_dir(cfg, task="train")
-        run_experiment(experiment_config=cfg,
-                       key=cfg.encryption_key,
-                       results_dir=cfg.results_dir)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Training finished successfully"
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Training was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg,
+                   key=cfg.encryption_key)
 
 
 if __name__ == "__main__":

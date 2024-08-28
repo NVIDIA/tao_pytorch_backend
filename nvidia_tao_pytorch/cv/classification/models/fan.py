@@ -431,7 +431,7 @@ class FAN(BaseBackbone):
             if torch.onnx.is_in_onnx_export() or not self.use_checkpoint:
                 x = blk(x)
             else:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
             H, W = blk.H, blk.W
 
         cls_tokens = self.cls_token.expand(B, -1, -1)

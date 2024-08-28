@@ -16,6 +16,7 @@
 
 import os
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.cv.segformer.config.default_config import ExperimentConfig
@@ -47,22 +48,16 @@ def get_latest_pth_model(results_dir):
     return latest_checkpoint
 
 
-def run_experiment(experiment_config, results_dir):
+def run_experiment(experiment_config):
     """Start the training.
     Args:
         experiment_config (Dict): Config dictionary containing epxeriment parameters
         results_dir (str): Results dir to save the trained checkpoints.
 
     """
-    os.makedirs(results_dir, exist_ok=True)
-
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(
-        status_logging.StatusLogger(
-            filename=status_file,
-            append=True
-        )
-    )
+    if experiment_config.get("train", {}).get("resume_training_checkpoint_path", None) == "":
+        experiment_config["train"]["resume_training_checkpoint_path"] = None
+    results_dir = experiment_config.results_dir
     status_logger = status_logging.get_status_logger()
     status_logger.write(status_level=status_logging.Status.STARTED,
                         message="********************** Start Segformer Training **********************.")
@@ -83,7 +78,7 @@ def run_experiment(experiment_config, results_dir):
 
     runner = Runner.from_cfg(train_cfg)
     runner.train()
-    status_logger.write(status_level=status_logging.Status.SUCCESS,
+    status_logger.write(status_level=status_logging.Status.RUNNING,
                         message="********************** Completed Segformer Training **********************.")
 
 
@@ -95,28 +90,10 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="train_isbi", schema=ExperimentConfig
 )
+@monitor_status(name="Segformer", mode="train")
 def main(cfg: ExperimentConfig) -> None:
     """Run the training process."""
-    try:
-        if cfg.train.results_dir is not None:
-            results_dir = cfg.train.results_dir
-        else:
-            results_dir = os.path.join(cfg.results_dir, "train")
-
-        run_experiment(experiment_config=cfg,
-                       results_dir=results_dir)
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Train was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg)
 
 
 if __name__ == "__main__":

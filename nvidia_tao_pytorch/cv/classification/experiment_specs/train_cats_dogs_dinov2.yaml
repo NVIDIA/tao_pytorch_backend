@@ -26,13 +26,15 @@ train:
   train_config:
     runner:
       max_epochs: 40
-      checkpoint_interval: 1
-      log_interval: 500
-      val_interval: 1
-    optim_wrapper:
-      optimizer:
-        type: 'AdamW'
-        lr: 10e-6
+  checkpoint_config:
+    interval: 1
+  logging:
+    interval: 500
+  evaluation:
+    interval: 1
+  optimizer:
+    type: 'AdamW'
+    lr: 10e-6
 
 model:
   backbone:

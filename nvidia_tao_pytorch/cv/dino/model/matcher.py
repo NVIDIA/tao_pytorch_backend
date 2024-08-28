@@ -33,7 +33,7 @@ class HungarianMatcher(nn.Module):
         """Creates the matcher.
 
         Args:
-            cost_class (float): This is the relative weight of the classi dfication error in the matching cost.
+            cost_class (float): This is the relative weight of the classification error in the matching cost.
             cost_bbox (float): This is the relative weight of the L1 error of the bounding box coordinates in the matching cost.
             cost_giou (float): This is the relative weight of the giou loss of the bounding box in the matching cost.
         """

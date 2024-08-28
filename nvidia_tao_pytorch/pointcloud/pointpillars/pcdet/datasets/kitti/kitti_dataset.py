@@ -20,9 +20,10 @@ import numpy as np
 from skimage import io
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import box_utils, calibration_kitti, common_utils, object3d_kitti, safe_unpickler
+from ...utils import box_utils, calibration_kitti, common_utils, object3d_kitti
 from ..dataset import DatasetTemplate
 from nvidia_tao_pytorch.core.path_utils import expand_path
+from nvidia_tao_pytorch.core.distributed import safe_unpickler
 
 
 class KittiDataset(DatasetTemplate):
@@ -333,7 +334,7 @@ class KittiDataset(DatasetTemplate):
             single_pred_dict['frame_id'] = frame_id
             annos.append(single_pred_dict)
 
-            if output_path is not None:
+            if output_path:
                 cur_det_file = output_path / ('%s.txt' % frame_id)
                 with open(cur_det_file, 'w') as f:
                     bbox = single_pred_dict['bbox']

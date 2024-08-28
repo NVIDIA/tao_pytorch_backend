@@ -15,15 +15,12 @@
 
 """ Misc functions. """
 
-import os
-import pickle  # nosec B403
 import functools
 
 import torch
-import torch.distributed as dist
 
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
+from nvidia_tao_pytorch.core.utilities import patch_decrypt_checkpoint
 
 
 DEFAULT_TARGET_CLASS_MAPPING = {
@@ -70,14 +67,13 @@ def get_categories(cat_map):
     return categories_info, categories_dict
 
 
-def check_and_create(d):
-    """Create a directory."""
-    if not os.path.isdir(d):
-        os.makedirs(d, exist_ok=True)
+def load_pretrained_weights(pretrained_path, parser=None):
+    """To get over pytorch lightning module in the checkpoint state_dict.
 
-
-def load_pretrained_weights(pretrained_path):
-    """To get over pytorch lightning module in the checkpoint state_dict."""
+    Args:
+        pretrained_path (str): path to the pretrained model.
+        parser (function): function to parse the state dict for a custom model.
+    """
     temp = torch.load(pretrained_path,
                       map_location="cpu")
 
@@ -87,6 +83,9 @@ def load_pretrained_weights(pretrained_path):
         if key is None:
             raise PermissionError("Cannot access model state dict without the encryption key")
         temp = patch_decrypt_checkpoint(temp, key)
+
+    if "pytorch-lightning_version" not in temp and parser is not None:
+        temp["state_dict"] = parser(temp)
 
     # for loading pretrained I3D weights released on
     # https://github.com/piergiaj/pytorch-i3d
@@ -119,49 +118,6 @@ def match_name_keywords(n, name_keywords):
             out = True
             break
     return out
-
-
-def all_gather(data):
-    """Run all_gather on arbitrary picklable data (not necessarily tensors).
-
-    Args:
-        data: any picklable object.
-    Returns:
-        list[data]: list of data gathered from each rank.
-    """
-    world_size = get_world_size()
-    if world_size == 1:
-        return [data]
-
-    # serialized to a Tensor
-    buffer = pickle.dumps(data)
-    storage = torch.ByteStorage.from_buffer(buffer)
-    tensor = torch.ByteTensor(storage).to('cuda')
-
-    # obtain Tensor size of each rank
-    local_size = torch.tensor([tensor.numel()], device='cuda')
-    size_list = [torch.tensor([0], device='cuda') for _ in range(world_size)]
-    dist.all_gather(size_list, local_size)
-    size_list = [int(size.item()) for size in size_list]
-    max_size = max(size_list)
-
-    # receiving Tensor from all ranks
-    # we pad the tensor because torch all_gather does not support
-    # gathering tensors of different shapes
-    tensor_list = []
-    for _ in size_list:
-        tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device='cuda'))
-    if local_size != max_size:
-        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device='cuda')
-        tensor = torch.cat((tensor, padding), dim=0)
-    dist.all_gather(tensor_list, tensor)
-
-    data_list = []
-    for size, tensor in zip(size_list, tensor_list):
-        buffer = tensor.cpu().numpy().tobytes()[:size]
-        data_list.append(pickle.loads(buffer))  # nosec B301
-
-    return data_list
 
 
 def collate_fn(batch):
@@ -262,30 +218,6 @@ def inverse_sigmoid(x, eps=1e-5):
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)
     return torch.log(x1 / x2)
-
-
-def is_dist_avail_and_initialized():
-    """Check if DDP is initialized."""
-    is_dist = True
-    if not dist.is_available():
-        is_dist = False
-    else:
-        is_dist = dist.is_initialized() or False
-    return is_dist
-
-
-def get_world_size():
-    """Get world size."""
-    if not is_dist_avail_and_initialized():
-        return 1
-    return dist.get_world_size()
-
-
-def get_global_rank():
-    """Get global rank."""
-    if not is_dist_avail_and_initialized():
-        return 0
-    return dist.get_rank()
 
 
 def rgetattr(obj, attr, *args):

@@ -35,7 +35,7 @@ from torch.nn import Linear
 from torch import Tensor
 
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import patch_decrypt_checkpoint
+from nvidia_tao_pytorch.core.utilities import patch_decrypt_checkpoint
 
 
 def _ntuple(n):

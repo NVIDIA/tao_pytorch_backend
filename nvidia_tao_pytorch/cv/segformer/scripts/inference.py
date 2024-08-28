@@ -17,8 +17,9 @@ Evaluation of Segformer model.
 """
 import os
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
 from nvidia_tao_pytorch.cv.segformer.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.segformer.utils.config import MMSegmentationConfig
 
@@ -30,26 +31,17 @@ from mmengine.config import Config
 from mmseg.apis import MMSegInferencer
 
 
-def run_experiment(experiment_config, results_dir):
+def run_experiment(experiment_config):
     """Start the inference.
     Args:
         experiment_config (Dict): Config dictionary containing epxeriment parameters
         results_dir (str): Results dir to save the inference images
 
     """
-    os.makedirs(results_dir, exist_ok=True)
-    # Set the logger
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
-    status_logger = status_logging.get_status_logger()
-    # log to file
-    status_logger.write(message="**********************Start logging for Inference**********************.")
+    results_dir, model_path, _ = initialize_inference_experiment(experiment_config)
 
     mmseg_config = MMSegmentationConfig(experiment_config, phase="inference")
     eval_cfg = mmseg_config.updated_config
-
-    # This is provided in notebook
-    checkpoint = experiment_config.inference.checkpoint
 
     eval_cfg["visualizer"]["save_dir"] = results_dir
     mmseg_model_config = Config(eval_cfg)
@@ -67,14 +59,12 @@ def run_experiment(experiment_config, results_dir):
 
     inferencer = MMSegInferencer(
         model=mmseg_model_config,
-        weights=checkpoint,
+        weights=model_path,
         classes=classes,
         palette=palette)
 
     img_dir = mmseg_model_config.test_dataloader.dataset.data_prefix.img_path
     inferencer(img_dir, out_dir=results_dir, img_out_dir='vis_tao', pred_out_dir='mask_tao')
-
-    status_logger.write(message="Completed Inference.", status_level=status_logging.Status.SUCCESS)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,28 +75,10 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="test_isbi", schema=ExperimentConfig
 )
+@monitor_status(name="Segformer", mode="inference")
 def main(cfg: ExperimentConfig) -> None:
     """Run the Inference process."""
-    try:
-        # Obfuscate logs.
-        if cfg.inference.results_dir is not None:
-            results_dir = cfg.inference.results_dir
-        else:
-            results_dir = os.path.join(cfg.results_dir, "inference")
-        run_experiment(experiment_config=cfg,
-                       results_dir=results_dir)
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Inference was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_config=cfg)
 
 
 if __name__ == "__main__":

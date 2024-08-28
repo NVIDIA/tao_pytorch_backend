@@ -24,6 +24,8 @@ from torch import nn, Tensor
 import torch.utils.checkpoint as checkpoint
 
 from nvidia_tao_pytorch.core.modules.activation.activation import MultiheadAttention
+from nvidia_tao_pytorch.core.tlt_logging import logging
+
 from nvidia_tao_pytorch.cv.dino.model.model_utils import gen_encoder_output_proposals, MLP, _get_activation_fn, gen_sineembed_for_position
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import inverse_sigmoid
 from nvidia_tao_pytorch.cv.deformable_detr.model.ops.modules import MSDeformAttn
@@ -186,7 +188,7 @@ class DeformableTransformer(nn.Module):
             try:
                 num_patterns = int(num_patterns)
             except Exception:
-                print("num_patterns should be int but {}".format(type(num_patterns)))
+                logging.warning("num_patterns should be int but {}".format(type(num_patterns)))
                 num_patterns = 0
         self.num_patterns = num_patterns
 
@@ -244,7 +246,7 @@ class DeformableTransformer(nn.Module):
 
         self.rm_self_attn_layers = rm_self_attn_layers
         if rm_self_attn_layers is not None:
-            print("Removing the self-attn in {} decoder layers".format(rm_self_attn_layers))
+            logging.info("Removing the self-attn in {} decoder layers".format(rm_self_attn_layers))
             for lid, dec_layer in enumerate(self.decoder.layers):
                 if lid in rm_self_attn_layers:
                     dec_layer.rm_self_attn_modules()
@@ -598,7 +600,8 @@ class TransformerEncoder(nn.Module):
                                                    reference_points,
                                                    spatial_shapes,
                                                    level_start_index,
-                                                   key_padding_mask)
+                                                   key_padding_mask,
+                                                   use_reentrant=True)
 
             # aux loss
             if (layer_id != self.num_layers - 1) and ref_token_index is not None:
@@ -779,7 +782,8 @@ class TransformerDecoder(nn.Module):
                                                    spatial_shapes,
                                                    pos,
                                                    tgt_mask,
-                                                   memory_mask)
+                                                   memory_mask,
+                                                   use_reentrant=True)
 
             # iter update
             if self.bbox_embed is not None:

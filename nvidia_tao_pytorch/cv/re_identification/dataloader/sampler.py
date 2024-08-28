@@ -22,7 +22,7 @@ import copy
 import random
 import numpy as np
 import math
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 _LOCAL_PROCESS_GROUP = None
 
 

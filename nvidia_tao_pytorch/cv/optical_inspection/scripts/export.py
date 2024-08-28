@@ -16,12 +16,12 @@
 import os
 import torch
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import OIExperimentConfig
+from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.optical_inspection.dataloader.pl_oi_data_module import OIDataModule
 from nvidia_tao_pytorch.cv.optical_inspection.model.pl_oi_model import OpticalInspectionModel
-from nvidia_tao_pytorch.cv.optical_inspection.utils.common_utils import check_and_create
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Load experiment specification, additially using schema for validation/retrieving the default values.
@@ -30,9 +30,10 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"),
-    config_name="experiment", schema=OIExperimentConfig
+    config_name="experiment", schema=ExperimentConfig
 )
-def main(cfg: OIExperimentConfig) -> None:
+@monitor_status(name="Optical Inspection", mode="export")
+def main(cfg: ExperimentConfig) -> None:
     """CLI wrapper to run export.
 
     This function parses the command line interface for tlt-export, instantiates the respective
@@ -45,24 +46,7 @@ def main(cfg: OIExperimentConfig) -> None:
     Returns:
         No explicit returns.
     """
-    try:
-        run_export(cfg)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Export finished successfully"
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Export was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_export(cfg)
 
 
 def run_export(args):
@@ -74,25 +58,6 @@ def run_export(args):
     Returns:
         No explicit returns.
     """
-    if args.export.results_dir is not None:
-        results_dir = args.export.results_dir
-    else:
-        results_dir = os.path.join(args.results_dir, "export")
-    check_and_create(results_dir)
-
-    # Set status logging
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(
-        status_logging.StatusLogger(
-            filename=status_file,
-            append=True
-        )
-    )
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting Optical Inspection export"
-    )
-
     gpu_id = args.export.gpu_id
     torch.cuda.set_device(gpu_id)
     model_path = args.export.checkpoint
@@ -128,11 +93,14 @@ def run_export(args):
     if not os.path.exists(output_root):
         os.makedirs(output_root)
 
+    dm = OIDataModule(experiment_config)
+
     # load model
     pl_model = OpticalInspectionModel.load_from_checkpoint(
         model_path,
         map_location="cpu",
         experiment_spec=experiment_config,
+        dm=dm,
         export=True
     )
     model = pl_model.model

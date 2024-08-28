@@ -14,6 +14,7 @@
 
 """Utils Function"""
 
+import copy
 import os
 import tempfile
 from abc import abstractmethod
@@ -22,7 +23,7 @@ from omegaconf import OmegaConf
 
 import torch
 
-from nvidia_tao_pytorch.core.mmlab.mmclassification.model_params_mapping import map_params
+from nvidia_tao_pytorch.core.mmlab.mmclassification.model_params_mapping import map_params, map_input_lr_head, map_clip_model_cfg
 
 from mmengine.runner.checkpoint import load_checkpoint
 from mmpretrain.models import build_classifier
@@ -31,7 +32,13 @@ ROOT_DIR = os.getenv("NV_TLT_PYTORCH_TOP", os.getcwd())
 
 
 class MMPretrainConfig(object):
-    """Classification Config Class to convert Hydra config to MMcls config"""
+    """
+    Classification Config Class to convert Hydra config to MMcls config
+    """
+
+    PHASE_MAP = {"train": "train",
+                 "evaluate": "val",
+                 "inference": "test"}
 
     def __init__(self,
                  config,
@@ -49,9 +56,15 @@ class MMPretrainConfig(object):
         self.update_model_config()
         if phase == "train":
             self.update_train_params_config()
-        else:
-            self.updated_config["val_cfg"] = dict()
-            self.updated_config["test_cfg"] = dict()
+
+        if self.config["model"]["head"]["type"] == "LogisticRegressionHead":
+            # Currently, only support Resize for preprocess pipeline for LRHead
+            # Other online augmentations are not supported for now due to LRHead apply FeatureExtractor to get feature
+            # instead of utilizing dataloader
+            self.update_pipeline_config()
+
+        self.updated_config["val_cfg"] = dict()
+        self.updated_config["test_cfg"] = dict()
 
     def update_env(self):
         """Function to update env variables"""
@@ -106,13 +119,11 @@ class MMPretrainConfig(object):
     def update_dataset_config(self):
         """Update the dataset config"""
         #  Update Dataset config
-        dataset_config = self.config.pop("dataset")
+        dataset_config = self.config["dataset"]
         head_config = self.config["model"]["head"]
         topk = tuple(self.config["model"]["head"].pop("topk"))  # topk is not supported in MMPretrain in head
-        if self.phase == "evaluate":
-            self.updated_config["dataset_type"] = dataset_config["data"]["val"]["type"]
-        else:
-            self.updated_config["dataset_type"] = dataset_config["data"][self.phase]["type"]
+
+        self.updated_config["dataset_type"] = dataset_config["data"][self.PHASE_MAP[self.phase]]["type"]
         self.updated_config["data_preprocessor"] = dataset_config["img_norm_cfg"]
         self.updated_config["data_preprocessor"]["num_classes"] = head_config["num_classes"]
         self.updated_config["train_dataloader"] = self.get_dataloader_config(dataset_config, "train")
@@ -127,7 +138,7 @@ class MMPretrainConfig(object):
         #  Update Model Config
         #  Head Update
         #  Tok should be tuple. Hydra converts it to list by default
-        self.updated_config["model"] = self.config["model"]
+        self.updated_config["model"] = copy.deepcopy(self.config["model"])
         if self.updated_config["model"]["head"]["type"] == "FANLinearClsHead":  # For Backward compatibility
             self.updated_config["model"]["head"]["type"] = "TAOLinearClsHead"
 
@@ -141,6 +152,8 @@ class MMPretrainConfig(object):
         self.updated_config["model"]["head"].pop("lr_head")
         if self.updated_config["model"]["head"]["type"] == "LogisticRegressionHead":
             self.updated_config["model"]["head"]["type"] = "TAOLinearClsHead"
+            self.updated_config["model"]["head"]["binary"] = self.updated_config["data_preprocessor"]["num_classes"] == 2  # user binary under the hood
+
         self.updated_config["model"]["head"] = self.update_custom_args(self.updated_config["model"]["head"])
         self.updated_config["model"]["backbone"] = self.update_custom_args(self.updated_config["model"]["backbone"])
         if self.updated_config["model"]["backbone"]["type"] == "open_clip":
@@ -148,13 +161,19 @@ class MMPretrainConfig(object):
         else:
             bb_type = self.updated_config["model"]["backbone"]["type"]
         self.updated_config["model"]["head"] = self.assign_arch_specific_params(self.updated_config["model"]["head"], map_params_head, bb_type)
-        map_params_head = map_params.get("backbone", None)
 
         #  Update backbone params from the map json
-        self.updated_config["model"]["backbone"] = self.assign_arch_specific_params(self.updated_config["model"]["backbone"], map_params_head, bb_type)
+        map_params_backbone = map_params.get("backbone", None)
+        self.updated_config["model"]["backbone"] = self.assign_arch_specific_params(self.updated_config["model"]["backbone"], map_params_backbone, bb_type)
+
+        #  Update neck params from the map json
         if self.updated_config["model"]["neck"]:  # Neck config is not must. Hence we do this check
             map_params_neck = map_params.get("neck", None)
             self.updated_config["model"]["neck"] = self.assign_arch_specific_params(self.updated_config["model"]["neck"], map_params_neck, bb_type)
+
+        # Update model config for open_clip
+        if self.updated_config["model"]["backbone"]["type"] == "open_clip":
+            self.updated_config["model"]["backbone"]["model_cfg"] = map_clip_model_cfg.get(bb_type)
 
     def get_updated_optimizer(self, cfg):
         """Get the updated optimizer"""
@@ -171,8 +190,6 @@ class MMPretrainConfig(object):
         """Update train parameters"""
         #  Update Train Params
         train_param_config = self.config["train"]["train_config"]
-        self.updated_config["val_cfg"] = dict()
-        self.updated_config["test_cfg"] = dict()
         self.updated_config["default_hooks"] = train_param_config["default_hooks"]
         self.updated_config["default_hooks"]["checkpoint"]["interval"] = train_param_config["checkpoint_config"]["interval"]
         self.updated_config["default_hooks"]["logger"]["type"] = "TaoTextLoggerHook"
@@ -185,6 +202,20 @@ class MMPretrainConfig(object):
         self.updated_config["resume"] = train_param_config["resume"]
         self.updated_config["custom_hooks"] = train_param_config["custom_hooks"]
         self.updated_config["find_unused_parameters"] = train_param_config["find_unused_parameters"]
+
+    def update_pipeline_config(self):
+        """Update pipeline config.
+        Currently, this is a special handling for lr head training and inference
+        """
+        resize_scale = map_input_lr_head.get(self.config["model"]["backbone"]["type"])
+        if not resize_scale:
+            for pipeline in self.config["dataset"]["data"][self.PHASE_MAP[self.phase]]["pipeline"]:
+                if pipeline["type"] == "Resize" or pipeline["type"] == "RandomResizedCrop":
+                    resize_scale = pipeline["scale"]
+                    break
+        pipeline = {"type": "Resize", "scale": resize_scale}
+        self.updated_config["test_dataloader"]["dataset"]["pipeline"] = [{"type": "LoadImageFromFile"}] + \
+            [pipeline] + [{"type": "PackInputs"}]
 
 
 def load_model(model_path, mmcls_config=None, return_ckpt=False):

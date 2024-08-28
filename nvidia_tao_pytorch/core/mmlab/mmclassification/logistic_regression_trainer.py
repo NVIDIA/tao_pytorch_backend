@@ -16,10 +16,12 @@
 
 from abc import abstractmethod
 from tqdm import tqdm
+from typing import Optional
 import dataclasses
 from omegaconf import OmegaConf
 import time
 from datetime import timedelta
+from collections import defaultdict
 
 from mmengine import Config
 from mmpretrain import FeatureExtractor, get_model
@@ -31,7 +33,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
 import numpy as np
 
-from nvidia_tao_pytorch.core.mmlab.mmclassification.model_params_mapping import map_input_lr_head
 from nvidia_tao_pytorch.core.mmlab.mmclassification.logistic_regression_dataset import LRDataset
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
@@ -73,19 +74,18 @@ class LogisticRegressionTrainer(object):
         self.val_dataloader = DataLoader(val_dataset, batch_size=self.train_cfg["dataset"]["data"]["samples_per_gpu"],
                                          shuffle=False, num_workers=4, pin_memory=True)
 
-        if self.updated_config["model"]["backbone"]["type"] in map_input_lr_head.keys():
-            pipeline = {"type": "Resize", "scale": map_input_lr_head[self.updated_config["model"]["backbone"]["type"]]}
-            self.updated_config["test_dataloader"]["dataset"]["pipeline"] = [{"type": "LoadImageFromFile"}] + \
-                [pipeline] + [{"type": "PackInputs"}]
-
-    def build_classifier(self):
-        """Builds the logistic regression classifier."""
+    def build_classifier(self, c: Optional[float] = None):
+        """Builds the logistic regression classifier.
+        Args:
+            c (float): Inverse of regularization strength
+        """
         lr_head_config = self.train_cfg['model']['head']['lr_head']
         self.classifier = LogisticRegression(random_state=0,
-                                             C=lr_head_config['C'],
+                                             C=c if c else lr_head_config['C'],
                                              max_iter=lr_head_config['max_iter'],
                                              verbose=1,
-                                             class_weight=lr_head_config['class_weight'])
+                                             class_weight=lr_head_config['class_weight'],
+                                             multi_class='multinomial')
 
     def get_model(self):
         """Get Model."""
@@ -130,11 +130,52 @@ class LogisticRegressionTrainer(object):
         print(f"[validation accuracy = {val_accuracy:.4f}]")
         return val_accuracy, val_loss
 
+    def hyperparams_search(self):
+        """Grid search for hyperparameters. Currently only support C of LogisticRegression head"""
+        results = defaultdict(dict)
+        criteria = self.train_cfg["model"]["head"]["lr_head"]["criteria"]
+        cs_tune = self.train_cfg["model"]["head"]["lr_head"]["cs_tune"]
+
+        assert criteria in ["accuracy", "loss"], "Only suport accuracy and loss criteria"
+
+        if not cs_tune:
+            raise ValueError("cs_tune must be a list of float for hpo.")
+
+        self.status_logger.write(message="********************** Start logging for Hyperparameter C tuning **********************.")
+        for c_val in cs_tune:
+            print(f"Hyperparameters search: C={c_val}")
+            # train classifier for specific c_val
+            self.build_classifier(c_val)
+            self.classifier.fit(self.train_features, self.train_labels)
+
+            val_accuracy, val_loss = self.get_validation_metrics()
+
+            # status logging
+            self.status_logger.kpi = {"C": c_val, "val_loss": val_loss, "val_acc": val_accuracy}
+            self.status_logger.write(
+                message="Hyperparameters search val metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+
+            results["accuracy"][str(c_val)] = val_accuracy
+            results["loss"][str(c_val)] = val_loss
+
+        # get the best c by criteria
+        metrics = results[criteria]
+        best_c = min(metrics, key=metrics.get) if criteria == 'loss' else max(metrics, key=metrics.get)
+
+        return float(best_c)
+
     @abstractmethod
     def fit(self):
         """Fit Function."""
-        # if hpo: TODO @zaid: add hpo for LR
-        #     c_val = search_hyperparams()
+        if self.train_cfg["model"]["head"]["lr_head"]["hpo"]:
+            c_val = self.hyperparams_search()
+            self.status_logger.kpi = {"Best C": c_val}
+            self.status_logger.write(message="Finish Hyperparameter C tuning.")
+
+            self.build_classifier(c=c_val)
+
         start_time = time.time()
         self.classifier.fit(self.train_features, self.train_labels)
         end_time = time.time()

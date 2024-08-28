@@ -124,7 +124,7 @@ def build_dataloader(cfg, is_train):
                 train_dataset, batch_size=cfg["dataset"]["batch_size"] * num_gpus,
                 sampler=RandomIdentitySampler(dataset.train, cfg["dataset"]["batch_size"] * num_gpus,
                                               cfg["dataset"]["num_instances"] * num_gpus),
-                num_workers=num_workers, collate_fn=train_collate_fn, drop_last=True
+                num_workers=num_workers, collate_fn=train_collate_fn
             )
         enumerate(train_loader)
     else:

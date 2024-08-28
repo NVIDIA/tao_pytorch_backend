@@ -21,6 +21,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.cv.dino.model.dn_components import prepare_for_cdn, dn_post_process
 from nvidia_tao_pytorch.cv.dino.model.model_utils import MLP
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import (tensor_from_tensor_list, inverse_sigmoid)
@@ -234,7 +235,7 @@ class DINO(nn.Module):
             self.refpoint_embed.weight.data[:, :2].requires_grad = False
 
         if self.fix_refpoints_hw > 0:
-            print("fix_refpoints_hw: {}".format(self.fix_refpoints_hw))
+            logging.info("fix_refpoints_hw: {}".format(self.fix_refpoints_hw))
             assert self.random_refpoints_xy
             self.refpoint_embed.weight.data[:, 2:] = self.fix_refpoints_hw
             self.refpoint_embed.weight.data[:, 2:] = inverse_sigmoid(self.refpoint_embed.weight.data[:, 2:])
@@ -242,7 +243,7 @@ class DINO(nn.Module):
         elif int(self.fix_refpoints_hw) == -1:
             pass
         elif int(self.fix_refpoints_hw) == -2:
-            print('learn a shared h and w')
+            logging.info('learn a shared h and w')
             assert self.random_refpoints_xy
             self.refpoint_embed = nn.Embedding(use_num_queries, 2)
             self.refpoint_embed.weight.data[:, :2].uniform_(0, 1)
@@ -333,6 +334,8 @@ class DINO(nn.Module):
                 dn_post_process(outputs_class, outputs_coord_list,
                                 dn_meta, self.aux_loss, self._set_aux_loss)
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord_list[-1]}
+        if not self.export:
+            out['srcs'] = srcs
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord_list)
 

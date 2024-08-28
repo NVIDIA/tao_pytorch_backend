@@ -18,7 +18,6 @@ Misc functions, including distributed helpers.
 from typing import List, Optional
 
 import torch
-import torch.distributed as dist
 import torchvision
 from torch import Tensor
 
@@ -111,11 +110,3 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTen
     mask = torch.stack(padded_masks)
 
     return NestedTensor(tensor, mask=mask)
-
-
-def is_dist_avail_and_initialized():
-    if not dist.is_available():
-        return False
-    if not dist.is_initialized():
-        return False
-    return True

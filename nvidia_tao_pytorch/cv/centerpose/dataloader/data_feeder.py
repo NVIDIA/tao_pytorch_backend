@@ -64,7 +64,7 @@ class ObjectPoseDataset(Dataset):
         self.images += self._load_data(self.img_dir, extensions=VALID_IMAGE_EXTENSIONS)
         self.num_samples = len(self.images)
         if self.num_samples == 0:
-            raise FileNotFoundError(f"No valid image with extensions {VALID_IMAGE_EXTENSIONS} found in the provided directories")
+            raise FileNotFoundError(f"No valid image with extensions {VALID_IMAGE_EXTENSIONS} found in following directories {self.img_dir}.")
         logger.info('Loaded {} {} samples'.format(split, self.num_samples))
 
     def __len__(self):
@@ -439,7 +439,7 @@ class CPPredictDataset(Dataset):
         self.images = []
         self.images += self._load_data(self.inference_data)
         if len(self.images) == 0:
-            raise FileNotFoundError(f"No valid image with extensions {VALID_IMAGE_EXTENSIONS} found in the provided directories")
+            raise FileNotFoundError(f"No valid image with extensions {VALID_IMAGE_EXTENSIONS} found in following directories {self.inference_data}.")
         logger.info('Initializing {} inference images.'.format(len(self.images)))
 
     def __len__(self):

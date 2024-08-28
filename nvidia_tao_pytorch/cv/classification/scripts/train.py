@@ -14,6 +14,7 @@
 
 """ MMClassification Train Module """
 
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.mmlab.mmclassification.classification_default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.mmlab.mmclassification.utils import MMPretrainConfig
@@ -32,22 +33,15 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-def run_experiment(experiment_config, results_dir):
+def run_experiment(experiment_config):
     """Start the training."""
-    os.makedirs(results_dir, exist_ok=True)
-    # Set status logging
+    if experiment_config.get("train", {}).get("train_config", {}).get("resume_training_checkpoint_path", None) == "":
+        experiment_config["train"]["train_config"]["resume_training_checkpoint_path"] = None
+    if experiment_config.get("train", {}).get("train_config", {}).get("load_from", None) == "":
+        experiment_config["train"]["train_config"]["load_from"] = None
 
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(
-        status_logging.StatusLogger(
-            filename=status_file,
-            append=True
-        )
-    )
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting Classification Train"
-    )
+    results_dir = experiment_config.results_dir
+
     status_logger = status_logging.get_status_logger()
     status_logger.write(message="********************** Start logging for Training **********************.")
     mmpretrain_config = MMPretrainConfig(experiment_config, phase="train")
@@ -88,29 +82,10 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="train_cats_dogs_new_fan", schema=ExperimentConfig
 )
+@monitor_status(name="Classification", mode="train")
 def main(cfg: ExperimentConfig) -> None:
     """Run the training process."""
-    try:
-        if cfg.train.results_dir is not None:
-            results_dir = cfg.train.results_dir
-        else:
-            results_dir = os.path.join(cfg.results_dir, "train")
-
-        run_experiment(cfg, results_dir=results_dir)
-        status_logging.get_status_logger().write(status_level=status_logging.Status.SUCCESS,
-                                                 message="Training finished successfully.")
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Training was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(cfg)
 
 
 if __name__ == "__main__":

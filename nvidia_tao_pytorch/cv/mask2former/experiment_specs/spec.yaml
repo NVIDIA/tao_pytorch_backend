@@ -1,0 +1,62 @@
+results_dir: /tao_experiments/mask2former_swinl
+dataset:
+  contiguous_id: False
+  label_map: /tao_experiments/mask2former/ade_color_map.json
+  train:
+    type: 'ade'
+    name: "ade_train"
+    annot_file: "/datasets/ade_train.jsonl"
+    root_dir: ""
+    batch_size: 16
+    num_workers: 20
+  val:
+    type: 'ade'
+    name: "ade_val"
+    annot_file: "/datasets/ade_val.jsonl"
+    root_dir: ""
+    batch_size: 1
+    num_workers: 2
+  test:
+    img_dir: /datasets/ade20k_test/
+    batch_size: 2
+    # target_size: [640, 640]
+  augmentation:
+    train_min_size: [640]
+    train_max_size: 2560
+    train_crop_size: [640, 640]
+    test_min_size: 640
+    test_max_size: 2560
+train:
+  precision: 'fp16'
+  num_gpus: 1
+  checkpoint_interval: 1
+  validation_interval: 1
+  num_epochs: 130
+  optim:
+    type: "AdamW"
+    lr: 0.0001
+    weight_decay: 0.05
+    lr_scheduler: "WarmupPoly"
+model:
+  mode: "semantic"
+  backbone:
+    pretrained_weights: "/tao_experiments/mask2former/swin_large_patch4_window12_384_22k.pth"
+    type: "swin"
+    swin:
+      type: "large"
+      window_size: 12
+      ape: False
+      pretrain_img_size: 384
+    efficientvit:
+      name: "l2"
+  mask_former:
+    num_object_queries: 200
+  sem_seg_head:
+    norm: "GN"
+inference:
+  checkpoint: "/tao_experiments/mask2former_swinl/train/model_epoch=129-v1.pth"
+evaluate:
+  checkpoint: "/tao_experiments/mask2former_swinl/train/model_epoch=129-v1.pth"
+export:
+  checkpoint: "/tao_experiments/mask2former_swinl/train/model_epoch=129-v1.pth"
+  opset_version: 17

@@ -81,12 +81,12 @@ if [ $BUILD_DOCKER = "1" ]; then
           mkdir -p $wheel_dir
         fi
         echo "Building source code wheel ..."
-        tao_pt --env 'TORCH_CUDA_ARCH_LIST="5.3 6.0 6.1 7.0 7.5 8.0 8.6 9.0"' -- bash /tao-pt/release/docker/build_wheel.sh
+        tao_pt --env 'TORCH_CUDA_ARCH_LIST="5.3 6.0 6.1 7.0 7.5 8.0 8.6 9.0"' -- python setup.py bdist_wheel
     else
         echo "Skipping wheel builds ..."
     fi
     
-    docker build -f $NV_TAO_PYTORCH_TOP/release/docker/Dockerfile -t $registry/$repository:$tag $NO_CACHE --network=host $NV_TAO_PYTORCH_TOP/.
+    docker build --pull -f $NV_TAO_PYTORCH_TOP/release/docker/Dockerfile -t $registry/$repository:$tag $NO_CACHE --network=host $NV_TAO_PYTORCH_TOP/.
 
     if [ $PUSH_DOCKER = "1" ]; then
         echo "Pusing docker ..."
@@ -105,7 +105,7 @@ if [ $BUILD_DOCKER = "1" ]; then
     fi
 elif [ $RUN_DOCKER ="1" ]; then
     echo "Running docker interactively..."
-    docker run --gpus all -v /home/$USER/tlt-experiments:/workspace/tlt-experiments \
+    docker run --gpus all -v $HOME/tlt-experiments:/workspace/tlt-experiments  \
                           --network=host \
                           --shm-size=30g \
                           --ulimit memlock=-1 \

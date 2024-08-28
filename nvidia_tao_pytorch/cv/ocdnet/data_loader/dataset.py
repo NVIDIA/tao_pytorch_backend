@@ -19,14 +19,17 @@
 # https://github.com/WenmuZhou/DBNet.pytorch/blob/master/LICENSE.md
 # **************************************************************************
 """Dataset module."""
+import os
 import pathlib
 import cv2
+import multiprocessing
 import numpy as np
+import torch
+from torch.utils.data import Dataset
 
 from nvidia_tao_pytorch.cv.ocdnet.base.base_dataset import BaseDataSet
 from nvidia_tao_pytorch.cv.ocdnet.utils import order_points_clockwise, get_datalist, get_datalist_uber
-
-import multiprocessing
+from nvidia_tao_pytorch.cv.ocdnet.utils.util import get_file_list
 
 
 class UberDataset(BaseDataSet):
@@ -134,3 +137,37 @@ class ICDAR2015Dataset(BaseDataSet):
         }
 
         return data
+
+
+class CustomImageDataset(Dataset):
+    """Custom Image Dataset."""
+
+    def __init__(self, img_dir, width, height, image_mode):
+        """Initialize."""
+        self.img_paths = get_file_list(img_dir, p_postfix=['.jpg', '.png', '.jpeg', '.JPG', '.PNG', '.JPEG', '.bmp'])
+        self.width = width
+        self.height = height
+        self.image_mode = image_mode
+
+    def __len__(self):
+        """Length."""
+        return len(self.img_paths)
+
+    def __getitem__(self, idx):
+        """Get image."""
+        img_path = self.img_paths[idx]
+        assert os.path.exists(img_path), 'file is not exists'
+        ori_img = cv2.imread(img_path, 1 if self.image_mode != 'GRAY' else 0).astype(np.float32)
+        if self.image_mode == 'RGB':
+            ori_img = cv2.cvtColor(ori_img, cv2.COLOR_BGR2RGB)
+        # h, w = ori_img.shape[:2]
+        ori_img = cv2.resize(ori_img, (self.width, self.height))
+        rgb_mean = np.array([122.67891434, 116.66876762, 104.00698793])
+        image = ori_img
+        image -= rgb_mean
+        image /= 255.
+        tensor = torch.from_numpy(image).permute(2, 0, 1).float()
+        # change (w,h) to (1,img_channel,h,w)
+        # tensor = tensor.unsqueeze_(0)
+
+        return {'img': tensor, 'img_path': img_path}

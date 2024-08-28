@@ -1,7 +1,6 @@
-results_dir: '/home/scratch.p3/yuw/tlt3_experiments/mal_vit'
-data:
-  train_ann_path: '/home/scratch.p3/yuw/datasets/coco/annotations/instances_train2017.json'
-  train_img_dir: '/home/scratch.p3/yuw/datasets/coco/raw-data/train2017'
-  val_ann_path: '/home/scratch.p3/yuw/datasets/coco/annotations/instances_val2017.json'
-  val_img_dir: '/home/scratch.p3/yuw/datasets/coco/raw-data/val2017'
-# checkpoint: '/home/scratch.p3/yuw/tlt3_experiments/mal_fan/fan_vit_base.pth.tar'
+results_dir: ???
+dataset:
+  train_ann_path: ???
+  train_img_dir: ???
+  val_ann_path: ???
+  val_img_dir: ???

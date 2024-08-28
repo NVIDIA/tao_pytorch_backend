@@ -4,7 +4,7 @@
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "ERROR: This script should be sourced into the current shell.  Use the following syntax:"
     echo ""
-    echo "    . scripts/envsetup.sh"
+    echo "    source scripts/envsetup.sh"
     echo ""
     exit 1
 fi
@@ -48,11 +48,6 @@ function _check_tlt_pytorch_requirements(){
     # Check python.
     if ! command -v python >/dev/null; then
         echo -e "\033[1;31mERROR:\033[0m python not found"
-        return 1
-    fi
-
-    if ! command -v jq >/dev/null; then
-        echo -e "\033[1;31mERROR:\033[0m jq not found"
         return 1
     fi
 

@@ -16,6 +16,7 @@
 
 import argparse
 import torch
+from nvidia_tao_pytorch.core.tlt_logging import logging
 
 
 def interpolate_pos_embed(checkpoint_model,
@@ -42,7 +43,7 @@ def interpolate_pos_embed(checkpoint_model,
         orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)  # 16
 
         if orig_resolution:
-            assert orig_resolution == orig_size * orig_patch_size,\
+            assert orig_resolution == orig_size * orig_patch_size, \
                 f"Resolution {orig_resolution} and patch size {orig_patch_size} do not match"
         else:
             orig_resolution = orig_size * orig_patch_size
@@ -65,9 +66,9 @@ def interpolate_pos_embed(checkpoint_model,
         new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
         checkpoint_model['pos_embed'] = new_pos_embed
 
-        print(f"Resolution: {orig_resolution}")
-        print(f"Old Pos Embed: {pos_embed_checkpoint.shape}")
-        print(f"New Pos Embed: {new_pos_embed.shape}")
+        logging.info(f"Resolution: {orig_resolution}")
+        logging.info(f"Old Pos Embed: {pos_embed_checkpoint.shape}")
+        logging.info(f"New Pos Embed: {new_pos_embed.shape}")
 
     return checkpoint_model
 
@@ -118,8 +119,8 @@ if __name__ == '__main__':
                                        new_resolution=args.new_resolution,
                                        new_patch_size=args.new_patch_size)
 
-    print('======== new state_dict ========')
+    logging.info('======== new state_dict ========')
     for k, v in list(checkpoint.items()):
-        print(k, '\t', v.shape)
+        logging.info(k, '\t', v.shape)
 
     torch.save(checkpoint, args.output)

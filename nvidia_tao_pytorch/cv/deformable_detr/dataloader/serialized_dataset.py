@@ -7,17 +7,15 @@ https://github.com/facebookresearch/detectron2/blob/main/detectron2/data/common.
 import os
 import contextlib
 import io
-import pickle  # nosec B403
 import torch
 
 from typing import Dict, List, Any
 from pycocotools.coco import COCO
 from PIL import Image, ImageOps
-import numpy as np
 
-from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.utils.safe_unpickler import SafeUnpickler
 from nvidia_tao_pytorch.cv.deformable_detr.utils.data_source_config import build_data_source_lists
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import get_global_rank
+from nvidia_tao_pytorch.core.distributed.comm import get_local_rank
+from nvidia_tao_pytorch.core.distributed.serialized_object import TorchShmSerializedList
 
 
 def load_coco_json(json_file: str, image_root: str) -> List[Dict]:
@@ -112,8 +110,9 @@ def build_shm_dataset(data_sources, transforms):
     for data_source in data_source_list:
         image_dir = data_source.image_dir
         for _json_file in data_source.dataset_files:
-            dl = load_coco_json(_json_file, image_root=image_dir)
-            dataset_list.extend(dl)
+            if get_local_rank() == 0:
+                dl = load_coco_json(_json_file, image_root=image_dir)
+                dataset_list.extend(dl)
     dataset = SerializedDatasetFromList(dataset_list, transforms=transforms)
     return dataset
 
@@ -133,28 +132,12 @@ class SerializedDatasetFromList(torch.utils.data.Dataset):
             lst (list): list of dataset dicts.
             transforms (dict): augmentations to apply.
         """
-        def _serialize(data):
-            buffer = pickle.dumps(data, protocol=4)
-            return np.frombuffer(buffer, dtype=np.uint8)
-
-        if get_global_rank() == 0:
-            print(f"Serializing {len(lst)} elements to byte tensors and concatenating them all ...")
-
-        self._lst = [_serialize(x) for x in lst]
-        self._addr = np.asarray([len(x) for x in self._lst], dtype=np.int64)
-        self._addr = np.cumsum(self._addr)
-        self._lst = np.concatenate(self._lst)
-
-        if get_global_rank() == 0:
-            print(f"Serialized dataset takes {len(self._lst) / 1024 ** 2:.2f} MiB")
-        self._addr = torch.from_numpy(self._addr)
-        self._lst = torch.from_numpy(self._lst)
-
         self.transforms = transforms
+        self.metas = TorchShmSerializedList(lst)
 
     def __len__(self):
         """__len__"""
-        return len(self._addr)
+        return len(self.metas)
 
     def _process_image_target(self, image: Image.Image, target: List[Any], img_id: int):
         """Process the image and target given image id.
@@ -211,12 +194,7 @@ class SerializedDatasetFromList(torch.utils.data.Dataset):
             (image, target, image_path): pre-processed image, target and image_path for the model
 
         """
-        start_addr = 0 if idx == 0 else self._addr[idx - 1].item()
-        end_addr = self._addr[idx].item()
-        data_bytes = memoryview(self._lst[start_addr:end_addr].numpy())
-        # Secure pickle unloading
-        record = SafeUnpickler(data_bytes, SerializedDatasetFromList).load()
-
+        record = self.metas[idx]
         image_path = record['file_name']
         image = Image.open(image_path).convert("RGB")
         image = ImageOps.exif_transpose(image)

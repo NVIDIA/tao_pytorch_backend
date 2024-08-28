@@ -19,7 +19,7 @@ import os
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import OIExperimentConfig
+from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.optical_inspection.utils.data_preprocess import output_combined_dataset, preprocess_boards_cam
 
 
@@ -76,14 +76,14 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment",
-    schema=OIExperimentConfig
+    schema=ExperimentConfig
 )
-def main(cfg: OIExperimentConfig) -> None:
+def main(cfg: ExperimentConfig) -> None:
     """Run the dataset conversion process."""
     try:
         run_experiment(experiment_config=cfg)
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Dataset convert finished successfully."
         )
     except (KeyboardInterrupt, SystemExit):

@@ -28,7 +28,7 @@ import onnx_graphsurgeon as onnx_gs
 from torchvision.ops import DeformConv2d
 import tempfile
 
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
 from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
@@ -164,25 +164,6 @@ class Export():
         )
 
         self.model.eval()
-        if self.config_file.export.results_dir is not None:
-            results_dir = self.config_file.export.results_dir
-        else:
-            results_dir = os.path.join(self.config_file.results_dir, "export")
-            self.config_file.export.results_dir = results_dir
-        os.makedirs(results_dir, exist_ok=True)
-
-        # Set status logging
-        status_file = os.path.join(results_dir, "status.json")
-        status_logging.set_status_logger(
-            status_logging.StatusLogger(
-                filename=status_file,
-                append=True
-            )
-        )
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.STARTED,
-            message="Starting OCDNet export"
-        )
 
         # Set default output filename if the filename isn't provided over the command line.
         if self.config_file.export.onnx_file is None:
@@ -254,30 +235,14 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="export", schema=ExperimentConfig
 )
+@monitor_status(name="OCDNet", mode="export")
 def main(cfg: ExperimentConfig) -> None:
     """Run the export process."""
     # Obfuscate logs.
     obfuscate_logs(cfg)
 
-    try:
-        exporter = Export(config_file=cfg)
-        exporter.export()
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Export finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Export was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    exporter = Export(config_file=cfg)
+    exporter.export()
 
 
 if __name__ == "__main__":

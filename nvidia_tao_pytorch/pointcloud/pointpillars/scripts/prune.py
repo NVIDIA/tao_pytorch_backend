@@ -13,18 +13,16 @@
 # limitations under the License.
 
 """Pruning script for PointPillars."""
-import argparse
 import datetime
 import os
 from pathlib import Path
 import tempfile
 import torch
+from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.path_utils import expand_path
 import nvidia_tao_pytorch.pruning.torch_pruning_v0 as tp
-from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.config import (
-    cfg, cfg_from_yaml_file
-)
+from nvidia_tao_pytorch.pointcloud.pointpillars.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.utils import common_utils
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.datasets import build_dataloader
 from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.models import (
@@ -36,36 +34,24 @@ from nvidia_tao_pytorch.pointcloud.pointpillars.tools.train_utils.train_utils im
 )
 
 
-def parse_args(args=None):
-    """Argument Parser."""
-    parser = argparse.ArgumentParser(description="model pruning")
-    parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
-    parser.add_argument('--output_dir', type=str, default=None, help='output directory.')
-    parser.add_argument('--workers', type=int, default=8, help='number of workers for dataloader')
-    parser.add_argument('--pruning_thresh', "-pth", type=float, default=0.1, help='Pruning threshold')
-    parser.add_argument("--key", "-k", type=str, required=True, help="Encryption key")
-    args = parser.parse_args()
-    cfg_from_yaml_file(expand_path(args.cfg_file), cfg)
-    return args, cfg
+spec_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "cfgs")
 
 
-def prune_model():
+# Load experiment specification, additially using schema for validation/retrieving the default values.
+# --config_path and --config_name will be provided by the entrypoint script.
+@hydra_runner(
+    config_path=spec_root, config_name="pointpillar_general", schema=ExperimentConfig
+)
+def prune_model(cfg: ExperimentConfig) -> None:
     """Prune the PointPillars model."""
-    args, cfg = parse_args()
-    dist_train = False
-    args.batch_size = 1
-    args.epochs = cfg.train.num_epochs
-    threshold = args.pruning_thresh
-    if args.output_dir is None:
-        if cfg.results_dir is None:
-            raise OSError("Either provide results_dir in config file or provide output_dir as a CLI argument")
-        else:
-            args.output_dir = cfg.results_dir
-    args.output_dir = expand_path(args.output_dir)
-    output_dir = Path(args.output_dir)
+    threshold = cfg.prune.pruning_thresh
+    if cfg.results_dir is None:
+        raise OSError("Either provide output_dir in config file or provide output_dir as a CLI argument")
+    cfg.results_dir = expand_path(cfg.results_dir)
+    output_dir = Path(cfg.results_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     log_file = output_dir / ('log_train_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
-    logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
+    logger = common_utils.create_logger(log_file, rank=cfg.local_rank)
     # Set status logging
     status_file = os.path.join(str(output_dir), "status.json")
     status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file, append=True))
@@ -73,13 +59,15 @@ def prune_model():
     # -----------------------create dataloader & network & optimizer---------------------------
     train_loader = build_dataloader(
         dataset_cfg=cfg.dataset,
-        class_names=cfg.class_names,
-        batch_size=args.batch_size,
-        dist=dist_train, workers=args.workers,
+        class_names=cfg.dataset.class_names,
+        batch_size=1,
+        dist=False,
+        workers=cfg.dataset.num_workers,
         logger=logger,
         training=True,
+        info_path=cfg.dataset.data_info_path,
         merge_all_iters_to_one_epoch=False,
-        total_epochs=args.epochs
+        total_epochs=cfg.train.num_epochs
     )[1]
     input_dict = next(iter(train_loader))
     load_data_to_gpu(input_dict)
@@ -87,7 +75,7 @@ def prune_model():
         raise OSError("Please provide prune.model in config file")
     if not os.path.exists(expand_path(cfg.prune.model)):
         raise OSError(f"Model not found: {cfg.prune.model}")
-    model = load_checkpoint(cfg.prune.model, args.key)[0]
+    model = load_checkpoint(cfg.prune.model, cfg.key)[0]
     model = model.cuda()
     model = model.eval()
     unpruned_total_params = sum(p.numel() for p in model.parameters())
@@ -119,11 +107,11 @@ def prune_model():
         status_level=status_logging.Status.RUNNING,
         message="Pruning ratio: {}".format(pruned_total_params / unpruned_total_params)
     )
-    save_path = expand_path(f"{args.output_dir}/pruned_{threshold}.tlt")
+    save_path = expand_path(f"{cfg.results_dir}/pruned_{threshold}.tlt")
     handle, temp_file = tempfile.mkstemp()
     os.close(handle)
     torch.save(model, temp_file)
-    encrypt_pytorch(temp_file, save_path, args.key)
+    encrypt_pytorch(temp_file, save_path, cfg.key)
     print(f"Pruned model saved to {save_path}")
     status_logging.get_status_logger().write(
         status_level=status_logging.Status.RUNNING,
@@ -136,7 +124,7 @@ if __name__ == "__main__":
     try:
         prune_model()
         status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
+            status_level=status_logging.Status.RUNNING,
             message="Pruning finished successfully."
         )
     except (KeyboardInterrupt, SystemExit):

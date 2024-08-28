@@ -17,18 +17,15 @@
 import os
 import torch
 
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.core.utilities import update_results_dir
-from nvidia_tao_pytorch.cv.action_recognition.utils.common_utils import check_and_create, encrypt_onnx
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
+from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
+from nvidia_tao_pytorch.core.utilities import encrypt_onnx
+from nvidia_tao_pytorch.cv.optical_inspection.dataloader.pl_oi_data_module import OIDataModule
 from nvidia_tao_pytorch.cv.visual_changenet.utils.onnx_export import ONNXExporter
-
 from nvidia_tao_pytorch.cv.visual_changenet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.cn_pl_model import ChangeNetPlModel as ChangeNetPlSegment
 from nvidia_tao_pytorch.cv.visual_changenet.classification.models.cn_pl_model import ChangeNetPlModel as ChangeNetPlClassifier
-from nvidia_tao_pytorch.core.path_utils import expand_path
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -38,6 +35,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment_spec", schema=ExperimentConfig
 )
+@monitor_status(name="Visual ChangeNet", mode="export")
 def main(cfg: ExperimentConfig) -> None:
     """CLI wrapper to run export.
     This function parses the command line interface for tlt-export, instantiates the respective
@@ -50,31 +48,12 @@ def main(cfg: ExperimentConfig) -> None:
     Returns:
         No explicit returns.
     """
-    try:
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cuda.matmul.allow_tf32 = False
-        cfg = update_results_dir(cfg, task="export")
-
-        run_export(cfg, cfg.results_dir)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Export finished successfully"
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Export was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    run_export(cfg)
 
 
-def run_export(experiment_config, results_dir):
+def run_export(experiment_config):
     """Wrapper to run export of tlt models.
 
     Args:
@@ -83,21 +62,6 @@ def run_export(experiment_config, results_dir):
     Returns:
         No explicit returns.
     """
-    check_and_create(results_dir)
-
-    # Set status logging
-    status_file = expand_path(os.path.join(results_dir, "status.json"))
-    status_logging.set_status_logger(
-        status_logging.StatusLogger(
-            filename=status_file,
-            append=True
-        )
-    )
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting Visual ChangeNet export"
-    )
-
     gpu_id = experiment_config.export.gpu_id
     torch.cuda.set_device(gpu_id)
 
@@ -138,10 +102,12 @@ def run_export(experiment_config, results_dir):
 
     assert task in ['segment', 'classify'], "Visual ChangeNet only supports 'segment' and 'classify' tasks."
     if task == 'classify':
+        dm = OIDataModule(experiment_config)
         # load model
         cf_model = ChangeNetPlClassifier.load_from_checkpoint(model_path,
                                                               map_location="cpu" if on_cpu else 'cuda',
                                                               experiment_spec=experiment_config,
+                                                              dm=dm,
                                                               export=True)
 
         output_names = ["output"]

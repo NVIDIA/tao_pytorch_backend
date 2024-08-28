@@ -22,6 +22,7 @@ import numpy as np
 import copy
 import itertools
 from collections import defaultdict
+import pycocotools.mask as maskUtils
 
 
 def _isArrayLike(obj):
@@ -43,7 +44,7 @@ class COCO:
         self.dataset = dataset
         self.anns, self.cats, self.imgs = {}, {}, {}
         self.imgToAnns, self.catToImgs = defaultdict(list), defaultdict(list)
-        assert type(dataset) == dict, f'annotation file format {type(dataset)} not supported'
+        assert isinstance(dataset, dict), f'annotation file format {type(dataset)} not supported'
         self.createIndex()
 
     def createIndex(self):
@@ -159,7 +160,7 @@ class COCO:
         output = []
         if _isArrayLike(ids):
             output = [self.anns[id] for id in ids]
-        elif type(ids) == int:
+        elif isinstance(ids, int):
             output = [self.anns[ids]]
         return output
 
@@ -172,7 +173,7 @@ class COCO:
         output = []
         if _isArrayLike(ids):
             output = [self.cats[id] for id in ids]
-        elif type(ids) == int:
+        elif isinstance(ids, int):
             output = [self.cats[ids]]
         return output
 
@@ -185,7 +186,7 @@ class COCO:
         output = []
         if _isArrayLike(ids):
             output = [self.imgs[id] for id in ids]
-        elif type(ids) == int:
+        elif isinstance(ids, int):
             output = [self.imgs[ids]]
         return output
 
@@ -198,14 +199,14 @@ class COCO:
         res = COCO()
         res.dataset['images'] = [img for img in self.dataset['images']]
 
-        if type(resFile) == str:
+        if isinstance(resFile, str):
             with open(resFile) as f:
                 anns = json.load(f)
-        elif type(resFile) == np.ndarray:
+        elif isinstance(resFile, np.ndarray):
             anns = self.loadNumpyAnnotations(resFile)
         else:
             anns = resFile
-        assert type(anns) == list, 'results in not an array of objects'
+        assert isinstance(anns, list), 'results in not an array of objects'
         annsImgIds = [ann['image_id'] for ann in anns]
         assert set(annsImgIds) == (set(annsImgIds) & set(self.getImgIds())), \
                'Results do not correspond to current coco set'
@@ -246,7 +247,7 @@ class COCO:
         :return: annotations (python nested list)
         """
         # print('Converting ndarray to lists...')
-        assert (type(data) == np.ndarray)
+        assert (isinstance(data, np.ndarray))
         # print(data.shape)
         assert (data.shape[1] == 7)
         N = data.shape[0]
@@ -259,3 +260,33 @@ class COCO:
                      'score': data[i, 5],
                      'category_id': int(data[i, 6])}]
         return ann
+
+    def annToRLE(self, ann):
+        """
+        Convert annotation which can be polygons, uncompressed RLE to RLE.
+        :return: binary mask (numpy 2D array)
+        """
+        t = self.imgs[ann['image_id']]
+        h, w = t['height'], t['width']
+        segm = ann['segmentation']
+        if isinstance(segm, list):
+            # polygon -- a single object might consist of multiple parts
+            # we merge all parts into one mask rle code
+            rles = maskUtils.frPyObjects(segm, h, w)
+            rle = maskUtils.merge(rles)
+        elif isinstance(segm['counts'], list):
+            # uncompressed RLE
+            rle = maskUtils.frPyObjects(segm, h, w)
+        else:
+            # rle
+            rle = ann['segmentation']
+        return rle
+
+    def annToMask(self, ann):
+        """
+        Convert annotation which can be polygons, uncompressed RLE, or RLE to binary mask.
+        :return: binary mask (numpy 2D array)
+        """
+        rle = self.annToRLE(ann)
+        m = maskUtils.decode(rle)
+        return m

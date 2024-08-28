@@ -1,4 +1,4 @@
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,28 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""'Entry point' script running subtasks related to CenterPose."""
+"""Define entrypoint to run tasks for centerpose."""
 
 import argparse
+from nvidia_tao_pytorch.cv.centerpose import scripts
+from nvidia_tao_pytorch.core.entrypoint import get_subtasks, launch, command_line_parser
 
-import nvidia_tao_pytorch.cv.centerpose.scripts as scripts
-from nvidia_tao_pytorch.cv.dino.entrypoint.dino import get_subtasks
-from nvidia_tao_pytorch.cv.dino.entrypoint.dino import launch
+
+def get_subtask_list():
+    """Return the list of subtasks by inspecting the scripts package."""
+    return get_subtasks(scripts)
 
 
 def main():
     """Main entrypoint wrapper."""
     # Create parser for a given task.
     parser = argparse.ArgumentParser(
-        "centerpose", add_help=True, description="TAO Toolkit"
+        "centerpose",
+        add_help=True,
+        description="Train Adapt Optimize entrypoint for centerpose",
     )
 
-    # Build list of subtasks by inspecting the package.
-    subtasks = get_subtasks(scripts)
+    # Obtain the list of substasks
+    subtasks = get_subtask_list()
 
-    # Parse the arguments and launch the subtask.
-    launch(parser, subtasks, network="centerpose")
+    # Parse the arguments
+    args, unknown_args = command_line_parser(parser, subtasks)
+
+    # Launch the subtask.
+    launch(vars(args), unknown_args, subtasks, network="centerpose")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

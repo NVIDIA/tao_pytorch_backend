@@ -15,10 +15,9 @@
 """ Main PTL model file for OCRNet """
 
 from copy import deepcopy
-import os
 import math
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 import pickle
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_only
@@ -29,12 +28,12 @@ import torch.nn.functional as F
 import torchmetrics
 # from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
 
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.cv.ocrnet.model.build_nn_model import build_ocrnet_model
-from nvidia_tao_pytorch.cv.ocrnet.dataloader.build_dataloader import build_dataloader
 from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocrnet.utils.utils import (CTCLabelConverter,
-                                                      AttnLabelConverter, create_logger)
+                                                      AttnLabelConverter)
 TABLE_HEADER = ['Ground Truth', 'Prediction', 'Confidence && T/F']
 
 
@@ -95,20 +94,20 @@ class ModelEmaV2(nn.Module):
 
 
 # pylint:disable=too-many-ancestors
-class OCRNetModel(pl.LightningModule):
+class OCRNetModel(TAOLightningModule):
     """ PTL module for OCRNet."""
 
-    def __init__(self, experiment_spec: ExperimentConfig):
+    def __init__(self, experiment_spec: ExperimentConfig, dm):
         """Init training for OCRNet."""
-        super().__init__()
-        self.experiment_spec = experiment_spec
+        super().__init__(experiment_spec)
+        self.dm = dm
 
-        with open(self.experiment_spec.dataset.character_list_file, "r") as f:
+        with open(self.dataset_config.character_list_file, "r") as f:
             self.characters = "".join([ch.strip() for ch in f.readlines()])
 
         # init the label converter and criterion
-        self.max_label_length = self.experiment_spec.dataset.max_label_length
-        if 'CTC' in self.experiment_spec.model.prediction:
+        self.max_label_length = self.dataset_config.max_label_length
+        if 'CTC' in self.model_config.prediction:
             self.ctc = True
             self.converter = CTCLabelConverter(self.characters)
             self.criterion = torch.nn.CTCLoss(zero_infinity=True)
@@ -119,9 +118,10 @@ class OCRNetModel(pl.LightningModule):
 
         self.num_class = len(self.converter.character)
         # init the model
-        self._build_model(experiment_spec)
+        self.model = None
+        self._build_model()
         self.model_ema = None
-        if experiment_spec.train.model_ema:
+        if self.experiment_spec.train.model_ema:
             self.model_ema = ModelEmaV2(self.model)
 
         self.val_accuracy = torchmetrics.Accuracy()
@@ -129,55 +129,20 @@ class OCRNetModel(pl.LightningModule):
         if self.model_ema is not None:
             self.val_ema_accuracy = torchmetrics.Accuracy()
             self.best_ema_acc = -1
-        val_log_file = os.path.join(experiment_spec.train.results_dir, "log_val.txt")
-        self.console_logger = create_logger(val_log_file)
         self.check_val_batch_idx = 0
-        self.val_batch_num = 0
-        self.gpu_num = len(self.experiment_spec.train.gpu_ids)
 
-        self.status_logging_dict = {"train_loss": 0.0,
-                                    "val_loss": 0.0,
-                                    "val_acc": 0.0}
+        self.status_logging_dict = {}
+
         if self.model_ema is not None:
             self.status_logging_dict["val_ema_acc"] = 0.0
 
-    def _build_model(self, experiment_spec):
+        self.checkpoint_filename = 'ocr_model'
+
+    def _build_model(self):
         """Internal function to build the model."""
-        self.model = build_ocrnet_model(experiment_spec=experiment_spec,
+        self.model = build_ocrnet_model(experiment_spec=self.experiment_spec,
                                         num_class=self.num_class)
         print(self.model)
-
-    def setup(self, stage: Optional[str] = None):
-        """ Set up the dataset for train and val"""
-        self.train_data_path = self.experiment_spec.dataset.train_dataset_dir[0]
-        self.train_gt_file = self.experiment_spec.dataset.train_gt_file
-        self.val_data_path = self.experiment_spec.dataset.val_dataset_dir
-        self.val_gt_file = self.experiment_spec.dataset.val_gt_file
-
-    def train_dataloader(self):
-        """Build the dataloader for training."""
-        train_loader = \
-            build_dataloader(experiment_spec=self.experiment_spec,
-                             data_path=self.train_data_path,
-                             gt_file=self.train_gt_file)
-
-        self.console_logger.info(f"Train dataset samples: {len(train_loader.dataset)}")
-        self.console_logger.info(f"Train batch num: {len(train_loader)}")
-
-        return train_loader
-
-    def val_dataloader(self):
-        """Build the dataloader for validation."""
-        val_loader = build_dataloader(experiment_spec=self.experiment_spec,
-                                      data_path=self.val_data_path,
-                                      shuffle=False,
-                                      gt_file=self.val_gt_file)
-
-        self.console_logger.info(f"Val dataset samples: {len(val_loader.dataset)}")
-        self.console_logger.info(f"Val batch num: {len(val_loader)}")
-        self.val_batch_num = int(len(val_loader) / self.gpu_num)
-
-        return val_loader
 
     def configure_optimizers(self):
         """Configure optimizers for training"""
@@ -219,6 +184,19 @@ class OCRNetModel(pl.LightningModule):
 
         return optim_dict
 
+    def forward(self, x):
+        """Forward of the OCRNet model. No decode in the forward."""
+        image = x
+        batch_size = image.size(0)
+        # For max length prediction
+        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
+        if 'CTC' in self.model_config.prediction:
+            preds = self.model(image, text_for_pred)
+        else:
+            preds = self.model(image, text_for_pred, is_train=False)
+
+        return preds
+
     def training_step(self, batch, batch_idx):
         """Training step."""
         image, labels = batch
@@ -236,12 +214,167 @@ class OCRNetModel(pl.LightningModule):
             target = text[:, 1:]  # without [GO] Symbol
             cost = self.criterion(preds.view(-1, preds.shape[-1]), target.contiguous().view(-1))
 
+        self.log("train_loss", cost, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
         return cost
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         """Update the EMA model at the train batch end."""
         if self.model_ema is not None:
             self.model_ema.update(self.model)
+
+    def on_train_epoch_end(self):
+        """Log Training metrics to status.json"""
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
+
+        self.status_logging_dict = {}
+        self.status_logging_dict["train_loss"] = average_train_loss
+
+        status_logging.get_status_logger().kpi = self.status_logging_dict
+        status_logging.get_status_logger().write(
+            message="Train metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
+
+    def validation_step(self, batch, batch_idx):
+        """Validation step."""
+        image, labels = batch
+        batch_size = image.size(0)
+        # For max length prediction
+        length_for_pred = torch.IntTensor([self.max_label_length] * batch_size)
+        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
+
+        text_for_loss, length_for_loss = self.converter.encode(labels, batch_max_length=self.max_label_length)
+
+        # For ordinary model
+        fake_target, preds_str, confidence_score_list, cost = self._evaluate_batch(self.model, image, labels, batch_size,
+                                                                                   length_for_pred, text_for_pred,
+                                                                                   text_for_loss, length_for_loss)
+        show = min(5, batch_size)
+        if batch_idx == self.check_val_batch_idx:
+            table_data = []
+            for gt, pred, confidence in zip(labels, preds_str[:show], confidence_score_list[:show]):
+                if not self.ctc:
+                    pred = pred[:pred.find('[s]')]
+
+                table_data.append((gt, pred, f"{confidence:0.4f} {str(pred == gt)}"))
+            table = tabulate(table_data, headers=TABLE_HEADER, tablefmt='psql')
+            self.infer_table = table
+            self.check_val_batch_idx = random.randint(0, max(self.dm.val_batch_num - 1, 0))
+
+        fake_output = torch.IntTensor([1] * batch_size)
+        self.val_accuracy.update(fake_output, fake_target)
+        self.log("val_loss", cost, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("val_acc_1", self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
+        # For EMA model
+        if self.model_ema is not None:
+            fake_target, _, _, _ = self._evaluate_batch(self.model_ema.module, image, labels, batch_size,
+                                                        length_for_pred, text_for_pred,
+                                                        text_for_loss, length_for_loss)
+            self.val_ema_accuracy.update(fake_output, fake_target)
+            self.log("ema_val_acc_1", self.val_ema_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
+        return cost
+
+    def on_validation_epoch_end(self) -> None:
+        """Save the best accuracy model after validation"""
+        @rank_zero_only
+        def val_epoch_end():
+            current_acc = self.val_accuracy.compute()
+            if current_acc > self.best_acc:
+                torch.save(self.model, f'{self.experiment_spec.train.results_dir}/best_accuracy.pth')
+                self.best_acc = current_acc
+            current_model_log = f'{"Current_accuracy":17s}: {current_acc:0.3f}'
+            best_model_log = f'{"Best_accuracy":17s}: {self.best_acc:0.3f}'
+            self.dm.console_logger.info(f'{current_model_log}')
+            self.dm.console_logger.info(f'{best_model_log}')
+            if self.model_ema is not None:
+                current_ema_acc = self.val_ema_accuracy.compute()
+                if current_ema_acc > self.best_ema_acc:
+                    torch.save(self.model_ema.module, f'{self.experiment_spec.train.results_dir}/best_accuracy_ema.pth')
+                    self.best_ema_acc = current_ema_acc
+                current_model_log = f'{"Current_ema_accuracy":17s}: {current_ema_acc:0.3f}'
+                best_model_log = f'{"Best_ema_accuracy":17s}: {self.best_ema_acc:0.3f}'
+                self.dm.console_logger.info(f'{current_model_log}')
+                self.dm.console_logger.info(f'{best_model_log}')
+            infer_table_list = self.infer_table.split("\n")
+            for table in infer_table_list:
+                self.dm.console_logger.info(table)
+
+        val_epoch_end()
+
+        # status logging
+        average_val_loss = self.trainer.logged_metrics["val_loss"].item()
+
+        if not self.trainer.sanity_checking:
+            self.status_logging_dict = {}
+            self.status_logging_dict["val_loss"] = average_val_loss
+            self.status_logging_dict["val_acc"] = self.val_accuracy.compute().item()
+            if self.model_ema is not None:
+                self.status_logging_dict["val_acc"] = self.val_ema_accuracy.compute().item()
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Eval metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+
+        pl.utilities.memory.garbage_collection_cuda()
+
+    def on_test_epoch_start(self):
+        """Test epoch start"""
+        self.test_accuracy = torchmetrics.Accuracy()
+
+    def test_step(self, batch, batch_idx):
+        """Test step"""
+        image, labels = batch
+        batch_size = image.size(0)
+        # For max length prediction
+        length_for_pred = torch.IntTensor([self.max_label_length] * batch_size)
+        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
+
+        text_for_loss, length_for_loss = self.converter.encode(labels, batch_max_length=self.max_label_length)
+
+        # For ordinary model
+        fake_target, _, _, _ = self._evaluate_batch(self.model, image, labels, batch_size,
+                                                    length_for_pred, text_for_pred,
+                                                    text_for_loss, length_for_loss)
+
+        fake_output = torch.IntTensor([1] * batch_size)
+        self.test_accuracy.update(fake_output, fake_target)
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        test_acc = self.test_accuracy.compute().item() * 100
+        print(f'Accuracy: {test_acc:0.3f}')
+        self.dm.console_logger.info(f"Accuracy: {test_acc:0.3f}")
+        self.status_logging_dict = {}
+        self.status_logging_dict["test_acc"] = test_acc
+        status_logging.get_status_logger().kpi = self.status_logging_dict
+        status_logging.get_status_logger().write(
+            message="Test metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
+        self.test_accuracy = None
+
+    def on_predict_epoch_start(self):
+        """Predict epoch start"""
+        self.table_header = ["image_path", "predicted_labels", "confidence score"]
+        self.table_data = []
+
+    def predict_step(self, batch, batch_idx):
+        """Predict step"""
+        image, img_path_list = batch
+        batch_size = image.size(0)
+        # For max length prediction
+        length_for_pred = torch.IntTensor([self.max_label_length] * batch_size)
+        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
+
+        self._infer_batch(self.model, image, img_path_list, batch_size, length_for_pred, text_for_pred)
+
+    def on_predict_epoch_end(self):
+        """Predict epoch end"""
+        print(tabulate(self.table_data, headers=self.table_header, tablefmt="psql"))
+        self.table_data = []
 
     def _evaluate_batch(self, model, image, labels, batch_size,
                         length_for_pred, text_for_pred,
@@ -253,9 +386,14 @@ class OCRNetModel(pl.LightningModule):
             # Calculate evaluation loss for CTC deocder.
             preds_size = torch.IntTensor([preds.size(1)] * batch_size)
             # permute 'preds' to use CTCloss format
+            # if opt.baiduCTC:
+            #     cost = criterion(preds.permute(1, 0, 2), text_for_loss, preds_size, length_for_loss) / batch_size
             cost = self.criterion(preds.log_softmax(2).permute(1, 0, 2), text_for_loss, preds_size, length_for_loss)
 
             # Select max probabilty (greedy decoding) then decode index to character
+            # if opt.baiduCTC:
+            #     _, preds_index = preds.max(2)
+            #     preds_index = preds_index.view(-1)
             _, preds_index = preds.max(2)
             preds_str = self.converter.decode(preds_index.data, preds_size.data)
 
@@ -299,113 +437,38 @@ class OCRNetModel(pl.LightningModule):
 
         return fake_target, preds_str, confidence_score_list, cost
 
-    def validation_step(self, batch, batch_idx):
-        """Validation step."""
-        image, labels = batch
-        batch_size = image.size(0)
-        # For max length prediction
-        length_for_pred = torch.IntTensor([self.max_label_length] * batch_size)
-        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
+    def _infer_batch(self, model, image, img_path_list, batch_size,
+                     length_for_pred, text_for_pred):
+        if self.ctc:
+            preds = model(image, text_for_pred)
+            # Calculate evaluation loss for CTC deocder.
+            preds_size = torch.IntTensor([preds.size(1)] * batch_size)
+            # Select max probabilty (greedy decoding) then decode index to character
+            _, preds_index = preds.max(2)
+            preds_str = self.converter.decode(preds_index.data, preds_size.data)
 
-        text_for_loss, length_for_loss = self.converter.encode(labels, batch_max_length=self.max_label_length)
-
-        # For ordinary model
-        fake_target, preds_str, confidence_score_list, cost = self._evaluate_batch(self.model, image, labels, batch_size,
-                                                                                   length_for_pred, text_for_pred,
-                                                                                   text_for_loss, length_for_loss)
-        show = min(5, batch_size)
-        if batch_idx == self.check_val_batch_idx:
-            table_data = []
-            for gt, pred, confidence in zip(labels, preds_str[:show], confidence_score_list[:show]):
-                if not self.ctc:
-                    pred = pred[:pred.find('[s]')]
-
-                table_data.append((gt, pred, f"{confidence:0.4f} {str(pred == gt)}"))
-            table = tabulate(table_data, headers=TABLE_HEADER, tablefmt='psql')
-            self.infer_table = table
-            self.check_val_batch_idx = random.randint(0, max(self.val_batch_num - 1, 0))
-
-        fake_output = torch.IntTensor([1] * batch_size)
-        self.val_accuracy.update(fake_output, fake_target)
-        self.log("val_loss", cost, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-        self.log("val_acc_1", self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-
-        # For EMA model
-        if self.model_ema is not None:
-            fake_target, _, _, _ = self._evaluate_batch(self.model_ema.module, image, labels, batch_size,
-                                                        length_for_pred, text_for_pred,
-                                                        text_for_loss, length_for_loss)
-            self.val_ema_accuracy.update(fake_output, fake_target)
-            self.log("ema_val_acc_1", self.val_ema_accuracy, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-
-        return cost
-
-    def forward(self, x):
-        """Forward of the OCRNet model. No decode in the forward."""
-        image = x
-        batch_size = image.size(0)
-        # For max length prediction
-        text_for_pred = torch.LongTensor(batch_size, self.max_label_length + 1).fill_(0)
-        if 'CTC' in self.experiment_spec.model.prediction:
-            preds = self.model(image, text_for_pred)
         else:
             preds = self.model(image, text_for_pred, is_train=False)
+            # select max probabilty (greedy decoding) then decode index to character
+            _, preds_index = preds.max(2)
+            preds_str = self.converter.decode(preds_index, length_for_pred)
 
-        return preds
+        # calculate accuracy & confidence score
+        preds_prob = F.softmax(preds, dim=2)
+        preds_max_prob, _ = preds_prob.max(dim=2)
 
-    def training_epoch_end(self, training_step_outputs):
-        """Log Training metrics to status.json"""
-        average_train_loss = 0.0
-        for out in training_step_outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(training_step_outputs)
+        for img_name, pred, pred_max_prob in zip(img_path_list, preds_str, preds_max_prob):
+            if not self.ctc:
+                pred_EOS = pred.find('[s]')
+                pred = pred[:pred_EOS]  # prune after "end of sentence" token ([s])
+                pred_max_prob = pred_max_prob[:pred_EOS]
 
-        self.status_logging_dict["train_loss"] = average_train_loss
+            # calculate confidence score (= multiply of pred_max_prob)
+            confidence_score = pred_max_prob.cumprod(dim=0)[-1]
 
-        status_logging.get_status_logger().kpi = self.status_logging_dict
-        status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
-            status_level=status_logging.Status.RUNNING
-        )
+            self.table_data.append((img_name, pred, f"{confidence_score:0.4f}"))
 
-    def validation_epoch_end(self, outputs: List[Any]) -> None:
-        """Save the best accuracy model after validation"""
-        @rank_zero_only
-        def val_epoch_end():
-            current_acc = self.val_accuracy.compute()
-            if current_acc > self.best_acc:
-                torch.save(self.model, f'{self.experiment_spec.train.results_dir}/best_accuracy.pth')
-                self.best_acc = current_acc
-            current_model_log = f'{"Current_accuracy":17s}: {current_acc:0.3f}'
-            best_model_log = f'{"Best_accuracy":17s}: {self.best_acc:0.3f}'
-            self.console_logger.info(f'{current_model_log}')
-            self.console_logger.info(f'{best_model_log}')
-            if self.model_ema is not None:
-                current_ema_acc = self.val_ema_accuracy.compute()
-                if current_ema_acc > self.best_ema_acc:
-                    torch.save(self.model_ema.module, f'{self.experiment_spec.train.results_dir}/best_accuracy_ema.pth')
-                    self.best_ema_acc = current_ema_acc
-                current_model_log = f'{"Current_ema_accuracy":17s}: {current_ema_acc:0.3f}'
-                best_model_log = f'{"Best_ema_accuracy":17s}: {self.best_ema_acc:0.3f}'
-                self.console_logger.info(f'{current_model_log}')
-                self.console_logger.info(f'{best_model_log}')
-            infer_table_list = self.infer_table.split("\n")
-            for table in infer_table_list:
-                self.console_logger.info(table)
-
-        val_epoch_end()
-
-        # status logging
-        average_val_loss = 0.0
-        for out in outputs:
-            average_val_loss += out.item()
-        average_val_loss /= len(outputs)
-
-        self.status_logging_dict["val_loss"] = average_val_loss
-        self.status_logging_dict["val_acc"] = self.val_accuracy.compute().item()
-        if self.model_ema is not None:
-            self.status_logging_dict["val_acc"] = self.val_ema_accuracy.compute().item()
-
+    # TODO seanf: why is this here?
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Save the model architecture in the checkpoint"""
         checkpoint["whole_model"] = pickle.dumps(self.model)

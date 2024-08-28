@@ -14,25 +14,20 @@
 
 """Train pose classification model."""
 import os
-import re
 
 from nvidia_tao_pytorch.core.connectors.checkpoint_connector import TLTCheckpointConnector
-from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
-from nvidia_tao_pytorch.core.utilities import update_results_dir
-
-from nvidia_tao_pytorch.core.callbacks.loggers import TAOStatusLogger
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
+from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
 from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.pose_classification.dataloader.pl_pc_data_module import PCDataModule
 from nvidia_tao_pytorch.cv.pose_classification.model.pl_pc_model import PoseClassificationModel
-from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import check_and_create
 
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
 
 
-def run_experiment(experiment_config, key, results_dir):
+def run_experiment(experiment_config, key):
     """
     Start the training process.
 
@@ -45,82 +40,29 @@ def run_experiment(experiment_config, key, results_dir):
         key (str): The encryption key for intermediate checkpoints.
         results_dir (str): The directory to save the trained model checkpoints and logs.
     """
-    # set the encryption key:
-    TLTPyTorchCookbook.set_passphrase(key)
+    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
 
+    dm = PCDataModule(experiment_config)
     pc_model = PoseClassificationModel(experiment_config)
 
-    check_and_create(results_dir)
-
     num_epochs = experiment_config['train']['num_epochs']
-    checkpoint_interval = experiment_config['train']['checkpoint_interval']
-    assert checkpoint_interval <= num_epochs, (
-        f"Checkpoint interval {checkpoint_interval} > Number of epochs {num_epochs}. "
-        f"Please set experiment_config.train.checkpoint_interval < {num_epochs}"
-    )
-    gpus_ids = experiment_config['train']["gpu_ids"]
-    num_gpus = experiment_config['train']['num_gpus']
+    validation_interval = experiment_config['train']['validation_interval']
     grad_clip = experiment_config['train']['grad_clip']
 
-    status_logger_callback = TAOStatusLogger(results_dir, append=True, num_epochs=num_epochs)
-
-    status_logging.set_status_logger(status_logger_callback.logger)
-
-    acc_flag = None
-    if num_gpus > 1 or len(gpus_ids) > 1:
-        acc_flag = "ddp"
-
-    if num_gpus > 1:
-        trainer = Trainer(devices=num_gpus,
-                          max_epochs=num_epochs,
-                          check_val_every_n_epoch=checkpoint_interval,
-                          default_root_dir=results_dir,
-                          accelerator='gpu',
-                          strategy=acc_flag,
-                          gradient_clip_val=grad_clip)
-    else:
-        trainer = Trainer(gpus=gpus_ids,
-                          max_epochs=num_epochs,
-                          check_val_every_n_epoch=checkpoint_interval,
-                          default_root_dir=results_dir,
-                          accelerator='gpu',
-                          strategy=acc_flag,
-                          gradient_clip_val=grad_clip)
+    trainer = Trainer(logger=ptl_loggers,
+                      devices=gpus,
+                      max_epochs=num_epochs,
+                      check_val_every_n_epoch=validation_interval,
+                      default_root_dir=results_dir,
+                      accelerator='gpu',
+                      strategy='auto',
+                      enable_checkpointing=False,
+                      gradient_clip_val=grad_clip)
 
     # Overload connector to enable intermediate ckpt encryption & decryption.
-    resume_ckpt = experiment_config['train']['resume_training_checkpoint_path']
-    if resume_ckpt is not None:
-        trainer._checkpoint_connector = TLTCheckpointConnector(trainer, resume_from_checkpoint=resume_ckpt)
-    else:
-        trainer._checkpoint_connector = TLTCheckpointConnector(trainer)
+    trainer._checkpoint_connector = TLTCheckpointConnector(trainer)
 
-    if resume_ckpt is not None:
-        trainer._checkpoint_connector.resume_checkpoint_path = resume_ckpt
-
-    # setup checkpointer:
-    ModelCheckpoint.FILE_EXTENSION = ".tlt"
-    checkpoint_callback = ModelCheckpoint(every_n_epochs=checkpoint_interval,
-                                          dirpath=results_dir,
-                                          save_on_train_epoch_end=True,
-                                          monitor=None,
-                                          save_top_k=-1,
-                                          filename='pc_model_{epoch:03d}')
-    if resume_ckpt:
-        status_logging.get_status_logger().write(
-            message=f"Resuming training from checkpoint: {resume_ckpt}",
-            status_level=status_logging.Status.STARTED
-        )
-        resumed_epoch = re.search('epoch=(\\d+)', resume_ckpt)
-        if resumed_epoch:
-            resumed_epoch = int(resumed_epoch.group(1))
-        else:
-            resumed_epoch = 0
-        status_logger_callback.epoch_counter = resumed_epoch + 1  # make sure callback epoch matches resumed epoch
-
-    trainer.callbacks.append(status_logger_callback)
-    trainer.callbacks.append(checkpoint_callback)
-
-    trainer.fit(pc_model)
+    trainer.fit(pc_model, dm, ckpt_path=resume_ckpt)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -131,6 +73,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment", schema=ExperimentConfig
 )
+@monitor_status(name="Pose Classification", mode="train")
 def main(cfg: ExperimentConfig) -> None:
     """
     Run the training process.
@@ -142,28 +85,9 @@ def main(cfg: ExperimentConfig) -> None:
         cfg (ExperimentConfig): The experiment configuration retrieved from the Hydra configuration files.
     """
     # Obfuscate logs.
-    try:
-        obfuscate_logs(cfg)
-        cfg = update_results_dir(cfg, task="train")
-        run_experiment(experiment_config=cfg,
-                       key=cfg.encryption_key,
-                       results_dir=cfg.results_dir)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Training finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Training was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    obfuscate_logs(cfg)
+    run_experiment(experiment_config=cfg,
+                   key=cfg.encryption_key)
 
 
 if __name__ == "__main__":

@@ -28,13 +28,14 @@ from fairscale.nn import auto_wrap
 import torch
 from torch import nn
 import torch.nn.functional as F
-import torch.distributed as dist
 
+from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.cv.mal.datasets.data_aug import Denormalize
 from nvidia_tao_pytorch.cv.mal.lr_schedulers.cosine_lr import adjust_learning_rate
 from nvidia_tao_pytorch.cv.mal.models import vit_builder
 from nvidia_tao_pytorch.cv.mal.optimizers.adamw import AdamWwStep
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank, is_dist_avail_and_initialized
 
 
 class _IncompatibleKeys(namedtuple('IncompatibleKeys', ['missing_keys', 'unexpected_keys'])):
@@ -268,9 +269,9 @@ class MALStudentNetwork(pl.LightningModule):
         has_roi = False
         has_mask = False
         # Load pretrained weights
-        if cfg.checkpoint:
+        if cfg.train.pretrained_model_path:
             print('Loading backbone weights...')
-            state_dict = torch.load(cfg.checkpoint, map_location="cpu")
+            state_dict = torch.load(cfg.train.pretrained_model_path, map_location="cpu")
             if 'state_dict' in state_dict.keys():
                 state_dict = state_dict['state_dict']
             if 'model' in state_dict.keys():
@@ -438,7 +439,7 @@ class MIoUMetrics(torchmetrics.Metric):
         return mIoU
 
 
-class MAL(pl.LightningModule):
+class MAL(TAOLightningModule):
     """Base MAL model."""
 
     def __init__(self, cfg=None, num_iter_per_epoch=None, categories=None):
@@ -449,22 +450,21 @@ class MAL(pl.LightningModule):
             num_iter_per_epoch (int): Number of iterations per epoch
             categories (list): categories in the COCO format annotation
         """
-        super().__init__()
+        super().__init__(cfg)
         # loss term hyper parameters
-        self.num_convs = cfg.model.mask_head_num_convs
-        self.loss_mil_weight = cfg.train.loss_mil_weight
-        self.loss_crf_weight = cfg.train.loss_crf_weight
-        self.loss_crf_step = cfg.train.loss_crf_step
-        self.cfg = cfg
-        self.mask_thres = cfg.train.mask_thres
+        self.num_convs = self.model_config.mask_head_num_convs
+        self.loss_mil_weight = self.experiment_spec.train.loss_mil_weight
+        self.loss_crf_weight = self.experiment_spec.train.loss_crf_weight
+        self.loss_crf_step = self.experiment_spec.train.loss_crf_step
+        self.mask_thres = self.experiment_spec.train.mask_thres
         self.num_classes = len(categories) + 1
 
         self.mIoUMetric = MIoUMetrics(num_classes=self.num_classes)
         self.areaMIoUMetrics = nn.ModuleList([MIoUMetrics(num_classes=self.num_classes) for _ in range(3)])
-        if self.cfg.evaluate.comp_clustering:
+        if self.experiment_spec.evaluate.comp_clustering:
             self.clusteringScoreMetrics = torchmetrics.MeanMetric()
 
-        backbone_type = cfg.model.arch
+        backbone_type = self.model_config.arch
         self.categories = categories
         if backbone_type.lower().startswith('vit'):
             if 'tiny' in backbone_type.lower():
@@ -491,18 +491,17 @@ class MAL(pl.LightningModule):
         else:
             raise NotImplementedError("Only `vit` and `fan` are supported.")
 
-        self.mean_field = MeanField(cfg=self.cfg)
-        self.student = MALStudentNetwork(in_channel, cfg=cfg)
-        self.teacher = MALTeacherNetwork(in_channel, cfg=cfg)
+        self.mean_field = MeanField(cfg=self.experiment_spec)
+        self.student = MALStudentNetwork(in_channel, cfg=self.experiment_spec)
+        self.teacher = MALTeacherNetwork(in_channel, cfg=self.experiment_spec)
         self.denormalize = Denormalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
-        self._optim_type = cfg.train.optim_type
-        self._lr = cfg.train.lr
-        self._wd = cfg.train.wd
-        self._momentum = cfg.train.optim_momentum
+        self._optim_type = self.experiment_spec.train.optim_type
+        self._lr = self.experiment_spec.train.lr
+        self._wd = self.experiment_spec.train.wd
+        self._momentum = self.experiment_spec.train.optim_momentum
         if num_iter_per_epoch is not None:
-            self._num_iter_per_epoch = num_iter_per_epoch // len(self.cfg.gpu_ids)
-        self.cfg = cfg
+            self._num_iter_per_epoch = num_iter_per_epoch // len(self.experiment_spec.train.gpu_ids)
         self.vis_cnt = 0
         self.local_step = 0
         # Enable manual optimization
@@ -510,11 +509,14 @@ class MAL(pl.LightningModule):
 
         self.status_logging_dict = {}
 
+        # self.checkpoint_filename = f'{self.model_config.arch.replace("/", "-")}'
+        self.checkpoint_filename = 'mal_model'
+
     def configure_optimizers(self):
         """Configure optimizers."""
         optimizer = AdamWwStep(
-            self.parameters(), eps=self.cfg.train.optim_eps,
-            betas=self.cfg.train.optim_betas,
+            self.parameters(), eps=self.experiment_spec.train.optim_eps,
+            betas=self.experiment_spec.train.optim_betas,
             lr=self._lr, weight_decay=self._wd)
         return optimizer
 
@@ -591,15 +593,15 @@ class MAL(pl.LightningModule):
             if self.current_epoch > 0:
                 step_mil_loss_weight = 1
             else:
-                step_mil_loss_weight = min(1, 1. * local_step / self.cfg.train.loss_mil_step)
+                step_mil_loss_weight = min(1, 1. * local_step / self.experiment_spec.train.loss_mil_step)
             loss_mil *= step_mil_loss_weight
             loss_mil = loss_mil.sum() / (loss_mil.numel() + 1e-4) * self.loss_mil_weight
             loss.update({'mil': loss_mil})
             # Tensorboard logs
-            self.log("train/loss_mil", loss_mil, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+            self.log("train/loss_mil", loss_mil, on_step=True, on_epoch=False, prog_bar=True)
 
             # Conditional Random Fields Loss
-            th, tw = oh * self.cfg.train.crf_size_ratio, ow * self.cfg.train.crf_size_ratio
+            th, tw = oh * self.experiment_spec.train.crf_size_ratio, ow * self.experiment_spec.train.crf_size_ratio
             # resize image
             scaled_img = F.interpolate(image, size=(th, tw), mode='bilinear', align_corners=False).reshape(B, -1, th, tw)
             # resize student segmentation
@@ -616,43 +618,41 @@ class MAL(pl.LightningModule):
                 step_crf_loss_weight = min(1. * local_step / self.loss_crf_step, 1.)
             loss_crf *= self.loss_crf_weight * step_crf_loss_weight
             loss.update({'crf': loss_crf})
-            self.log("train/loss_crf", loss_crf, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+            self.log("train/loss_crf", loss_crf, on_step=True, on_epoch=False, prog_bar=True)
         else:
             raise NotImplementedError
 
         total_loss = sum(loss.values())
-        self.log("train/loss", total_loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
-        self.log("lr", optimizer.param_groups[0]['lr'], on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
-        self.log("train/bs", image.shape[0], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log("train/loss", total_loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=B)
+        self.log("lr", optimizer.param_groups[0]['lr'], on_step=True, on_epoch=False, prog_bar=True)
+        self.log("train/bs", image.shape[0], on_step=True, on_epoch=False, prog_bar=False)
         optimizer.zero_grad()
         self.manual_backward(total_loss)
         optimizer.step()
         if self._optim_type == 'adamw':
-            adjust_learning_rate(optimizer, 1. * local_step / self._num_iter_per_epoch + self.current_epoch, self.cfg)
+            adjust_learning_rate(optimizer, 1. * local_step / self._num_iter_per_epoch + self.current_epoch, self.experiment_spec)
         self.teacher.update(self.student)
 
         return total_loss
 
-    def training_epoch_end(self, outputs):
+    def on_train_epoch_end(self):
         """On training epoch end."""
         self.local_step = 0
 
-        average_train_loss = 0.0
-        for out in outputs:
-            average_train_loss += out['loss'].item()
-        average_train_loss /= len(outputs)
+        average_train_loss = self.trainer.logged_metrics["train/loss_epoch"].item()
 
+        self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
 
         status_logging.get_status_logger().kpi = self.status_logging_dict
         status_logging.get_status_logger().write(
-            message="Train and Val metrics generated.",
+            message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
 
     def validation_step(self, batch, batch_idx, return_mask=False):
         """Validation step."""
-        if self.cfg.dataset.load_mask:
+        if self.dataset_config.load_mask:
             imgs, gt_masks, masks, labels, ids, boxmasks, boxes, ext_boxes, ext_hs, ext_ws =\
                 batch['image'], batch['gtmask'], batch['mask'], batch['compact_category_id'], \
                 batch['id'], batch['boxmask'], batch['bbox'], batch['ext_boxes'], batch['ext_h'], batch['ext_w']
@@ -665,25 +665,25 @@ class MAL(pl.LightningModule):
         denormalized_images = self.denormalize(imgs.cpu().numpy().transpose(0, 2, 3, 1)).astype(np.uint8)
         labels = labels.cpu().numpy()
 
-        if self.cfg.evaluate.use_mixed_model_test:
+        if self.experiment_spec.evaluate.use_mixed_model_test:
             s_outputs = self.student(imgs, batch['boxmask'], batch['bbox'])
             t_outputs = self.teacher(imgs, batch['boxmask'], batch['bbox'])
             segs = (s_outputs['seg'] + t_outputs['seg']) / 2
         else:
-            if self.cfg.evaluate.use_teacher_test:
+            if self.experiment_spec.evaluate.use_teacher_test:
                 outputs = self.teacher(imgs, batch['boxmask'], batch['bbox'])
             else:
                 outputs = self.student(imgs, batch['boxmask'], batch['bbox'])
             segs = outputs['seg']
 
-        if self.cfg.evaluate.use_flip_test:
-            if self.cfg.evaluate.use_mixed_model_test:
+        if self.experiment_spec.evaluate.use_flip_test:
+            if self.experiment_spec.evaluate.use_mixed_model_test:
                 s_outputs = self.student(torch.flip(imgs, [3]), batch['boxmask'], batch['bbox'])
                 t_outputs = self.teacher(torch.flip(imgs, [3]), batch['boxmask'], batch['bbox'])
                 flipped_segs = torch.flip((s_outputs['seg'] + t_outputs['seg']) / 2, [3])
                 segs = (flipped_segs + segs) / 2
             else:
-                if self.cfg.evaluate.use_teacher_test:
+                if self.experiment_spec.evaluate.use_teacher_test:
                     flip_outputs = self.teacher(torch.flip(imgs, [3]), batch['boxmask'], batch['bbox'])
                 else:
                     flip_outputs = self.student(torch.flip(imgs, [3]), batch['boxmask'], batch['bbox'])
@@ -725,7 +725,7 @@ class MAL(pl.LightningModule):
                     img_pred_mask = (img_pred_mask > self.mask_thres[idx]).astype(np.float32)
 
             img_pred_masks.append(img_pred_mask[None, ...])
-            if self.cfg.dataset.load_mask:
+            if self.dataset_config.load_mask:
                 iou = self.mIoUMetric.cal_iou(img_pred_mask[np.newaxis, ...], gt_mask.data[np.newaxis, ...])
                 # overall mask IoU
                 self.mIoUMetric.update(int(label), iou[0])
@@ -737,7 +737,7 @@ class MAL(pl.LightningModule):
                         self.areaMIoUMetrics[jdx].update_with_ious(labels[obj_ids], iou[obj_ids])
 
         # Tensorboard vis
-        if self.cfg.dataset.load_mask:
+        if self.dataset_config.load_mask:
             for idx, batch_iou, img, seg, label, gt_mask, mask, _, area in zip(ids, batch_ious, denormalized_images, segs, labels, gt_masks, masks, boxes, areas):
                 if area > 64**2 and batch_iou < 0.78 and self.vis_cnt <= 100:
                     seg = seg.cpu().numpy().astype(np.float32)[0]
@@ -759,7 +759,7 @@ class MAL(pl.LightningModule):
         ret_dict = dict()
         if return_mask:
             ret_dict['img_pred_masks'] = img_pred_masks
-        if self.cfg.dataset.load_mask:
+        if self.dataset_config.load_mask:
             ret_dict['ious'] = batch_ious
         return ret_dict
 
@@ -789,21 +789,22 @@ class MAL(pl.LightningModule):
                     groups[3].append(value)
         return groups
 
-    def validation_epoch_end(self, validation_step_outputs):
-        """On validation epoch end."""
+    def val_epoch_end(self):
+        """Common logic for validation/testing epoch end"""
         mIoU = self.mIoUMetric.compute()
         self.log("val/mIoU", mIoU, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.status_logging_dict = {}
         self.status_logging_dict["mIoU"] = mIoU.item()
-        if dist.get_rank() == 0:
+        if get_global_rank() == 0:
             print("val/mIoU: {}".format(mIoU))
-        if "coco" in self.cfg.dataset.type:
+        if "coco" in self.dataset_config.type:
             # cat_kv = dict([(cat["name"], cat["id"]) for cat in self.categories])
-            if self.cfg.evaluate.comp_clustering:
+            if self.experiment_spec.evaluate.comp_clustering:
                 clustering_score = self.clusteringScoreMetrics.compute()
                 self.log("val/cluster_score", clustering_score, on_epoch=True, prog_bar=True, sync_dist=True)
                 self.status_logging_dict["val_cluster_score"] = str(clustering_score)
-            if dist.get_rank() == 0:
-                if self.cfg.evaluate.comp_clustering:
+            if get_global_rank() == 0:
+                if self.experiment_spec.evaluate.comp_clustering:
                     print("val/cluster_score", clustering_score)
         else:
             raise NotImplementedError
@@ -814,16 +815,33 @@ class MAL(pl.LightningModule):
             area_mIoU = self.areaMIoUMetrics[i].compute()
             self.log("val/mIoU_{}".format(name), area_mIoU, on_epoch=True, sync_dist=True)
             self.status_logging_dict["mIoU_{}".format(name)] = area_mIoU.item()
-            if dist.get_rank() == 0:
+            if get_global_rank() == 0:
                 print("val/mIoU_{}: {}".format(name, area_mIoU))
             self.areaMIoUMetrics[i].reset()
 
-        if not self.training:
+    def on_validation_epoch_end(self):
+        """On validation epoch end."""
+        self.val_epoch_end()
+        if not self.training and not self.trainer.sanity_checking:
             status_logging.get_status_logger().kpi = self.status_logging_dict
             status_logging.get_status_logger().write(
-                message="Evaluation metrics generated.",
+                message="Eval metrics generated.",
                 status_level=status_logging.Status.RUNNING
             )
+        pl.utilities.memory.garbage_collection_cuda()
+
+    def test_step(self, batch, batch_idx, return_mask=False):
+        """Test step"""
+        return self.validation_step(batch, batch_idx, return_mask)
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        self.val_epoch_end()
+        status_logging.get_status_logger().kpi = self.status_logging_dict
+        status_logging.get_status_logger().write(
+            message="Test metrics generated.",
+            status_level=status_logging.Status.RUNNING
+        )
 
 
 class MALPseudoLabels(MAL):
@@ -834,11 +852,15 @@ class MALPseudoLabels(MAL):
         super().__init__(*args, **kwargs)
         self.box_inputs = None
 
-    def validation_step(self, batch, batch_idx):
-        """Validation step."""
+    def on_predict_epoch_start(self) -> None:
+        """Predict epoch start."""
+        self.predict_outputs = []
+
+    def predict_step(self, batch, batch_idx):
+        """Predict step."""
         pred_dict = super().validation_step(batch, batch_idx, return_mask=True)
         pred_seg = pred_dict['img_pred_masks']
-        if self.cfg.dataset.load_mask:
+        if self.dataset_config.load_mask:
             ious = pred_dict['ious']
 
         ret = []
@@ -869,7 +891,7 @@ class MALPseudoLabels(MAL):
             }
             if 'score' in batch.keys():
                 labels['score'] = float(batch['score'][cnt].cpu().numpy())
-            if self.cfg.dataset.load_mask:
+            if self.dataset_config.load_mask:
                 labels['iou'] = float(ious[cnt])
             cnt += 1
             ret.append(labels)
@@ -878,26 +900,31 @@ class MALPseudoLabels(MAL):
             for ytvis_idx, labels in zip(batch['ytvis_idx'], ret):
                 labels['ytvis_idx'] = list(map(int, ytvis_idx))
 
+        self.predict_outputs.append(ret)
         return ret
 
-    def validation_epoch_end(self, validation_step_outputs):
-        """On validation epoch end."""
-        super().validation_epoch_end(validation_step_outputs)
-        ret = list(itertools.chain.from_iterable(validation_step_outputs))
-        if self.trainer.strategy.root_device.index > 0:
-            with open(f"{self.cfg.inference.label_dump_path}.part{self.trainer.strategy.root_device.index}", "w") as f:
+    def on_predict_epoch_end(self):
+        """On predict epoch end."""
+        self.status_logging_dict = {}
+        ret = list(itertools.chain.from_iterable(self.predict_outputs))
+        ranks = list(self.experiment_spec.inference.gpu_ids)
+        if self.trainer.strategy.root_device.index > ranks[0]:
+            with open(os.path.join(self.experiment_spec.results_dir, f"{self.experiment_spec.inference.label_dump_path}.part{self.trainer.strategy.root_device.index}"), "w") as f:
                 json.dump(ret, f)
-            torch.distributed.barrier()
+            if is_dist_avail_and_initialized():
+                torch.distributed.barrier()
         else:
-            val_ann_path = self.cfg.inference.ann_path
+            val_ann_path = self.experiment_spec.inference.ann_path
             with open(val_ann_path, "r") as f:
                 anns = json.load(f)
-            torch.distributed.barrier()
-            for i in range(1, len(self.cfg.gpu_ids)):
-                with open("{}.part{}".format(self.cfg.inference.label_dump_path, i), "r") as f:
+            if is_dist_avail_and_initialized():
+                torch.distributed.barrier()
+
+            for i in ranks[1:]:
+                with open(os.path.join(self.experiment_spec.results_dir, "{}.part{}".format(self.experiment_spec.inference.label_dump_path, i)), "r") as f:
                     obj = json.load(f)
                 ret.extend(obj)
-                os.remove("{}.part{}".format(self.cfg.inference.label_dump_path, i))
+                os.remove(os.path.join(self.experiment_spec.results_dir, "{}.part{}".format(self.experiment_spec.inference.label_dump_path, i)))
 
             if ret[0].get('ytvis_idx', None) is None:
                 # for COCO format
@@ -918,13 +945,13 @@ class MALPseudoLabels(MAL):
                     inst_idx, frame_idx = seg_ann['ytvis_idx']
                     anns['annotations'][inst_idx]['segmentations'][frame_idx] = seg_ann['segmentation']
 
-            with open(self.cfg.inference.label_dump_path, "w") as f:
+            with open(os.path.join(self.experiment_spec.results_dir, self.experiment_spec.inference.label_dump_path), "w") as f:
                 json.dump(anns, f)
 
             if self.box_inputs is not None:
                 print("Start evaluating the results...")
-                cocoGt = COCO(self.cfg.val_ann_path)
-                cocoDt = cocoGt.loadRes(self.cfg.label_dump_path + ".result")
+                cocoGt = COCO(self.experiment_spec.val_ann_path)
+                cocoDt = cocoGt.loadRes(os.path.join(self.experiment_spec.results_dir, self.experiment_spec.inference.label_dump_path) + ".result")
 
                 for iou_type in ['bbox', 'segm']:
                     cocoEval = COCOeval(cocoGt, cocoDt, iou_type)
@@ -939,6 +966,8 @@ class MALPseudoLabels(MAL):
                 if not self.training:
                     status_logging.get_status_logger().kpi = self.status_logging_dict
                     status_logging.get_status_logger().write(
-                        message="Evaluation metrics generated.",
+                        message="Inference metrics generated.",
                         status_level=status_logging.Status.RUNNING
                     )
+
+        self.predict_outputs.clear()

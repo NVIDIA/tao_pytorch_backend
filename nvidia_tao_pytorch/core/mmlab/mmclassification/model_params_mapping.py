@@ -53,7 +53,11 @@ map_params = {"head": {"in_channels": {
     "EVA02-L-14-336": 768,
     "EVA02-L-14": 768,
     "ViT-B-32": 512,
-    "vit_large_patch14_dinov2_swiglu": 1024
+    "vit_large_patch14_dinov2_swiglu": 1024,
+    "vit_giant_patch14_reg4_dinov2_swiglu": 1536,
+    "ViT-H-14-SigLIP-CLIPA-224": 1024,
+    "ViT-L-14-SigLIP-CLIPA-336": 768,
+    "ViT-L-14-SigLIP-CLIPA-224": 768
 }}}
 
 # Map input resolution for different backbones
@@ -63,5 +67,97 @@ map_input_lr_head = {
     "faster_vit_4_21k_768": 768,
     "ViT-L-14-336": 336,
     "EVA02-L-14-336": 336,
-    "gc_vit_large_384": 384
+    "gc_vit_large_384": 384,
+    "ViT-L-14-SigLIP-CLIPA-336": 336
+}
+
+# Map model config for CLIP model
+map_clip_model_cfg = {
+    "ViT-H-14-SigLIP-CLIPA-224": {
+        "embed_dim": 1024,
+        "init_logit_bias": -10,
+        "vision_cfg": {
+            "image_size": 224,
+            "layers": 32,
+            "width": 1280,
+            "head_width": 80,
+            "patch_size": 14,
+            "no_ln_pre": True,
+            "pool_type": "avg",
+            "final_ln_after_pool": True,
+            "pos_embed_type": "sin_cos_2d",
+            "patch_dropout": 0.0
+        },
+        "text_cfg": {
+            "context_length": 77,
+            "vocab_size": 32000,
+            "hf_tokenizer_name": "bert-base-uncased",
+            "tokenizer_kwargs": {
+                "strip_sep_token": True
+            },
+            "width": 1024,
+            "heads": 16,
+            "layers": 24,
+            "pool_type": "last",
+            "no_causal_mask": True
+        }
+    },
+    "ViT-L-14-SigLIP-CLIPA-336": {
+        "embed_dim": 768,
+        "init_logit_bias": -10,
+        "vision_cfg": {
+            "image_size": 336,
+            "layers": 24,
+            "width": 1024,
+            "head_width": 64,
+            "patch_size": 14,
+            "no_ln_pre": True,
+            "pool_type": "avg",
+            "final_ln_after_pool": True,
+            "pos_embed_type": "sin_cos_2d",
+            "patch_dropout": 0.0
+        },
+        "text_cfg": {
+            "context_length": 256,
+            "vocab_size": 32000,
+            "hf_tokenizer_name": "bert-base-uncased",
+            "tokenizer_kwargs": {
+                "strip_sep_token": True
+            },
+            "width": 768,
+            "heads": 12,
+            "layers": 12,
+            "pool_type": "last",
+            "no_causal_mask": True
+        }
+    },
+    "ViT-L-14-SigLIP-CLIPA-224": {
+        "embed_dim": 768,
+        "init_logit_bias": -10,
+        "vision_cfg": {
+            "image_size": 224,
+            "layers": 24,
+            "width": 1024,
+            "head_width": 64,
+            "patch_size": 14,
+            "no_ln_pre": True,
+            "pool_type": "avg",
+            "final_ln_after_pool": True,
+            "pos_embed_type": "sin_cos_2d",
+            "patch_dropout": 0.0
+        },
+        "text_cfg": {
+            "context_length": 77,
+            "vocab_size": 32000,
+            "hf_tokenizer_name": "bert-base-uncased",
+            "tokenizer_kwargs": {
+                "strip_sep_token": True
+            },
+            "width": 768,
+            "heads": 12,
+            "layers": 12,
+            "pool_type": "last",
+            "no_causal_mask": True
+        }
+    }
 }

@@ -27,7 +27,7 @@ model:
     freeze: true
     pretrained: ???
   init_cfg:
-    checkpoint: None
+    checkpoint: ???
   head:
     type: TAOLinearClsHead
     num_classes: 1000

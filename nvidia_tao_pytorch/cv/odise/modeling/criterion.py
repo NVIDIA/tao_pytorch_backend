@@ -27,7 +27,8 @@ from detectron2.projects.point_rend.point_features import (
     point_sample,
 )
 
-from ..utils.misc import is_dist_avail_and_initialized, nested_tensor_from_tensor_list
+from ..utils.misc import nested_tensor_from_tensor_list
+from nvidia_tao_pytorch.core.distributed.comm import is_dist_avail_and_initialized
 
 
 def dice_loss(

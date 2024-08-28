@@ -18,10 +18,11 @@ Export OCRNet script.
 import os
 import argparse
 import tempfile
+import torch
 import onnx_graphsurgeon as gs
 import onnx
 
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
 
@@ -54,10 +55,6 @@ def replace_with_avgpool2d(self, inputs, outputs, kernel_shape,
 
 def export(opt):
     """Export the model according to option."""
-    # @TODO(tylerz): Lazy import for correctly setting CUDA_VISIBLE_DEVICES
-    import torch
-    import torch.utils.data
-
     from nvidia_tao_pytorch.cv.ocrnet.utils.utils import (CTCLabelConverter,
                                                           AttnLabelConverter,
                                                           load_checkpoint)
@@ -135,6 +132,12 @@ def export(opt):
 
 def init_configs(experiment_spec: ExperimentConfig):
     """Pass the yaml config to argparse.Namespace"""
+    if "train_gt_file" in experiment_spec["dataset"]:
+        if experiment_spec["dataset"]["train_gt_file"] == "":
+            experiment_spec["dataset"]["train_gt_file"] = None
+    if "val_gt_file" in experiment_spec["dataset"]:
+        if experiment_spec["dataset"]["val_gt_file"] == "":
+            experiment_spec["dataset"]["val_gt_file"] = None
     parser = argparse.ArgumentParser()
 
     opt, _ = parser.parse_known_args()
@@ -175,11 +178,6 @@ def init_configs(experiment_spec: ExperimentConfig):
 
     opt.baiduCTC = False
 
-    # 4. Init for Device setting
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(experiment_spec.export.gpu_id)
-    import torch
-    opt.num_gpu = torch.cuda.device_count()
-
     return opt
 
 
@@ -196,22 +194,6 @@ def run_experiment(experiment_spec):
     if os.path.exists(opt.output_file):
         raise FileExistsError(f"Output file already exists at {opt.output_file}")
 
-    # Set status logging
-    if experiment_spec.export.results_dir is not None:
-        results_dir = experiment_spec.export.results_dir
-    else:
-        results_dir = os.path.join(experiment_spec.results_dir, "export")
-        experiment_spec.export.results_dir = results_dir
-
-    os.makedirs(results_dir, exist_ok=True)
-    status_file = os.path.join(results_dir, "status.json")
-    status_logging.set_status_logger(status_logging.StatusLogger(filename=status_file,
-                                                                 append=True))
-    status_logging.get_status_logger().write(
-        status_level=status_logging.Status.STARTED,
-        message="Starting OCRNet export"
-    )
-
     export(opt)
 
 
@@ -223,26 +205,10 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment", schema=ExperimentConfig
 )
+@monitor_status(name="OCRNet", mode="export")
 def main(cfg: ExperimentConfig) -> None:
     """Run the training process."""
-    try:
-        run_experiment(experiment_spec=cfg)
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.SUCCESS,
-            message="Export finished successfully."
-        )
-    except (KeyboardInterrupt, SystemExit):
-        status_logging.get_status_logger().write(
-            message="Export was interrupted",
-            verbosity_level=status_logging.Verbosity.INFO,
-            status_level=status_logging.Status.FAILURE
-        )
-    except Exception as e:
-        status_logging.get_status_logger().write(
-            message=str(e),
-            status_level=status_logging.Status.FAILURE
-        )
-        raise e
+    run_experiment(experiment_spec=cfg)
 
 
 if __name__ == '__main__':

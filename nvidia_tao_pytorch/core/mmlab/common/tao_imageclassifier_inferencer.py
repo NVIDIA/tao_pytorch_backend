@@ -119,12 +119,10 @@ def get_classes_list(experiment_config, head, results_dir, checkpoint):
         results_dir (str): Directory to store results.
         checkpoint (str): Path to the checkpoint.
     """
-    if head == "LogisticRegressionHead":
-        # TODO: @subha to see if this can be dealt during training.
-        experiment_config["train_dataloader"] = None
-        experiment_config["work_dir"] = results_dir
-        experiment_config["load_from"] = checkpoint
-        runner = Runner.from_cfg(experiment_config)
-        classes = sorted(list(runner.val_dataloader.dataset.CLASSES))
-        return classes
-    return None
+    experiment_config["train_dataloader"] = None
+    experiment_config["work_dir"] = results_dir
+    experiment_config["load_from"] = checkpoint
+    runner = Runner.from_cfg(experiment_config)
+    classes = sorted(list(runner.val_dataloader.dataset.CLASSES))
+
+    return classes

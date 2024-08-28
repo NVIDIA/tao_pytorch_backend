@@ -1,4 +1,4 @@
-ARG PYTORCH_BASE_IMAGE=nvcr.io/nvidia/pytorch:23.12-py3
+ARG PYTORCH_BASE_IMAGE=nvcr.io/nvidia/pytorch:24.04-py3
 FROM ${PYTORCH_BASE_IMAGE}
 
 # Ensure apt-get won't prompt for selecting options
@@ -11,7 +11,6 @@ RUN apt-get upgrade && apt-get update && \
 
 # uninstall stuff from base container
 RUN pip uninstall -y sacrebleu torchtext
-RUN pip install parametrized ninja
 # Installing custom packages in /opt.
 WORKDIR /opt
 
@@ -32,25 +31,31 @@ RUN mkdir trt_oss_src && \
     -DCMAKE_CUDA_ARCHITECTURES="53;60;61;70;75;80;86;90" \
     -DTRT_LIB_DIR=/usr/lib/x86_64-linux-gnu \
     -DTRT_BIN_DIR=`pwd`/out \
-    -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.3/bin/nvcc \
-    -DCUDNN_VERSION=8.9 && \
+    -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.4/bin/nvcc \
+    -DCUDNN_VERSION=9.1.0.70 && \
   make -j16 nvinfer_plugin nvinfer_plugin_static && \
   cp libnvinfer_plugin.so.8.6.1 /usr/lib/x86_64-linux-gnu/libnvinfer_plugin.so.8.6.1 && \
   cp libnvinfer_plugin_static.a /usr/lib/x86_64-linux-gnu/libnvinfer_plugin_static.a && \
   cd ../../../ && \
   rm -rf trt_oss_src
 
-
 COPY docker/requirements-pip.txt requirements-pip.txt
-# Forcing cython==0.29.36 for pycocotools-fix with python3.10.
-RUN pip install Cython==0.29.36
-RUN pip uninstall -y jupyterlab
-RUN pip install --upgrade pip
-RUN pip install -r requirements-pip.txt \
-  && rm requirements-pip.txt
-RUN pip install -U openmim && mim install mmengine "mmcv>=2.0.0" "mmpretrain>=1.0.0rc8"
-RUN pip install "mmsegmentation>=1.0.0" mmdeploy
-RUN pip install --upgrade setuptools
+RUN pip uninstall -y jupyterlab \
+  && pip install --upgrade pip \
+  && pip install -r requirements-pip.txt \
+  && rm requirements-pip.txt \
+  && mim install "mmengine==0.10.4" "mmpretrain>=1.0.0rc8"
+
+ENV FORCE_CUDA="1"
+RUN mkdir mmcv_src && \
+  cd mmcv_src && \
+  echo "$PWD Building MMCV..." && \
+  git clone -b v2.1.0 https://github.com/open-mmlab/mmcv.git mmcv && \
+  cd mmcv && \
+  MMCV_WITH_OPS=1 pip install -v -e . 
+
+RUN pip install "mmsegmentation==1.2.2" "mmdeploy==1.3.1" "mmdet==3.3.0" "mmdet3d==1.4.0" \
+  && pip uninstall -y opencv-python && pip install opencv-python==4.8.0.74
 COPY docker/requirements-pip-pytorch.txt requirements-pip-pytorch.txt
 RUN pip install --ignore-installed --no-deps -r requirements-pip-pytorch.txt \
   && rm requirements-pip-pytorch.txt

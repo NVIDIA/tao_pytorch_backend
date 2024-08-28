@@ -31,6 +31,11 @@ setuptools_packages = []
 for package_name in PACKAGE_LIST:
     setuptools_packages.extend(utils.find_packages(package_name))
 
+
+if(os.path.exists("pytransform_vax_001219")):
+    pyarmor_packages = ["pytransform_vax_001219"]
+    setuptools_packages += pyarmor_packages
+
 setuptools.setup(
     name=version_locals['__package_name__'],
     version=version_locals['__version__'],
@@ -61,17 +66,21 @@ setuptools.setup(
             'classification_pyt=nvidia_tao_pytorch.cv.classification.entrypoint.classification:main',
             'deformable_detr=nvidia_tao_pytorch.cv.deformable_detr.entrypoint.deformable_detr:main',
             'dino=nvidia_tao_pytorch.cv.dino.entrypoint.dino:main',
+            'grounding_dino=nvidia_tao_pytorch.cv.grounding_dino.entrypoint.grounding_dino:main',
+            'mask_grounding_dino=nvidia_tao_pytorch.cv.mask_grounding_dino.entrypoint.mask_grounding_dino:main',
             'pose_classification=nvidia_tao_pytorch.cv.pose_classification.entrypoint.pose_classification:main',
             're_identification=nvidia_tao_pytorch.cv.re_identification.entrypoint.re_identification:main',
             'mal=nvidia_tao_pytorch.cv.mal.entrypoint.mal:main',
             'ml_recog=nvidia_tao_pytorch.cv.metric_learning_recognition.entrypoint.metric_learning_recognition:main',
             'ocrnet=nvidia_tao_pytorch.cv.ocrnet.entrypoint.ocrnet:main',
             'ocdnet=nvidia_tao_pytorch.cv.ocdnet.entrypoint.ocdnet:main',
+            'bevfusion=nvidia_tao_pytorch.cv.bevfusion.entrypoint.bevfusion:main',
             # Pointpillars entry point
             'optical_inspection=nvidia_tao_pytorch.cv.optical_inspection.entrypoint.optical_inspection:main',
             'pointpillars=nvidia_tao_pytorch.pointcloud.pointpillars.entrypoint.pointpillars:main',
             'visual_changenet=nvidia_tao_pytorch.cv.visual_changenet.entrypoint.visual_changenet:main',
-            'centerpose=nvidia_tao_pytorch.cv.centerpose.entrypoint.centerpose:main'
+            'centerpose=nvidia_tao_pytorch.cv.centerpose.entrypoint.centerpose:main',
+            'mask2former=nvidia_tao_pytorch.cv.mask2former.entrypoint.mask2former:main',
         ]
     },
     cmdclass={'build_ext': BuildExtension},
@@ -101,6 +110,31 @@ setuptools.setup(
                 'src/ms_deform_attn_cpu.cpp',
                 'src/ms_deform_attn_api.cpp',
                 'src/ms_deform_attn_cuda.cu'
+            ],
+            include_dirs=['src'],
+            define_macros=[("WITH_CUDA", None)],
+            extra_flags = utils.get_extra_compile_args()
+        ),
+        utils.make_cuda_ext(
+                name='bev_pool_ext',
+                module='nvidia_tao_pytorch.cv.bevfusion.model.ops.bev_pool',
+                sources=[
+                    'src/bev_pool.cpp',
+                    'src/bev_pool_cuda.cu',
+                ],
+                include_dirs=['src'],
+                define_macros=[("WITH_CUDA", None)],
+                extra_flags = utils.get_extra_compile_args()
+        ),
+        utils.make_cuda_ext(
+            name='voxel_layer',
+            module='nvidia_tao_pytorch.cv.bevfusion.model.ops.voxel',
+            sources=[
+                'src/voxelization.cpp',
+                'src/scatter_points_cpu.cpp',
+                'src/scatter_points_cuda.cu',
+                'src/voxelization_cpu.cpp',
+                'src/voxelization_cuda.cu',
             ],
             include_dirs=['src'],
             define_macros=[("WITH_CUDA", None)],

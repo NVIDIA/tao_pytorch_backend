@@ -14,21 +14,18 @@
 
 """File containing Overloaded version of PTL CheckpointCollector."""
 
-import os
-
-from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.core.lightning import LightningModule
+from pytorch_lightning.core.module import LightningModule
 from pytorch_lightning.trainer.connectors.checkpoint_connector import \
-    CheckpointConnector
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_only, rank_zero_warn
-from pytorch_lightning.utilities.cloud_io import get_filesystem
-from pytorch_lightning.utilities.cloud_io import load as pl_load
+    _CheckpointConnector
+from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
+from lightning_fabric.utilities.cloud_io import get_filesystem
+from lightning_fabric.utilities.cloud_io import _load as pl_load
 
 from nvidia_tao_pytorch.core.checkpoint_encryption import decrypt_checkpoint, encrypt_checkpoint
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 
 
-class TLTCheckpointConnector(CheckpointConnector):
+class TLTCheckpointConnector(_CheckpointConnector):
     """
     Overloaded version of PTL CheckpointCollector, with additional encryption of intermediate checkpoints.
     """
@@ -77,7 +74,7 @@ class TLTCheckpointConnector(CheckpointConnector):
         model.on_load_checkpoint(self._loaded_checkpoint)
 
         # call hpc specific hook
-        if self._hpc_resume_path is not None:
+        if self._hpc_resume_path:
             model.on_hpc_load(self._loaded_checkpoint)
 
         # restore model state_dict
@@ -88,8 +85,10 @@ class TLTCheckpointConnector(CheckpointConnector):
         Restore model states from a 'PyTorch-Lightning checkpoint' dictionary object
         """
         # restore datamodule states
-        if self.trainer.datamodule is not None:
-            self.trainer.datamodule.on_load_checkpoint(checkpoint)
+        # As of the Common Trainer update, this will throw the following error:
+        # AttributeError: 'ARDataModule' (or respective DataModule) object has no attribute 'on_load_checkpoint'
+        # if self.trainer.datamodule is not None:
+        #     self.trainer.datamodule.on_load_checkpoint(checkpoint)
 
         if checkpoint.get("state_dict_encrypted", False):
             # Retrieve encryption key from TLTPyTorchCookbook.
@@ -138,36 +137,3 @@ class TLTCheckpointConnector(CheckpointConnector):
             checkpoint = encrypt_checkpoint(checkpoint, key)
 
         return checkpoint
-
-
-class TLTModelSaver(Callback):
-    """TLT model saver that saves .tlt models every n epochs."""
-
-    def __init__(self, dirpath, filename, postfix=".tlt", every_n_epochs=0, **kwargs):
-        """Initialize."""
-        self.dirpath = dirpath
-        self.filename = filename
-        self.postfix = postfix
-        self.every_n_epochs = every_n_epochs
-        # Call the parent class constructor with the remaining kwargs.
-        super().__init__(**kwargs)
-
-    @rank_zero_only
-    def on_train_epoch_end(self, trainer, pl_module, unused=None):
-        """action on training epoch end."""
-        if self.every_n_epochs > 0:
-            current_epochs = trainer.current_epoch
-            if current_epochs % self.every_n_epochs == 0:
-                name = self.filename + "_epoch_" + str(current_epochs) + self.postfix
-                pl_module.save_to(save_path=os.path.join(self.dirpath, name))
-
-
-def setup_tlt_checkpointer(log_dir, trainer, cfg):
-    """Helper function to setup TLT model checkpointer."""
-    checkpointer = TLTModelSaver(
-        log_dir,
-        cfg.exp_manager.name,
-        postfix=cfg.exp_manager.checkpoint_callback_params.postfix,
-        every_n_epochs=cfg.tlt_checkpoint_interval
-    )
-    trainer.callbacks.append(checkpointer)

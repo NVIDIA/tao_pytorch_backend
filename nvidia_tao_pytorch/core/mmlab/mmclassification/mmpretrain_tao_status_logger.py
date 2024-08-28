@@ -78,19 +78,30 @@ class TaoTextLoggerHook(LoggerHook):
         else:
             return
 
+        # log_str looks like:
+        # Epoch(train) [1][500/801]  lr: 1.0000e-03  eta: 0:04:24  time: 0.1406  data_time: 0.0273  memory: 2392  loss: 0.6949
+
         self.monitor_data["epoch"] = int(runner.log_processor._get_epoch(runner, "train"))
         # cur_iter = runner.log_processor._get_iter(runner, batch_idx)
-        dataloader_len = runner.log_processor._get_dataloader_size(runner, "train")
+
         lr = log_str.split("lr: ")[1].split(" ")[0]
         self.monitor_data["lr"] = float(lr)
+
         running_avg_loss = float(log_str.split("loss: ")[1].split(" ")[0])
         self.monitor_data["loss"] = running_avg_loss
+
+        dataloader_len = runner.log_processor._get_dataloader_size(runner, "train")
         time = float(log_str.split("time: ")[1].split(" ")[0])
-        time_sec_avg = time / float(self.interval)  # Per iter
+        # Bug for reference for time: https://github.com/open-mmlab/mmdetection/issues/10795
+        time_sec_avg = time  # Per iter
         time_sec_avg_epoch = dataloader_len * time_sec_avg
         self.monitor_data["time_per_epoch"] = strftime("%H:%M:%S", gmtime(time_sec_avg_epoch))
+
+        self.monitor_data["eta"] = log_str.split(" eta: ")[1].split(" ")[0]
+
         self.s_logger.graphical = {
             "loss": running_avg_loss}
+
         runner.logger.info(log_str)
         runner.visualizer.add_scalars(
             tag, step=runner.iter + 1, file_path=self.json_log_path)

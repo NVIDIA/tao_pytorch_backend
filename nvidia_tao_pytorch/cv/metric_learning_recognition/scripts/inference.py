@@ -16,11 +16,15 @@
 
 import os
 
+from pytorch_lightning import Trainer
+
+from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
 from nvidia_tao_pytorch.cv.metric_learning_recognition.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.metric_learning_recognition.inference.inferencer import Inferencer
+from nvidia_tao_pytorch.cv.metric_learning_recognition.dataloader.pl_ml_data_module import MLDataModule
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
-from nvidia_tao_pytorch.cv.metric_learning_recognition.utils.decorators import monitor_status
+from nvidia_tao_pytorch.cv.metric_learning_recognition.model.pl_ml_recog_model import MLRecogModel
 
 
 def run_experiment(experiment_config):
@@ -30,14 +34,25 @@ def run_experiment(experiment_config):
         experiment_config (DictConfig): Configuration dictionary
 
     """
-    # no need to check `else` as it's verified in the decorator alreadya
-    if experiment_config["inference"]["results_dir"]:
-        results_dir = experiment_config["inference"]["results_dir"]
-    elif experiment_config["results_dir"]:
-        results_dir = os.path.join(experiment_config["results_dir"], "inference")
+    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config)
 
-    inferencer = Inferencer(experiment_config, results_dir)
-    inferencer.infer()
+    dm = MLDataModule(experiment_config)
+    dm.setup(stage='predict')
+
+    metric_learning_recognition = MLRecogModel.load_from_checkpoint(
+        model_path,
+        map_location="cpu",
+        experiment_spec=experiment_config,
+        results_dir=results_dir,
+        dm=dm,
+        subtask="inference")
+
+    trainer = Trainer(devices=gpus,
+                      default_root_dir=results_dir,
+                      accelerator='gpu',
+                      strategy='auto')
+
+    trainer.predict(metric_learning_recognition, datamodule=dm)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,7 +63,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @hydra_runner(
     config_path=os.path.join(spec_root, "experiment_specs"), config_name="infer", schema=ExperimentConfig
 )
-@monitor_status(mode="inference")
+@monitor_status(name="Metric Learning Recognition", mode="inference")
 def main(cfg: ExperimentConfig) -> None:
     """Run the training process.
 
@@ -58,7 +73,6 @@ def main(cfg: ExperimentConfig) -> None:
     """
     # Obfuscate logs.
     obfuscate_logs(cfg)
-
     run_experiment(experiment_config=cfg)
 
 
