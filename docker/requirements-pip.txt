@@ -19,7 +19,7 @@ flake8==7.0.0
 flask==3.0.3
 flask_limiter==3.6.0
 gdown==5.1.0
-gradio==4.19.2
+gradio==4.44.0
 hydra-core==1.2.0
 imgaug==0.4.0
 imageio==2.34.0
