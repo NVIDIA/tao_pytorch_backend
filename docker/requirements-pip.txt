@@ -96,7 +96,7 @@ wget==3.2
 wrapt==1.16.0
 yapf==0.40.2
 # updating base py packages versions to resolve oss vulnerabilities
-starlette==0.36.3
+starlette==0.40.0
 python-multipart==0.0.9
 fastapi==0.109.2
 pyarrow==14.0.1
