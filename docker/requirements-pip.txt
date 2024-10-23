@@ -47,7 +47,7 @@ omegaconf==2.3.0
 # Install onnx-graphsurgeon with extra-index-url
 --extra-index-url https://pypi.ngc.nvidia.com
 # onnx overrides 24.04 stack version (1.16.0)
-onnx==1.15.0
+onnx==1.17.0
 onnx-graphsurgeon==0.3.27
 onnx-simplifier==0.4.35
 onnxoptimizer==0.3.13
