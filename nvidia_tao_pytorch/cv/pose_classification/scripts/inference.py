@@ -20,9 +20,11 @@ from pytorch_lightning import Trainer
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
-from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.pose_classification.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.pose_classification.dataloader.pl_pc_data_module import PCDataModule
 from nvidia_tao_pytorch.cv.pose_classification.model.pl_pc_model import PoseClassificationModel
+
+logger = logging.getLogger(__name__)
 
 
 def run_experiment(experiment_config, key):
@@ -34,28 +36,22 @@ def run_experiment(experiment_config, key):
 
     Args:
         experiment_config (dict): The experiment configuration containing the model and inference parameters.
-        results_dir (str): The directory to save the status and log files.
         key (str): The encryption key for intermediate checkpoints.
-        model_path (str): The path to the pre-trained model checkpoint.
-        data_path (str): The path to the test dataset.
 
     Raises:
         Exception: If any error occurs during the inference process.
     """
-    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config, key)
-    if len(gpus) > 1:
-        gpus = [gpus[0]]
-        logging.log(f"Pose Classification does not support multi-GPU inference at this time. Using only GPU {gpus}")
+    model_path, trainer_kwargs = initialize_inference_experiment(experiment_config, key)
+    if len(trainer_kwargs['devices']) > 1:
+        trainer_kwargs['devices'] = [trainer_kwargs['devices'][0]]
+        logger.info(f"Pose Classification does not support multi-GPU inference at this time. Using only GPU {trainer_kwargs['devices']}")
 
     dm = PCDataModule(experiment_config)
     model = PoseClassificationModel.load_from_checkpoint(model_path,
                                                          map_location="cpu",
                                                          experiment_spec=experiment_config)
 
-    trainer = Trainer(devices=gpus,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.predict(model, datamodule=dm)
 

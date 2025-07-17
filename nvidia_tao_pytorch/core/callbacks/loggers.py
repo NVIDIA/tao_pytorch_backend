@@ -31,6 +31,7 @@ import six
 
 from nvidia_tao_pytorch.core.loggers.api_logging import (
     get_status_logger,
+    set_status_logger,
     Status,
     StatusLogger,
     Verbosity
@@ -64,13 +65,12 @@ class TAOStatusLogger(Callback):
 
     # Arguments
         results_dir (str): The directory where the logs will be saved.
-        num_epochs (int): Number of epochs to run the training
         verbosity (status_logger.verbosity.Verbosity()): Verbosity level.
         append: True: append if file exists (useful for continuing
             training). False: overwrite existing file,
     """
 
-    def __init__(self, results_dir, num_epochs=120,
+    def __init__(self, results_dir,
                  verbosity=Verbosity.INFO,
                  append=False):
         """Instantiate the TAOStatusLogger."""
@@ -78,17 +78,20 @@ class TAOStatusLogger(Callback):
         # an instance of iva.common.logging.logging.StatusLogger.
         # Otherwise, this data get's rendered in stdout.
         if isinstance(get_status_logger(), StatusLogger):
-            self.logger = logger
+            self.logger = get_status_logger()
         else:
-            self.logger = StatusLogger(
+            set_status_logger(StatusLogger(
                 filename=os.path.join(results_dir, "status.json"),
                 verbosity=verbosity,
-                append=append
+                append=append)
             )
+            self.logger = get_status_logger()
         self.keys = None
-        self.max_epochs = num_epochs
-        self._epoch_start_time = None
-        self.epoch_counter = 0
+        # Used for avg timing
+        self._epoch_start_time = -1
+        self._step_start_time = -1
+        self.num_steps_in_experiment = 0
+        self.avg_time_per_batch = 0
         super(TAOStatusLogger, self).__init__()
 
     def on_train_start(self, trainer, pl_module):
@@ -107,6 +110,21 @@ class TAOStatusLogger(Callback):
             return '"[%s]"' % (', '.join(map(str, k)))
         return k
 
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        """Routines to be run at the beginning of a batch."""
+        if self._epoch_start_time == -1:
+            # Resuming in the middle of an epoch, so on_train_epoch_start() won't be run
+            self._epoch_start_time = time.time()
+        self._step_start_time = time.time()
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        """Computing timing for training on a batch/step"""
+        step_end_time = time.time()
+        time_per_batch = step_end_time - self._step_start_time
+        # Computing the cumulative average
+        self.avg_time_per_batch = (time_per_batch + self.num_steps_in_experiment * self.avg_time_per_batch) / (self.num_steps_in_experiment + 1)
+        self.num_steps_in_experiment += 1
+
     def on_train_epoch_start(self, trainer, pl_module):
         """Routines to be run at the beginning of the epoch."""
         self._epoch_start_time = time.time()
@@ -114,14 +132,20 @@ class TAOStatusLogger(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         """Collect data at the end of an epoch."""
         data = {}
-        data["epoch"] = self.epoch_counter
-        data["max_epoch"] = self.max_epochs
+        data["epoch"] = trainer.current_epoch
+        data["step"] = trainer.global_step
+        data["max_epoch"] = trainer.max_epochs - 1
+        if trainer.max_steps < 1:
+            data["max_step"] = trainer.max_epochs * trainer.num_training_batches
+        else:
+            data["max_step"] = trainer.max_steps
         epoch_end_time = time.time()
         time_per_epoch = epoch_end_time - self._epoch_start_time
-        eta = (self.max_epochs - self.epoch_counter) * time_per_epoch
+        eta = (trainer.max_epochs - 1 - trainer.current_epoch) * time_per_epoch
         data["time_per_epoch"] = str(timedelta(seconds=time_per_epoch))
+        data["time_per_step"] = str(timedelta(seconds=self.avg_time_per_batch))
+        # TODO @seanf: extra logic for eta when using steps instead of epochs
         data["eta"] = str(timedelta(seconds=eta))
-        self.epoch_counter += 1
         self.logger.write(data=data, message="Training loop in progress")
 
     def on_train_end(self, trainer, pl_module):

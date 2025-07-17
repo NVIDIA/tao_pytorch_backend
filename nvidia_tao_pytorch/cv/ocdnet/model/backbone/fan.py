@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 
-from timm.models.layers import DropPath, trunc_normal_, to_2tuple
+from timm.layers import DropPath, trunc_normal_, to_2tuple
 
 from nvidia_tao_pytorch.cv.ocdnet.model.backbone.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.fan import (PositionalEncodingFourier, Mlp, ConvPatchEmbed,
@@ -23,7 +23,8 @@ from nvidia_tao_pytorch.cv.ocdnet.utils.linear_activation import LinearActivatio
 
 QUANT = True
 if QUANT:
-    from pytorch_quantization.nn import QuantLinear, TensorQuantizer
+    from modelopt.torch.quantization.nn.modules.quant_linear import QuantLinear
+    from modelopt.torch.quantization.nn.modules.tensor_quantizer import TensorQuantizer
 
 
 class TokenMixing(nn.Module):

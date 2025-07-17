@@ -101,17 +101,3 @@ export:
   input_width: 128
   input_height: 512
   batch_size: ${dataset.classify.batch_size}
-gen_trt_engine:
-  gpu_id: 0
-  onnx_file: "${results_dir}/export/changenet-classify.onnx"
-  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
-  batch_size: ${dataset.classify.batch_size}
-  input_channel: 3
-  input_width: 128
-  input_height: 512
-  tensorrt:
-    data_type: FP32
-    workspace_size: 1024
-    min_batch_size: 1
-    opt_batch_size: 10
-    max_batch_size: 10

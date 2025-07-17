@@ -2,7 +2,7 @@
 **************************************************************************************************
 # Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
 
-# Original source taken from https://github.com/fundamentalvision/Deformable-DETR
+# Original source taken from https://github.com/huggingface/transformers/blob/main/src/transformers/kernels/deformable_detr/ms_deform_attn.h
 
 # Copyright (c) 2020 SenseTime.
 
@@ -36,7 +36,7 @@ ms_deform_attn_forward(
     const at::Tensor &sampling_loc,
     const at::Tensor &attn_weight)
 {
-    if (value.type().is_cuda())
+    if (value.is_cuda())
     {
 #ifdef WITH_CUDA
         return ms_deform_attn_cuda_forward(
@@ -58,7 +58,7 @@ ms_deform_attn_backward(
     const at::Tensor &grad_output,
     const int64_t im2col_step)
 {
-    if (value.type().is_cuda())
+    if (value.is_cuda())
     {
 #ifdef WITH_CUDA
         return ms_deform_attn_cuda_backward(

@@ -23,7 +23,7 @@ from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 
 # Triggers build of custom modules
-from nvidia_tao_pytorch.cv.bevfusion.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.bevfusion.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.bevfusion.utils.config import BEVFusionConfig
 from nvidia_tao_pytorch.cv.bevfusion.visualization import TAO3DLocalVisualizer # noqa pylint: disable=W0401, W0611
 from nvidia_tao_pytorch.cv.bevfusion.evaluation import TAO3DMetric # noqa pylint: disable=W0401, W0611,

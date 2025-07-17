@@ -13,8 +13,3 @@
 # limitations under the License.
 
 """Model Init Module."""
-
-# flake8: noqa: F401, F403
-from .backbones import *
-from .decode_heads import *
-# from mmseg.models import *

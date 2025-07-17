@@ -34,17 +34,18 @@ import torch.nn.functional as F
 import numpy as np
 import logging
 
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
+from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import (
+    interpolate_pos_embed, interpolate_patch_embed
+)
+
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
     MLP, conv_diff, make_prediction, UpsampleConvLayer,
     ResidualBlock, ConvLayer, resize, count_params,
 )
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.fan import fan_model_dict
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.vit_adapter import vit_adapter_model_dict
-from nvidia_tao_pytorch.cv.visual_changenet.utils.pos_embed_interpolation_converter import (
-    interpolate_patch_embed, interpolate_pos_embed
-)
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
-from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ class ChangeNetSegment(nn.Module):
 
     def __init__(self, input_nc=3, output_nc=2, decoder_softmax=False, embed_dim=256, model='fan_tiny_8_p4_hybrid_256', img_size=256,
                  embed_dims=[128, 256, 384, 384], feature_strides=[4, 8, 16, 16], in_index=[0, 1, 2, 3], feat_downsample=False,
-                 pretrained_backbone_path=None, return_interm_indices=[0, 1, 2, 3], activation_checkpoint=False, freeze_backbone=False):
+                 pretrained_backbone_path=None, return_interm_indices=[0, 1, 2, 3], activation_checkpoint=False, freeze_backbone=False, use_summary_token=True):
         """Initialize Visual ChangeNetSegment class"""
         super(ChangeNetSegment, self).__init__()
 
@@ -283,6 +284,14 @@ class ChangeNetSegment(nn.Module):
                 checkpoint_path='',
                 img_size=img_size,
                 feat_downsample=feat_downsample)
+
+        elif 'radio' in self.model_name:
+            assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
+            self.backbone = vit_adapter_model_dict[self.model_name](
+                out_indices=return_interm_indices,
+                resolution=img_size,
+                activation_checkpoint=activation_checkpoint,
+                use_summary_token=use_summary_token)
 
         elif 'vit' in self.model_name:
             assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
@@ -358,7 +367,13 @@ def build_model(experiment_config,
                     "fan_large_16_p4_hybrid": [128, 256, 480, 480],
                     "fan_small_12_p4_hybrid": [128, 256, 384, 384],
                     "fan_base_16_p4_hybrid": [128, 256, 448, 448],
-                    "vit_large_nvdinov2": [1024, 1024, 1024, 1024]
+                    "vit_large_nvdinov2": [1024, 1024, 1024, 1024],
+                    "c_radio_p1_vit_huge_patch16_224_mlpnorm": [1280, 1280, 1280, 1280],
+                    "c_radio_p2_vit_huge_patch16_224_mlpnorm": [1280, 1280, 1280, 1280],
+                    "c_radio_p3_vit_huge_patch16_224_mlpnorm": [1280, 1280, 1280, 1280],
+                    "c_radio_v2_vit_base_patch16_224": [768, 768, 768, 768],
+                    "c_radio_v2_vit_large_patch16_224": [1024, 1024, 1024, 1024],
+                    "c_radio_v2_vit_huge_patch16_224": [1280, 1280, 1280, 1280]
                     }
 
     if backbone in channels_map:
@@ -370,6 +385,7 @@ def build_model(experiment_config,
     embed_dim = model_config.decode_head.decoder_params['embed_dim']
     feature_strides = model_config.decode_head.feature_strides
     in_index = model_config.decode_head.in_index
+    use_summary_token = model_config.decode_head.use_summary_token
 
     num_classes = dataset_config.num_classes
     img_size = dataset_config.img_size
@@ -385,7 +401,8 @@ def build_model(experiment_config,
                              in_index=in_index,
                              feat_downsample=feat_downsample,
                              pretrained_backbone_path=pretrained_backbone_path,
-                             freeze_backbone=freeze_backbone)
+                             freeze_backbone=freeze_backbone,
+                             use_summary_token=use_summary_token)
     count_params(model)
 
     return model

@@ -20,7 +20,8 @@ import torch.nn.init as init
 import torch.nn.functional as F
 import sys
 import math
-from pytorch_quantization.nn import QuantLinear, TensorQuantizer
+from modelopt.torch.quantization.nn.modules.quant_linear import QuantLinear
+from modelopt.torch.quantization.nn.modules.tensor_quantizer import TensorQuantizer
 
 
 def gelu(x):

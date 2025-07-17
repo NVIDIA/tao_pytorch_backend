@@ -17,12 +17,12 @@
 import os
 import torch
 
+from nvidia_tao_core.config.centerpose.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.utilities import encrypt_onnx
 from nvidia_tao_pytorch.cv.centerpose.utils.onnx_export import ONNXExporter
-from nvidia_tao_pytorch.cv.centerpose.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.centerpose.model.pl_centerpose_model import CenterPosePlModel
 from nvidia_tao_pytorch.cv.centerpose.model.post_processing import HeatmapDecoder
 from nvidia_tao_pytorch.cv.centerpose.model.centerpose import CenterPoseWrapped

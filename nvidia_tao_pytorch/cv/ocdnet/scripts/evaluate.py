@@ -25,9 +25,9 @@ import torch
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.ocdnet.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
-from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.data_loader.pl_ocd_data_module import OCDDataModule
 from nvidia_tao_pytorch.cv.ocdnet.utils.util import load_checkpoint
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
@@ -44,7 +44,7 @@ pyc_ctx = pyc_dev.retain_primary_context()
 def run_experiment(experiment_config):
     """Run experiment."""
     experiment_config = OmegaConf.to_container(experiment_config)
-    results_dir, model_path, gpus = initialize_evaluation_experiment(experiment_config)
+    model_path, trainer_kwargs = initialize_evaluation_experiment(experiment_config)
 
     experiment_config['model']['pretrained'] = False
     experiment_config["dataset"]["train_dataset"] = experiment_config["dataset"]["validate_dataset"]
@@ -144,10 +144,7 @@ def run_experiment(experiment_config):
                 ckpt[new_layer] = checkpoint[layer]
             model.model.load_state_dict(ckpt)
 
-    trainer = Trainer(devices=gpus,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.test(model, datamodule=dm)
 

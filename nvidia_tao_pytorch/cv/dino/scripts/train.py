@@ -18,12 +18,12 @@ import os
 
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.dino.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.connectors.checkpoint_connector import TLTCheckpointConnector
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
-from nvidia_tao_pytorch.cv.dino.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.dino.model.pl_dino_model import DINOPlModel
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.pl_od_data_module import ODDataModule
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
@@ -33,7 +33,7 @@ def run_experiment(experiment_config,
                    key,
                    lightning_module=DINOPlModel):
     """Start the training."""
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config, key)
 
     dm = ODDataModule(experiment_config.dataset)
     dm.setup(stage="fit")
@@ -75,9 +75,7 @@ def run_experiment(experiment_config,
     else:
         pt_model = lightning_module(experiment_config)
 
-    total_epochs = experiment_config.train.num_epochs
     num_nodes = experiment_config.train.num_nodes
-    validation_interval = experiment_config.train.validation_interval
     clip_grad_norm = experiment_config.train.clip_grad_norm
     is_dry_run = experiment_config.train.is_dry_run
     distributed_strategy = experiment_config.train.distributed_strategy
@@ -91,7 +89,7 @@ def run_experiment(experiment_config,
 
     sync_batchnorm = False
     strategy = 'auto'
-    if len(gpus) > 1:
+    if len(trainer_kwargs['devices']) > 1:
         # By default find_unused_parameters is set to False in Lightning
         # If true, it introduces extra overhead and can't work with activation checkpointing
         if distributed_strategy.lower() == "ddp" and activation_checkpoint:
@@ -110,19 +108,13 @@ def run_experiment(experiment_config,
             logging.info("Setting sync batch norm")
             sync_batchnorm = True
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=gpus,
+    trainer = Trainer(**trainer_kwargs,
                       num_nodes=num_nodes,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=validation_interval,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
                       strategy=strategy,
                       precision=precision,
                       gradient_clip_val=clip_grad_norm,
                       use_distributed_sampler=False,
                       sync_batchnorm=sync_batchnorm,
-                      enable_checkpointing=False,
                       fast_dev_run=is_dry_run)
 
     # Overload connector to enable intermediate ckpt encryption & decryption.

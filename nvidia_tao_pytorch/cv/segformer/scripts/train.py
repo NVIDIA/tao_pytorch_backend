@@ -15,71 +15,67 @@
 """Train Segformer model."""
 
 import os
+from pytorch_lightning import Trainer
 
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.segformer.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.segformer.utils.config import MMSegmentationConfig
-
-# Triggers build of custom modules
-from nvidia_tao_pytorch.cv.segformer.model import * # noqa pylint: disable=W0401, W0614
-from nvidia_tao_pytorch.cv.segformer.dataloader import * # noqa pylint: disable=W0401, W0614
-
-from mmengine.runner import Runner
-from mmengine.config import Config
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
+from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
+from nvidia_tao_core.config.segformer.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.segformer.dataloader.pl_segformer_data_module import SFDataModule
+from nvidia_tao_pytorch.cv.segformer.model.segformer_pl_model import SegFormerPlModel
 
 
-def get_latest_pth_model(results_dir):
-    """Utility function to return the latest pth model in a dir.
-    Args:
-        results_dir (str): Results dir to save the checkpoints.
-
-    """
-    trainable_ckpts = [int(item.split('.')[0].split('_')[1]) for item in os.listdir(results_dir)
-                       if item.endswith(".pth")]
-    num_ckpts = len(trainable_ckpts)
-    if num_ckpts == 0:
-        return None
-    latest_step = sorted(trainable_ckpts, reverse=True)[0]
-    latest_checkpoint = os.path.join(results_dir, f"iter_{latest_step}.pth")
-    if not os.path.isfile(latest_checkpoint):
-        raise FileNotFoundError("Checkpoint file not found at {}")
-    return latest_checkpoint
-
-
-def run_experiment(experiment_config):
-    """Start the training.
-    Args:
-        experiment_config (Dict): Config dictionary containing epxeriment parameters
-        results_dir (str): Results dir to save the trained checkpoints.
-
-    """
+def run_experiment(experiment_config, key):
+    """Start the training."""
+    # results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
     if experiment_config.get("train", {}).get("resume_training_checkpoint_path", None) == "":
         experiment_config["train"]["resume_training_checkpoint_path"] = None
-    results_dir = experiment_config.results_dir
-    status_logger = status_logging.get_status_logger()
-    status_logger.write(status_level=status_logging.Status.STARTED,
-                        message="********************** Start Segformer Training **********************.")
 
-    mmseg_config = MMSegmentationConfig(experiment_config, phase="train")
-    train_cfg = mmseg_config.updated_config
+    if experiment_config.get("train", {}).get("pretrained_model_path", None) == "":
+        experiment_config["train"]["pretrained_model_path"] = None
 
-    train_cfg["work_dir"] = results_dir
-    resume_checkpoint = get_latest_pth_model(results_dir) if not train_cfg["load_from"] else train_cfg["load_from"]
-    if resume_checkpoint:
-        train_cfg["load_from"] = resume_checkpoint
-        train_cfg["resume"] = True
-        train_cfg["model"]["backbone"]["init_cfg"] = None  # Disable pretrained weights if there are any
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config, key)
 
-    # Converts dict to cfg
-    # (This is necessary due to a bug in mmseg for model.test_cfg which errors if it's a dict)
-    train_cfg = Config(train_cfg)
+    num_nodes = experiment_config.train.num_nodes
+    enable_tensorboard = experiment_config.train.tensorboard.enabled
 
-    runner = Runner.from_cfg(train_cfg)
-    runner.train()
-    status_logger.write(status_level=status_logging.Status.RUNNING,
-                        message="********************** Completed Segformer Training **********************.")
+    # Load pretrained model as starting point if pretrained path is provided
+    pretrained_path = experiment_config.train.pretrained_model_path
+
+    precision = '32-true'
+    sync_batchnorm = False
+
+    assert enable_tensorboard is False, "Currently tensorboard visualization is not supported for Segmentation"
+
+    dm = SFDataModule(experiment_config.dataset.segment)
+
+    if pretrained_path:
+        model = SegFormerPlModel.load_from_checkpoint(
+            pretrained_path,
+            map_location="cpu",
+            experiment_spec=experiment_config
+        )
+    else:
+        model = SegFormerPlModel(experiment_config)
+
+    strategy = 'auto'
+    if len(trainer_kwargs['devices']) > 1:
+        strategy = 'ddp_find_unused_parameters_true'
+
+    from pytorch_lightning.callbacks import LearningRateMonitor
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+    trainer = Trainer(
+        **trainer_kwargs,
+        num_nodes=num_nodes,
+        strategy=strategy,
+        precision=precision,
+        use_distributed_sampler=False,
+        sync_batchnorm=sync_batchnorm,
+        callbacks=[lr_monitor],
+    )
+
+    trainer.fit(model, dm, ckpt_path=resume_ckpt)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -88,12 +84,17 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Load experiment specification, additially using schema for validation/retrieving the default values.
 # --config_path and --config_name will be provided by the entrypoint script.
 @hydra_runner(
-    config_path=os.path.join(spec_root, "experiment_specs"), config_name="train_isbi", schema=ExperimentConfig
+    config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment_spec", schema=ExperimentConfig
 )
-@monitor_status(name="Segformer", mode="train")
+@monitor_status(name="SegFormer", mode="train")
 def main(cfg: ExperimentConfig) -> None:
     """Run the training process."""
-    run_experiment(experiment_config=cfg)
+    # Obfuscate logs.
+    obfuscate_logs(cfg)
+    run_experiment(
+        experiment_config=cfg,
+        key=cfg.encryption_key
+    )
 
 
 if __name__ == "__main__":

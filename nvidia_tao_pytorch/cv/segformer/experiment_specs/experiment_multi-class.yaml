@@ -1,0 +1,125 @@
+encryption_key: tlt_encode
+results_dir: ???
+
+train:
+  resume_training_checkpoint_path: null
+  segment:
+    loss: "ce"
+  num_epochs: 50
+  num_nodes: 1
+  validation_interval: 1
+  checkpoint_interval: 50
+  optim:
+    lr: 0.0001
+    optim: "adamw"
+    policy: "linear"
+    weight_decay: 0.0005
+
+evaluate:
+  checkpoint: ${results_dir}/train/segformer_model_latest.pth
+  vis_after_n_batches: 1
+
+inference:
+  checkpoint: ${results_dir}/train/segformer_model_latest.pth
+  vis_after_n_batches: 1
+
+export:
+  results_dir: "${results_dir}/export"
+  gpu_id: 0
+  checkpoint: ${results_dir}/train/segformer_model_latest.pth
+  onnx_file: "${export.results_dir}/segformer.onnx"
+  input_width: 224
+  input_height: 224
+  batch_size: -1
+
+model:
+  backbone:
+    type: "vit_large_nvdinov2"
+    pretrained_backbone_path: /tao-pt/mount/pretrained_models/NVDINOv2/ViTL/NV_DINOV2_518.ckpt
+    # pretrained_backbone_path: null
+    freeze_backbone: False
+  decode_head:
+    feature_strides: [4, 8, 16, 32]
+
+dataset:
+  segment:
+    dataset: "SFDataset"
+    root_dir: ???
+    batch_size: 32
+    workers: 8
+    num_classes: 6
+    img_size: 224
+    train_split: "train"
+    validation_split: "val"
+    test_split: "val"
+    predict_split: "val"
+    augmentation:
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: True
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list: [90, 180, 270]
+        enable: True
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: False
+      with_scale_random_crop:
+        enable: True
+      with_random_crop: True
+      with_random_blur: False
+    label_transform: None
+    palette:
+      - seg_class: urban
+        rgb:
+          - 0
+          - 255
+          - 255
+        label_id: 0
+        mapping_class: urban
+      - seg_class: agriculture
+        rgb:
+          - 255
+          - 255
+          - 0
+        label_id: 1
+        mapping_class: agriculture
+      - seg_class: rangeland
+        rgb:
+          - 255
+          - 0
+          - 255
+        label_id: 2
+        mapping_class: rangeland
+      - seg_class: forest
+        rgb:
+          - 0
+          - 255
+          - 0
+        label_id: 3
+        mapping_class: forest
+      - seg_class: water
+        rgb:
+          - 0
+          - 0
+          - 255
+        label_id: 4
+        mapping_class: water
+      - seg_class: barren
+        rgb:
+          - 255
+          - 255
+          - 255
+        label_id: 5
+        mapping_class: barren
+      - seg_class: unknown
+        rgb:
+          - 0
+          - 0
+          - 0
+        label_id: 255
+        mapping_class: unknown

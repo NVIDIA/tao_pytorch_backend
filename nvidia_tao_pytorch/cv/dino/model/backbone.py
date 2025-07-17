@@ -26,11 +26,11 @@ from typing import Dict, List
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.core.models import TimmBackbone
+from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import (
+    interpolate_pos_embed, interpolate_patch_embed
+)
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
-from nvidia_tao_pytorch.cv.dino.utils.pos_embed_interpolation_converter import (
-    interpolate_patch_embed, interpolate_pos_embed
-)
 from nvidia_tao_pytorch.cv.deformable_detr.model.resnet import resnet34, resnet50
 from nvidia_tao_pytorch.cv.deformable_detr.model.backbone import FrozenBatchNorm2d
 from nvidia_tao_pytorch.cv.deformable_detr.model.gc_vit import gc_vit_model_dict

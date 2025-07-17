@@ -219,13 +219,17 @@ def threshold_predictions(predictions, conf_threshold):
         pred_boxes = pred_boxes.tolist()
         scores = pred_scores.tolist()
         labels = pred_labels.tolist()
-        for k, _ in enumerate(pred_boxes):
-            # Conf score Thresholding
-            if scores[k] < conf_threshold:
-                # remove from list
-                scores.pop(k)
-                labels.pop(k)
-                pred_boxes.pop(k)
+
+        filtered = [
+            (box, score, label)
+            for box, score, label in zip(pred_boxes, scores, labels)
+            if score >= conf_threshold
+        ]
+
+        if not filtered:
+            continue
+
+        pred_boxes, scores, labels = map(list, zip(*filtered))
 
         filtered_predictions.extend(
             [

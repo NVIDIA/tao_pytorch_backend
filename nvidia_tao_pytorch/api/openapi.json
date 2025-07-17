@@ -208,7 +208,7 @@
         },
         "PtmReq": {
           "properties": {
-            "ngc_api_key": {
+            "ngc_key": {
               "format": "regex",
               "maxLength": 1000,
               "type": "string"
@@ -220,7 +220,7 @@
       "securitySchemes": {
         "api-key": {
           "in": "header",
-          "name": "ngc_api_key",
+          "name": "ngc_key",
           "type": "apiKey"
         }
       }
@@ -721,7 +721,7 @@
                 }
               }
             },
-            "description": "Login request with ngc_api_key",
+            "description": "Login request with ngc_key",
             "required": true
           },
           "responses": {

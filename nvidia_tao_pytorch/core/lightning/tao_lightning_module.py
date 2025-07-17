@@ -15,14 +15,14 @@
 """Common Lightning Module"""
 
 from typing import Any, Dict, Sequence
-import re
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 
 from nvidia_tao_pytorch.core.callbacks.loggers import TAOStatusLogger
+from nvidia_tao_pytorch.core.callbacks.model_checkpoint import TAOExceptionCheckpoint
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
-from nvidia_tao_pytorch.core.utilities import get_latest_checkpoint, patch_decrypt_checkpoint
+from nvidia_tao_pytorch.core.utilities import patch_decrypt_checkpoint
 
 
 class TAOLightningModule(pl.LightningModule):
@@ -42,23 +42,12 @@ class TAOLightningModule(pl.LightningModule):
         # This is called when trainer.fit() is called
 
         results_dir = self.experiment_spec["results_dir"]
-        num_epochs = self.experiment_spec["train"]["num_epochs"]
         checkpoint_interval = self.experiment_spec["train"]["checkpoint_interval"]
 
         status_logger_callback = TAOStatusLogger(
             results_dir,
-            append=True,
-            num_epochs=num_epochs
+            append=True
         )
-
-        resume_ckpt = self.experiment_spec["train"]["resume_training_checkpoint_path"] or get_latest_checkpoint(results_dir)
-        if resume_ckpt:
-            resumed_epoch = re.search('epoch_(\\d+)', resume_ckpt)
-            if resumed_epoch:
-                resumed_epoch = int(resumed_epoch.group(1))
-        else:
-            resumed_epoch = 0
-        status_logger_callback.epoch_counter = resumed_epoch + 1
 
         ModelCheckpoint.FILE_EXTENSION = ".pth"
         ModelCheckpoint.CHECKPOINT_EQUALS_CHAR = "_"
@@ -73,10 +62,48 @@ class TAOLightningModule(pl.LightningModule):
                                               monitor=None,
                                               save_top_k=-1,
                                               save_last='link',
-                                              filename='model_{epoch:03d}',
+                                              filename='model_{epoch:03d}_{step:05d}',
                                               enable_version_counter=False)
 
-        return [status_logger_callback, checkpoint_callback]
+        # For now, we use our custom one since Lightning's callback for this is minimal
+        TAOExceptionCheckpoint.FILE_EXTENSION = ModelCheckpoint.FILE_EXTENSION
+        TAOExceptionCheckpoint.CHECKPOINT_NAME_LAST = ModelCheckpoint.CHECKPOINT_NAME_LAST
+        exception_checkpoint_callback = TAOExceptionCheckpoint(dirpath=results_dir)
+
+        return [status_logger_callback, checkpoint_callback, exception_checkpoint_callback]
+
+    # These are necessary because we sometimes have drop_last=True for the dataloaders.
+    # When the dataset is smaller than the batch size, this leads to Lightning not
+    # doing the task since it can't fill up a batch. However, it reports completion,
+    # not failure. So, we do a manaul check and throw an error.
+    def _dataloader_batch_check(self, dataloader, task):
+        batch_size = dataloader.batch_size
+        # Using a BatchSampler
+        if not batch_size:
+            assert hasattr(dataloader, "batch_sampler"), "Loader should have batch sampler initiated if batch size isn't defined."
+            batch_size = dataloader.batch_sampler.batch_size
+        dataset_len = len(dataloader.dataset)
+        total_batch_size = batch_size * self.trainer.num_devices
+
+        if dataset_len < total_batch_size:
+            raise ValueError(f"Dataset size ({dataset_len}) is smaller than the total batch size "
+                             f"({total_batch_size}). Not enough data for {task}.")
+
+    def on_fit_start(self):
+        """Before training begins."""
+        self._dataloader_batch_check(self.trainer.datamodule.train_dataloader(), "train")
+
+    def on_validation_start(self):
+        """Before validation begins."""
+        self._dataloader_batch_check(self.trainer.datamodule.val_dataloader(), "validation")
+
+    def on_test_start(self):
+        """Before testing begins."""
+        self._dataloader_batch_check(self.trainer.datamodule.test_dataloader(), "evaluation")
+
+    def on_predict_start(self):
+        """Before inference begins."""
+        self._dataloader_batch_check(self.trainer.datamodule.predict_dataloader(), "inference")
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """

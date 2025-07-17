@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Root module for common utilities that could be used across all nlp models."""
+"""Core functionality module for TAO Toolkit PyTorch implementation."""
+
 import os
 
 

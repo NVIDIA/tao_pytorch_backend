@@ -20,7 +20,7 @@ from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCoo
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.utilities import check_and_create, update_results_dir
-from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.pose_classification.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.pose_classification.utils.common_utils import load_json_from_file, write_np_to_file
 
 

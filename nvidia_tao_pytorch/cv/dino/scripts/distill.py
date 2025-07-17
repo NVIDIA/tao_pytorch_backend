@@ -21,7 +21,7 @@ import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 
-from nvidia_tao_pytorch.cv.dino.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.dino.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.dino.distillation.distiller import DINODistiller as DINOPlModel
 
 from nvidia_tao_pytorch.cv.dino.scripts.train import run_experiment

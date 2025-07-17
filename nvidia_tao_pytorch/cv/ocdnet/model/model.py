@@ -24,7 +24,6 @@ from torch import nn
 
 # pylint: disable=W0401,W0611,W0614
 # flake8: noqa: F401, F403
-from pytorch_quantization import quant_modules
 from nvidia_tao_pytorch.cv.ocdnet.model.head.conv_head import ConvHead
 from nvidia_tao_pytorch.cv.ocdnet.model.head.db_head import DBHead
 from nvidia_tao_pytorch.cv.ocdnet.model.losses.DB_loss import DBLoss

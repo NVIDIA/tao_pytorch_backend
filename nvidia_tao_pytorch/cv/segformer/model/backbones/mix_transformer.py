@@ -11,7 +11,6 @@ from torch import nn
 from functools import partial
 
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from mmseg.registry import MODELS
 import math
 
 
@@ -403,7 +402,6 @@ class DWConv(nn.Module):
         return x
 
 
-@MODELS.register_module()
 class mit_b0(MixVisionTransformer):
     """ Model Class."""
 
@@ -415,7 +413,6 @@ class mit_b0(MixVisionTransformer):
             drop_rate=0.0, drop_path_rate=0.1)
 
 
-@MODELS.register_module()
 class mit_b1(MixVisionTransformer):
     """ Model Class."""
 
@@ -427,7 +424,6 @@ class mit_b1(MixVisionTransformer):
             drop_rate=0.0, drop_path_rate=0.1)
 
 
-@MODELS.register_module()
 class mit_b2(MixVisionTransformer):
     """ Model Class."""
 
@@ -439,7 +435,6 @@ class mit_b2(MixVisionTransformer):
             drop_rate=0.0, drop_path_rate=0.1)
 
 
-@MODELS.register_module()
 class mit_b3(MixVisionTransformer):
     """ Model Class."""
 
@@ -451,7 +446,6 @@ class mit_b3(MixVisionTransformer):
             drop_rate=0.0, drop_path_rate=0.1)
 
 
-@MODELS.register_module()
 class mit_b4(MixVisionTransformer):
     """ Model Class."""
 
@@ -463,7 +457,6 @@ class mit_b4(MixVisionTransformer):
             drop_rate=0.0, drop_path_rate=0.1)
 
 
-@MODELS.register_module()
 class mit_b5(MixVisionTransformer):
     """ Model Class."""
 

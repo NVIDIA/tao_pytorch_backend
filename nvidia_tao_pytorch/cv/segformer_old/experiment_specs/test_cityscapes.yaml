@@ -1,0 +1,165 @@
+results_dir: ???
+model:
+  backbone:
+    type: "mit_b5"
+  input_height: 1820
+  input_width: 1024
+dataset:
+  data_root: /tlt-pytorch
+  img_suffix: ".jpg"
+  img_norm_cfg:
+      mean:
+        - 123.675
+        - 116.28
+        - 103.53
+      std:
+        - 58.395
+        - 57.12
+        - 57.375
+      to_rgb: true
+  test_dataset:
+    img_dir: /media/scratch.metropolis2/users/seanf/kpi_its_imagesGT/val
+    ann_dir: /media/scratch.metropolis2/users/seanf/mask_pngs_cvat_annot_MAPPED/val
+    pipeline:
+      multi_scale:
+        - 2048
+        - 1024
+      augmentation_config:
+        resize:
+          keep_ratio: True
+  palette:
+      - seg_class: road
+        rgb:
+          - 128
+          - 64
+          - 128
+        label_id: 0
+        mapping_class: road
+      - seg_class: sidewalk
+        rgb:
+          - 244
+          - 35
+          - 232
+        label_id: 1
+        mapping_class: sidewalk
+      - seg_class: building
+        rgb:
+          - 70
+          - 70
+          - 70
+        label_id: 2
+        mapping_class: building
+      - seg_class: wall
+        rgb:
+          - 102
+          - 102
+          - 102
+        label_id: 3
+        mapping_class: wall
+      - seg_class: fence
+        rgb:
+          - 190
+          - 153
+          - 153
+        label_id: 4
+        mapping_class: fence
+      - seg_class: pole
+        rgb:
+          - 153
+          - 153
+          - 153
+        label_id: 5
+        mapping_class: pole
+      - seg_class: traffic light
+        rgb:
+          - 250
+          - 170
+          - 30
+        label_id: 6
+        mapping_class: traffic light
+      - seg_class: traffic sign
+        rgb:
+          - 220
+          - 220
+          - 0
+        label_id: 7
+        mapping_class: traffic sign
+      - seg_class: vegetation
+        rgb:
+          - 107
+          - 142
+          - 35
+        label_id: 8
+        mapping_class: vegetation
+      - seg_class: terrain
+        rgb:
+          - 152
+          - 251
+          - 152
+        label_id: 9
+        mapping_class: terrain
+      - seg_class: sky
+        rgb:
+          - 70
+          - 130
+          - 180
+        label_id: 10
+        mapping_class: sky
+      - seg_class: person
+        rgb:
+          - 220
+          - 20
+          - 60
+        label_id: 11
+        mapping_class: person
+      - seg_class: rider
+        rgb:
+          - 255
+          - 0
+          - 0
+        label_id: 12
+        mapping_class: rider
+      - seg_class: car
+        rgb:
+          - 0
+          - 0
+          - 142
+        label_id: 13
+        mapping_class: car
+      - seg_class: truck
+        rgb:
+          - 0
+          - 0
+          - 70
+        label_id: 14
+        mapping_class: truck
+      - seg_class: bus
+        rgb:
+          - 0
+          - 60
+          - 100
+        label_id: 15
+        mapping_class: bus
+      - seg_class: train
+        rgb:
+          - 0
+          - 80
+          - 100
+        label_id: 16
+        mapping_class: train
+      - seg_class: motorcycle
+        rgb:
+          - 0
+          - 0
+          - 230
+        label_id: 17
+        mapping_class: motorcycle
+      - seg_class: bicycle
+        rgb:
+          - 119
+          - 11
+          - 32
+        label_id: 18
+        mapping_class: bicycle
+  batch_size: 1
+  workers_per_gpu: 1

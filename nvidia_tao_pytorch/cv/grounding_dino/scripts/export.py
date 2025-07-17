@@ -17,15 +17,60 @@
 import os
 import torch
 
+from nvidia_tao_core.config.grounding_dino.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_pytorch.core.utilities import get_nvdsinfer_yaml
 from nvidia_tao_pytorch.cv.grounding_dino.utils.onnx_export import ONNXExporter
-from nvidia_tao_pytorch.cv.grounding_dino.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.grounding_dino.model.pl_gdino_model import GDINOPlModel
-
-
+from nvidia_tao_pytorch.cv.grounding_dino.types.grounding_dino_nvdsinfer import GroundingDINONvDSInferConfig
+from nvidia_tao_pytorch.cv.grounding_dino.types.grounding_dino_preprocess import GroundingDINOPreprocessConfig
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def serialize_nvdsinfer_config(output_root, output_file, input_shape, output_names, input_width, input_height, input_channel):
+    """Serialize nvdsinfer configuration files.
+
+    Args:
+        output_root (str): Directory to save the configuration files
+        output_file (str): Path to the ONNX model file
+        input_shape (tuple): Input shape of the model
+        output_names (list): List of output tensor names
+        input_width (int): Input width
+        input_height (int): Input height
+        input_channel (int): Input channel
+
+    Returns:
+        tuple: Paths to the generated nvdsinfer and preprocess config files
+    """
+    nvdsinfer_yaml_file = os.path.join(output_root, "nvdsinfer_config.yaml")
+    logging.info("Serializing the deepstream config to {}".format(nvdsinfer_yaml_file))
+
+    num_classes = None
+    labels_file = None
+    nvdsinfer_config = get_nvdsinfer_yaml(
+        GroundingDINONvDSInferConfig,
+        num_classes,
+        labels_file,
+        output_file,
+        input_shape,
+        output_names
+    )
+    with open(nvdsinfer_yaml_file, "w") as f:
+        f.write(nvdsinfer_config)
+
+    nvdsinfer_preprocess_file = os.path.join(output_root, "nvdspreprocess_config.yaml")
+    preprocess_config = GroundingDINOPreprocessConfig()
+    preprocess_config.property.tensor_name = "inputs"
+    preprocess_config.property.processing_width = input_width
+    preprocess_config.property.processing_height = input_height
+    preprocess_config.property.network_input_shape = [1, input_channel, input_height, input_width]
+
+    with open(nvdsinfer_preprocess_file, "w") as f:
+        f.write(str(preprocess_config))
+
+    return nvdsinfer_yaml_file, nvdsinfer_preprocess_file
 
 
 # Load experiment specification, additially using schema for validation/retrieving the default values.
@@ -70,6 +115,8 @@ def run_export(experiment_config):
     input_channel = experiment_config.export.input_channel
     input_width = experiment_config.export.input_width
     input_height = experiment_config.export.input_height
+    input_shape = [input_channel, input_height, input_width]
+    serialize_nvdsinfer = experiment_config.export.serialize_nvdsinfer
     opset_version = experiment_config.export.opset_version
     batch_size = experiment_config.export.batch_size
     on_cpu = experiment_config.export.on_cpu
@@ -93,7 +140,21 @@ def run_export(experiment_config):
     if not os.path.exists(output_root):
         os.makedirs(output_root)
 
+    input_names = ["inputs", "input_ids", "attention_mask", "position_ids", "token_type_ids", "text_token_mask"]
+    output_names = ["pred_logits", "pred_boxes"]
+
     caption = "the running dog ."
+    if serialize_nvdsinfer:
+        serialize_nvdsinfer_config(
+            output_root,
+            output_file,
+            input_shape,
+            output_names,
+            input_width,
+            input_height,
+            input_channel
+        )
+
     # load model
     pl_model = GDINOPlModel.load_from_checkpoint(model_path,
                                                  map_location='cpu' if on_cpu else 'cuda',
@@ -120,8 +181,6 @@ def run_export(experiment_config):
     dummy_input = torch.randn(input_batch_size, input_channel, input_height, input_width).to(device)
 
     args = (dummy_input, input_ids, attention_mask, position_ids, token_type_ids, text_token_mask)
-    input_names = ["inputs", "input_ids", "attention_mask", "position_ids", "token_type_ids", "text_token_mask"]
-    output_names = ["pred_logits", "pred_boxes"]
 
     onnx_export = ONNXExporter()
     onnx_export.export_model(model,

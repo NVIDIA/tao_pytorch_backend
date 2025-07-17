@@ -12,9 +12,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.layers import DropPath, trunc_normal_, to_2tuple
-from mmpretrain.registry import MODELS
-from mmpretrain.models.backbones.base_backbone import BaseBackbone
+from timm.layers import DropPath, trunc_normal_, to_2tuple
 from nvidia_tao_pytorch.cv.backbone.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.fan import (TokenMixing, SqueezeExcite, OverlapPatchEmbed,
                                                 PositionalEncodingFourier, ConvPatchEmbed,
@@ -331,7 +329,7 @@ class FANBlock(nn.Module):
         return x
 
 
-class FAN(BaseBackbone):
+class FAN(nn.Module):
     """Based on timm code bases
     https://github.com/rwightman/pytorch-image-models/tree/master/timm
     """
@@ -339,9 +337,9 @@ class FAN(BaseBackbone):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12, sharpen_attn=False, channel_dims=None,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rate=0., sr_ratio=None, backbone=None, use_checkpoint=False,
                  act_layer=None, norm_layer=None, se_mlp=False, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=False, c_head_num=None, hybrid_patch_size=2, head_init_scale=1.0,
-                 init_cfg=None, **kwargs):
+                 **kwargs):
         """ Init Module """
-        super().__init__(init_cfg=init_cfg)
+        super().__init__()
         if not isinstance(img_size, tuple):
             img_size = to_2tuple(img_size)
         self.head_init_scale = head_init_scale
@@ -543,7 +541,6 @@ class FAN(BaseBackbone):
 # FAN-Hybrid Models
 # CNN backbones are based on ConvNeXt architecture with only first two stages for downsampling purpose
 # This has been verified to be beneficial for downstream tasks
-@MODELS.register_module()
 class fan_tiny_8_p2_hybrid(FAN):
     """ FAN Tiny Hybrid """
 

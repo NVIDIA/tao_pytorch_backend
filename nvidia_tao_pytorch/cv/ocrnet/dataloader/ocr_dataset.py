@@ -24,7 +24,6 @@ import random
 
 # from natsort import natsorted
 from nvidia_tao_pytorch.core.path_utils import expand_path
-# from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
 from PIL import Image, ImageFilter
 import torch
 from torch.utils.data import ConcatDataset, Dataset, Subset

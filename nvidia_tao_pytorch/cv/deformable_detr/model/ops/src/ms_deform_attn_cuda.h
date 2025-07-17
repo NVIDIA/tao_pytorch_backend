@@ -2,7 +2,7 @@
 **************************************************************************************************
 # Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
 
-# Original source taken from https://github.com/fundamentalvision/Deformable-DETR
+# Original source taken from https://github.com/huggingface/transformers/blob/main/src/transformers/kernels/deformable_detr/cuda/ms_deform_attn_cuda.h
 
 # Copyright (c) 2020 SenseTime.
 

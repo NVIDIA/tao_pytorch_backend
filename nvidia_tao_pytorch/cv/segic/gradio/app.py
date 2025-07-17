@@ -279,10 +279,8 @@ if __name__ == "__main__":
             (input_components + [input_image_gr] + output_components +
              [input_component_row, meta_component_column]),
             js=f"""() => {json.dumps(
-                        [component.cleared_value if hasattr(component, "cleared_value") else None
-                        for component in input_components + output_components]
-                    )}
-                    """,
+                [component.cleared_value if hasattr(component, "cleared_value") else None
+                 for component in input_components + output_components])}""",
         )
 
     block.launch(debug=True, server_name='0.0.0.0', server_port=8890, inline=False)

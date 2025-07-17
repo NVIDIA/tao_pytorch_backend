@@ -20,13 +20,13 @@ from __future__ import division
 
 import warnings
 import math
+import sys
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.nn.init import xavier_uniform_, constant_
 import os
 
-from mmcv.ops.multi_scale_deform_attn import multi_scale_deformable_attn_pytorch
 from nvidia_tao_pytorch.cv.deformable_detr.model.ops.functions import MSDeformAttnFunction, load_ops
 
 
@@ -81,7 +81,7 @@ class MSDeformAttn(nn.Module):
         self._reset_parameters()
         # load custom ops
         ops_dir = os.path.dirname(os.path.abspath(__file__))
-        lib_name = "MultiScaleDeformableAttention.cpython-310-x86_64-linux-gnu.so"
+        lib_name = f"MultiScaleDeformableAttention.cpython-{sys.version_info.major}{sys.version_info.minor}-{os.uname().machine}-linux-gnu.so"
         load_ops(ops_dir, lib_name)
 
     def _reset_parameters(self):
@@ -119,8 +119,8 @@ class MSDeformAttn(nn.Module):
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
 
-        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in, \
-            f"{(input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()} {Len_in}"
+        # assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in, \
+        #     f"{(input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()} {Len_in}"
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
@@ -153,24 +153,29 @@ class MSDeformAttn(nn.Module):
                 # CPU implementation of multi-scale deformable attention
                 # Note that this implementation uses GridSample operator which requires
                 # opset version >= 16 and is much slower in TensorRT
-                warnings.warn("PyTorch native implementation of multi-scale deformable attention is being used. "
-                              "Expect slower inference performance until TensorRT further optimizes GridSample.")
+                # warnings.warn("PyTorch native implementation of multi-scale deformable attention is being used. "
+                #               "Expect slower inference performance until TensorRT further optimizes GridSample.")
                 output = multi_scale_deformable_attn_pytorch(
                     value, input_spatial_shapes, sampling_locations, attention_weights
                 )
         else:
             if torch.cuda.is_available() and value.is_cuda:
                 # For mixed precision training
-                if value.dtype == torch.float16:
-                    output = MSDeformAttnFunction.apply(
-                        value.to(torch.float32), input_spatial_shapes,
-                        input_level_start_index, sampling_locations.to(torch.float32),
-                        attention_weights, self.im2col_step)
-                    output = output.to(torch.float16)
-                else:
-                    output = MSDeformAttnFunction.apply(
-                        value, input_spatial_shapes, input_level_start_index,
-                        sampling_locations, attention_weights, self.im2col_step)
+                half_float = False
+                if value.dtype in [torch.float16, torch.bfloat16]:
+                    half_float = value.dtype
+                    value = value.float()
+                    sampling_locations = sampling_locations.float()
+                    attention_weights = attention_weights.float()
+
+                output = MSDeformAttnFunction.apply(
+                    value, input_spatial_shapes,
+                    input_level_start_index, sampling_locations,
+                    attention_weights, self.im2col_step)
+
+                if half_float:
+                    output = output.to(half_float)
+
             else:
                 # CPU implementation of multi-scale deformable attention
                 output = multi_scale_deformable_attn_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
@@ -178,3 +183,46 @@ class MSDeformAttn(nn.Module):
         output = output.view(N, Len_q, int(self.d_model * self.ratio))
         output = self.output_proj(output)
         return output
+
+
+def multi_scale_deformable_attn_pytorch(value, value_spatial_shapes, sampling_locations, attention_weights):
+    """
+    Args:
+        value (Tensor): [bs, value_length, n_head, c]
+        value_spatial_shapes (Tensor|List): [n_levels, 2]
+        value_level_start_index (Tensor|List): [n_levels]
+        sampling_locations (Tensor): [bs, query_length, n_head, n_levels, n_points, 2]
+        attention_weights (Tensor): [bs, query_length, n_head, n_levels, n_points]
+
+    Returns:
+        output (Tensor): [bs, Length_{query}, C]
+    """
+    bs, _, n_head, c = value.shape
+    _, Len_q, _, n_levels, n_points, _ = sampling_locations.shape
+
+    split_shape = [h * w for h, w in value_spatial_shapes]
+    value_list = value.split(split_shape, dim=1)
+    sampling_grids = 2 * sampling_locations - 1
+    sampling_value_list = []
+    for level, (h, w) in enumerate(value_spatial_shapes):
+        # N_, H_*W_, M_, D_ -> N_, H_*W_, M_*D_ -> N_, M_*D_, H_*W_ -> N_*M_, D_, H_, W_
+        value_l_ = value_list[level].flatten(2).permute(
+            0, 2, 1).reshape(bs * n_head, c, h, w)
+        # N_, Lq_, M_, P_, 2 -> N_, M_, Lq_, P_, 2 -> N_*M_, Lq_, P_, 2
+        sampling_grid_l_ = sampling_grids[:, :, :, level].permute(
+            0, 2, 1, 3, 4).flatten(0, 1)
+        # N_*M_, D_, Lq_, P_
+        sampling_value_l_ = F.grid_sample(
+            value_l_,
+            sampling_grid_l_,
+            mode='bilinear',
+            padding_mode='zeros',
+            align_corners=False)
+        sampling_value_list.append(sampling_value_l_)
+    # (N_, Lq_, M_, L_, P_) -> (N_, M_, Lq_, L_, P_) -> (N_*M_, 1, Lq_, L_*P_)
+    attention_weights = attention_weights.permute(0, 2, 1, 3, 4).reshape(
+        bs * n_head, 1, Len_q, n_levels * n_points)
+    output = (torch.stack(sampling_value_list, dim=-2).flatten(-2) *
+              attention_weights).sum(-1).reshape(bs, n_head * c, Len_q)
+
+    return output.permute(0, 2, 1)

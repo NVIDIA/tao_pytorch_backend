@@ -136,6 +136,7 @@ def get_extra_compile_args():
     extra_compile_args = {"cxx": []}
     extra_compile_args["nvcc"] = [
         "-DCUDA_HAS_FP16=1",
+        "-DCUTE_ARCH_MMA_SM90A_ENABLED=1",  # Enable SM90A architecture support
         "-D__CUDA_NO_HALF_OPERATORS__",
         "-D__CUDA_NO_HALF_CONVERSIONS__",
         "-D__CUDA_NO_HALF2_OPERATORS__",

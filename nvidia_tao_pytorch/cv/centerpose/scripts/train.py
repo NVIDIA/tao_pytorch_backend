@@ -18,17 +18,17 @@ import os
 
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.centerpose.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
-from nvidia_tao_pytorch.cv.centerpose.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.centerpose.model.pl_centerpose_model import CenterPosePlModel
 from nvidia_tao_pytorch.cv.centerpose.dataloader.pl_cp_data_module import CPDataModule
 
 
 def run_experiment(experiment_config, key):
     """Start the training."""
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config, key)
 
     dm = CPDataModule(experiment_config.dataset)
 
@@ -41,8 +41,6 @@ def run_experiment(experiment_config, key):
     else:
         pt_model = CenterPosePlModel(experiment_config)
 
-    total_epochs = experiment_config.train.num_epochs
-    validation_interval = experiment_config.train.validation_interval
     clip_grad_val = experiment_config.train.clip_grad_val
     is_dry_run = experiment_config.train.is_dry_run
 
@@ -53,18 +51,12 @@ def run_experiment(experiment_config, key):
     else:
         raise NotImplementedError(f"{experiment_config.train.precision} is not supported. Only fp32 and fp16 are supported")
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=gpus,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=validation_interval,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
+    trainer = Trainer(**trainer_kwargs,
                       strategy='auto',
                       precision=precision,
                       gradient_clip_val=clip_grad_val,
                       use_distributed_sampler=False,
                       sync_batchnorm=False,
-                      enable_checkpointing=False,
                       fast_dev_run=is_dry_run)
 
     trainer.fit(pt_model, dm, ckpt_path=resume_ckpt)

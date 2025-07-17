@@ -1,4 +1,4 @@
-results_dir: /data
+results_dir: /results/
 dataset: kitti
 root_dir: /data
 mode: validation

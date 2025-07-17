@@ -51,6 +51,7 @@ class ChangeNetHeadConfig:
     feature_strides: List[int] = LIST_FIELD(arrList=[4, 8, 16, 16], description="Feature strides for the head", display_name="Feature Strides", default_value=[4, 8, 16, 16])  # No change
     align_corners: bool = BOOL_FIELD(value=False, description="Align corners for the head", display_name="Align Corners", default_value=False)
     decoder_params: Dict[str, int] = DICT_FIELD(hashMap={"embed_dim": 256}, description="Decoder parameters for the head", display_name="Decoder Parameters", default_value={"embed_dim": 256})  # 256, 512, 768 -> Configurable
+    use_summary_token: bool = BOOL_FIELD(value=False, default_value=False, display_name="Use summary token", description="Flag to use summary token")
 
 
 @dataclass
@@ -222,7 +223,7 @@ class TensorBoardLogger:
     """Configuration for the tensorboard logger."""
 
     enabled: bool = BOOL_FIELD(value=False, default_value=False, description="Flag to enable tensorboard")
-    infrequent_logging_frequency: int = INT_FIELD(value=2, default_value=2, valid_min=0, valid_max="inf", description="infrequent_logging_frequency")  # Defined per epoch
+    infrequent_logging_frequency: int = INT_FIELD(value=1, default_value=1, valid_min=0, valid_max="inf", description="infrequent_logging_frequency")  # Defined per epoch
 
 
 @dataclass

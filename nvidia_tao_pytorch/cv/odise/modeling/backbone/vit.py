@@ -18,7 +18,7 @@ import fvcore.nn.weight_init as weight_init
 import torch
 import torch.nn as nn
 from fairscale.nn.checkpoint import checkpoint_wrapper
-from timm.models.layers import DropPath, Mlp, trunc_normal_
+from timm.layers import DropPath, Mlp, trunc_normal_
 
 from detectron2.layers import CNNBlockBase, Conv2d
 from detectron2.modeling.backbone import Backbone

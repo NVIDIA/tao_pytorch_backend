@@ -27,10 +27,8 @@ class Distiller(TAOLightningModule):
         super().__init__(experiment_spec)
 
         self.distillation_config = experiment_spec.distill
-        self.eval_class_ids = self.dataset_config["eval_class_ids"]
-        self.dataset_type = self.dataset_config["dataset_type"]
-        if self.dataset_type not in ("serialized", "default"):
-            raise ValueError(f"{self.dataset_type} is not supported. Only serialized and default are supported.")
+        self.eval_class_ids = self.dataset_config.get("eval_class_ids", None)
+        self.dataset_type = self.dataset_config.get("dataset_type", None)
 
         self.status_logging_dict = {}
 
@@ -65,14 +63,9 @@ class Distiller(TAOLightningModule):
         raise NotImplementedError('Subclasses must implement training_step')
 
     @abstractmethod
-    def on_train_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """Internal function to define the training epoch end."""
         raise NotImplementedError('Subclasses must implement training_epoch_end')
-
-    @abstractmethod
-    def on_validation_epoch_start(self) -> None:
-        """Internal function to define the validation epoch start."""
-        raise NotImplementedError('Subclasses must implement on_validation_epoch_start')
 
     @abstractmethod
     def validation_step(self, batch, batch_idx):
@@ -83,41 +76,6 @@ class Distiller(TAOLightningModule):
     def on_validation_epoch_end(self):
         """Internal function to define the validation epoch end."""
         raise NotImplementedError('Subclasses must implement validation_epoch_end')
-
-    @abstractmethod
-    def on_test_epoch_start(self) -> None:
-        """Internal function to define the test epoch start."""
-        # raise NotImplementedError('Subclasses must implement on_test_epoch_start')
-        pass
-
-    @abstractmethod
-    def test_step(self, batch, batch_idx):
-        """Internal function to define the test step."""
-        # raise NotImplementedError('Subclasses must implement test_step')
-        pass
-
-    @abstractmethod
-    def on_test_epoch_end(self):
-        """Internal function to define the test epoch end."""
-        # raise NotImplementedError('Subclasses must implement test_epoch_end')
-        pass
-
-    @abstractmethod
-    def predict_step(self, batch, batch_idx):
-        """Internal function to define the predict step."""
-        # raise NotImplementedError('Subclasses must implement predict_step')
-        pass
-
-    @abstractmethod
-    def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
-        """Internal function to define the predict batch end."""
-        # raise NotImplementedError('Subclasses must implement on_predict_batch_end')
-        pass
-
-    @abstractmethod
-    def forward(self, x):
-        """Internal function to define the forward pass."""
-        raise NotImplementedError('Subclasses must implement forward')
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Encrpyt the checkpoint. The encryption is done in TLTCheckpointConnector."""

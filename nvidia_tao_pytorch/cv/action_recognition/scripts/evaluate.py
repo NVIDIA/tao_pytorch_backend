@@ -14,14 +14,13 @@
 
 """Evaluate a trained action recognition model."""
 import csv
-import logging
 import os
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.action_recognition.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
-from nvidia_tao_pytorch.cv.action_recognition.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.action_recognition.dataloader.pl_ar_data_module import ARDataModule
 from nvidia_tao_pytorch.cv.action_recognition.model.pl_ar_model import ActionRecognitionModel
 
@@ -51,10 +50,7 @@ def dump_cm(csv_path, cm, id2name):
 
 def run_experiment(experiment_config, key):
     """Run experiment."""
-    results_dir, model_path, gpus = initialize_evaluation_experiment(experiment_config, key)
-    if len(gpus) > 1:
-        gpus = [gpus[0]]
-        logging.log(f"Action Recognition does not support multi-GPU evaluation at this time. Using only GPU {gpus}")
+    model_path, trainer_kwargs = initialize_evaluation_experiment(experiment_config, key)
 
     dm = ARDataModule(experiment_config)
     model = ActionRecognitionModel.load_from_checkpoint(model_path,
@@ -62,10 +58,7 @@ def run_experiment(experiment_config, key):
                                                         experiment_spec=experiment_config,
                                                         dm=dm)
 
-    trainer = Trainer(devices=gpus,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.test(model, datamodule=dm)
 

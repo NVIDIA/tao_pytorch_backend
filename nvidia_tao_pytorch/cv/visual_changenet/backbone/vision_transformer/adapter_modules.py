@@ -320,22 +320,24 @@ class InteractionBlock(nn.Module):
         else:
             self.extra_extractors = None
 
-    def forward(self, x, c, blocks, deform_inputs1, deform_inputs2, H, W):
+    def forward(self, x, c, blocks, deform_inputs1, deform_inputs2, H, W, num_summary=0):
         """Forward function."""
-        x = self.injector(query=x, reference_points=deform_inputs1[0],
-                          feat=c, spatial_shapes=deform_inputs1[1],
-                          level_start_index=deform_inputs1[2])
-
+        x_summary = x[:, :num_summary]
+        x_feat = x[:, num_summary:]
+        x_feat = self.injector(query=x_feat, reference_points=deform_inputs1[0],
+                               feat=c, spatial_shapes=deform_inputs1[1],
+                               level_start_index=deform_inputs1[2])
+        x = torch.cat([x_summary, x_feat], dim=1).contiguous()
         for blk in blocks:
             x = blk(x)
-
+        x_feat = x[:, num_summary:]
         c = self.extractor(query=c, reference_points=deform_inputs2[0],
-                           feat=x, spatial_shapes=deform_inputs2[1],
+                           feat=x_feat, spatial_shapes=deform_inputs2[1],
                            level_start_index=deform_inputs2[2], H=H, W=W)
         if self.extra_extractors is not None:
             for extractor in self.extra_extractors:
                 c = extractor(query=c, reference_points=deform_inputs2[0],
-                              feat=x, spatial_shapes=deform_inputs2[1],
+                              feat=x_feat, spatial_shapes=deform_inputs2[1],
                               level_start_index=deform_inputs2[2], H=H, W=W)
         return x, c
 

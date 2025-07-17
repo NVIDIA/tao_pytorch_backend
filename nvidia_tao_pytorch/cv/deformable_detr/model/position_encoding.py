@@ -74,7 +74,7 @@ class PositionEmbeddingSineExport(nn.Module):
 
     def forward(self, batch_shape, device):
         """ Forward """
-        not_mask = torch.ones(batch_shape.tolist(), dtype=torch.bool, device=device)
+        not_mask = torch.ones_like(batch_shape, dtype=torch.bool, device=device)
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
         x_embed = not_mask.cumsum(2, dtype=torch.float32)
         if self.normalize:

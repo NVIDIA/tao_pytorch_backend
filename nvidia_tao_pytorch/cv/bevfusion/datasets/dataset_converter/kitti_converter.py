@@ -17,6 +17,7 @@
 
 from pathlib import Path
 import numpy as np
+import os
 
 import mmengine
 from mmdet3d.structures.ops import box_np_ops
@@ -289,7 +290,10 @@ def _create_reduced_point_cloud(data_path,
             if back:
                 save_filename += '_back'
         else:
-            save_filename = str(Path(save_path) / v_path.name)
+            save_dir = Path(save_path) / (v_path.parent.stem + '_reduced')
+            if not save_dir.exists():
+                save_dir.mkdir(parents=True, exist_ok=True)
+            save_filename = str(save_dir / v_path.name)
             if back:
                 save_filename += '_back'
         with open(save_filename, 'w') as f:
@@ -321,35 +325,44 @@ def create_reduced_point_cloud(data_path,
             Default: False.
     """
     if train_info_path is None:
-        train_info_path = Path(data_path) / f'{pkl_prefix}_infos_train.pkl'
+        train_info_path = Path(save_path) / f'{pkl_prefix}_infos_train.pkl'
     if val_info_path is None:
-        val_info_path = Path(data_path) / f'{pkl_prefix}_infos_val.pkl'
+        val_info_path = Path(save_path) / f'{pkl_prefix}_infos_val.pkl'
     if test_info_path is None:
-        test_info_path = Path(data_path) / f'{pkl_prefix}_infos_test.pkl'
+        test_info_path = Path(save_path) / f'{pkl_prefix}_infos_test.pkl'
 
     if mode == 'training':
         print('create reduced point cloud for training set')
-        _create_reduced_point_cloud(data_path, train_info_path, save_path)
+        reduced_output_dir = Path(os.path.join(save_path, 'training'))
+        if not reduced_output_dir.exists():
+            reduced_output_dir.mkdir()
+        _create_reduced_point_cloud(data_path, train_info_path, reduced_output_dir)
         print('create reduced point cloud for validation set')
-        _create_reduced_point_cloud(data_path, val_info_path, save_path)
+        _create_reduced_point_cloud(data_path, val_info_path, reduced_output_dir)
 
         if with_back:
             _create_reduced_point_cloud(
-                data_path, train_info_path, save_path, back=True)
+                data_path, train_info_path, reduced_output_dir, back=True)
             _create_reduced_point_cloud(
-                data_path, val_info_path, save_path, back=True)
+                data_path, val_info_path, reduced_output_dir, back=True)
 
     elif mode == 'validation':
         print('create reduced point cloud for validation set')
-        _create_reduced_point_cloud(data_path, val_info_path, save_path)
+        reduced_output_dir = Path(os.path.join(save_path, 'training'))
+        if not reduced_output_dir.exists():
+            reduced_output_dir.mkdir()
+        _create_reduced_point_cloud(data_path, val_info_path, reduced_output_dir)
         if with_back:
             _create_reduced_point_cloud(
-                data_path, val_info_path, save_path, back=True)
+                data_path, val_info_path, reduced_output_dir, back=True)
     elif mode == 'testing':
         print('create reduced point cloud for testing set')
-        _create_reduced_point_cloud(data_path, test_info_path, save_path)
+        reduced_output_dir = Path(os.path.join(save_path, 'testing'))
+        if not reduced_output_dir.exists():
+            reduced_output_dir.mkdir()
+        _create_reduced_point_cloud(data_path, test_info_path, reduced_output_dir)
         if with_back:
             _create_reduced_point_cloud(
-                data_path, test_info_path, save_path, back=True)
+                data_path, test_info_path, reduced_output_dir, back=True)
     else:
         raise NotImplementedError(f'Don\'t support convert {mode}.')

@@ -16,9 +16,11 @@
 
 import os
 from copy import deepcopy
+from typing import Any
 
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, OnExceptionCheckpoint
 from pytorch_lightning.utilities import rank_zero_only
 
 from nvidia_tao_pytorch.core.checkpoint_encryption import decrypt_checkpoint
@@ -110,3 +112,24 @@ class TLTModelCheckpoint(ModelCheckpoint):
             # trainer._checkpoint_connector.restore(self.best_model_path, on_gpu=trainer.on_gpu)
         TLTPyTorchCookbook().save_checkpoint_to(pl_module.netG.module.state_dict(), save_path=os.path.join(self.dirpath, self.prefix + "_last" + self.postfix))
         return None
+
+
+class TAOExceptionCheckpoint(OnExceptionCheckpoint):
+    """A custom checkpointing callback for when training is interrupted.
+
+    Extending Lightning's OnExceptionCheckpoint since it (in v.2.3.0) only supports saving
+    to a provided path. We want to extend its capabilities to also symlink the *_latest.pth
+    file to this dumped checkpoint.
+    """
+
+    CHECKPOINT_NAME_LAST = ""
+
+    def __init__(self, dirpath):
+        """Callback init. Uses parent's default filename since we override below"""
+        super().__init__(dirpath)
+
+    def on_exception(self, trainer: "pl.Trainer", *_: Any, **__: Any) -> None:
+        """Overriden function that saves and links the checkpoint"""
+        self.filename = f"model_epoch_{trainer.current_epoch:03d}_step_{trainer.global_step:05d}"
+        super().on_exception(trainer)
+        ModelCheckpoint._link_checkpoint(trainer, self.ckpt_path, os.path.join(self.dirpath, self.CHECKPOINT_NAME_LAST + self.FILE_EXTENSION))

@@ -49,7 +49,6 @@ def prepare_inferencer_args(infer_cfg, checkpoint, results_dir):
     """Prepare inferencer arguments"""
     init_args = {'model': infer_cfg, 'weights': checkpoint, 'device': 'cuda:0'}
 
-    data_root = infer_cfg['test_dataloader']['dataset']['data_root']
     info = infer_cfg['test_dataloader']['dataset']['ann_file']
 
     data_prefix = infer_cfg['test_dataloader']['dataset']['data_prefix']
@@ -78,8 +77,8 @@ def prepare_inferencer_args(infer_cfg, checkpoint, results_dir):
                      'pred_score_thr': infer_cfg['infer_data_config']['conf_threshold'],
                      'out_dir': results_dir,
                      'batch_size': infer_cfg['test_dataloader']['batch_size'],
-                     'inputs': {'img_root': osp.join(data_root, data_prefix['img']),
-                                'points_root': osp.join(data_root, data_prefix['pts']), 'infos': info}}
+                     'inputs': {'img_root': data_prefix['img'],
+                                'points_root': data_prefix['pts'], 'infos': info}}
 
     return init_args, call_args
 

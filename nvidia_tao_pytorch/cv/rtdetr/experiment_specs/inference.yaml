@@ -1,0 +1,20 @@
+inference:
+  num_gpus: 1
+  conf_threshold: 0.5
+  checkpoint: "???"
+  color_map:
+    "person": blue
+dataset:
+  infer_data_sources:
+    image_dir: 
+      - "???"
+    classmap: "???"
+  num_classes: 80
+  batch_size: 4
+  workers: 8
+model:
+  backbone: fan_small
+  return_interm_indices: [1, 2, 3]
+  dec_layers: 6
+  enc_layers: 1
+  num_queries: 300

@@ -15,6 +15,7 @@
 """
 Export OCRNet script.
 """
+import logging
 import os
 import argparse
 import tempfile
@@ -24,7 +25,9 @@ import onnx
 
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.ocrnet.default_config import ExperimentConfig
+
+logger = logging.getLogger(__name__)
 
 
 @gs.Graph.register()
@@ -59,10 +62,8 @@ def export(opt):
                                                           AttnLabelConverter,
                                                           load_checkpoint)
     from nvidia_tao_pytorch.cv.ocrnet.model.model import Model, ExportModel
-    from pytorch_quantization import nn as quant_nn
-    quant_nn.TensorQuantizer.use_fb_fake_quant = True
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda')
     # device = "cpu"
     """ model configuration """
     if 'CTC' in opt.Prediction:
@@ -74,17 +75,24 @@ def export(opt):
         opt.input_channel = 3
 
     # load model
-    print('loading pretrained model from %s' % opt.saved_model)
     ckpt = load_checkpoint(opt.saved_model, key=opt.encryption_key, to_cpu=True)
+
     if not isinstance(ckpt, Model):
         model = Model(opt)
-        state_dict = ckpt
-        model.load_state_dict(state_dict)
+        if "modelopt_state" in ckpt.keys():
+            logger.info('loading pretrained quantized model from %s' % opt.saved_model)
+            import modelopt.torch.opt as mto
+            from modelopt.torch.quantization import QuantModuleRegistry
+            import torch.nn as nn
+            QuantModuleRegistry.unregister(nn.LSTM)
+            model = mto.restore(model, opt.saved_model)
+        else:
+            logger.info('loading pretrained model from %s' % opt.saved_model)
+            state_dict = ckpt
+            model.load_state_dict(state_dict)
         model = ExportModel(ocr_model=model, prediction_type=opt.Prediction)
     else:
-        for name, m in ckpt.named_modules():
-            if "quantizer" in name:
-                m.use_fb_fake_quant = True
+        logger.info('loading pretrained model from %s' % opt.saved_model)
         model = ExportModel(ocr_model=ckpt, prediction_type=opt.Prediction)
 
     model = model.to(device)

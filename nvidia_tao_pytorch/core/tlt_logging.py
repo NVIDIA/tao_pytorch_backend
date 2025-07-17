@@ -21,7 +21,7 @@ from random import randint
 from omegaconf import OmegaConf
 
 _logging.basicConfig(
-    format='[%(asctime)s - TAO Toolkit - %(name)s - %(levelname)s] %(message)s',
+    format='%(asctime)s [TAO Toolkit] [%(levelname)s] %(name)s %(lineno)d: %(message)s',
     level='INFO'
 )
 logging = _logging

@@ -23,9 +23,9 @@ import os
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.ocdnet.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
-from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.data_loader.pl_ocd_data_module import OCDDataModule
 from nvidia_tao_pytorch.cv.ocdnet.model.pl_ocd_model import OCDnetModel
 from nvidia_tao_pytorch.cv.ocdnet.utils.util import load_checkpoint
@@ -41,7 +41,7 @@ pyc_ctx = pyc_dev.retain_primary_context()
 def run_experiment(experiment_config):
     """Run experiment."""
     experiment_config = OmegaConf.to_container(experiment_config)
-    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config)
+    model_path, trainer_kwargs = initialize_inference_experiment(experiment_config)
 
     experiment_config['model']['pretrained'] = False
 
@@ -51,10 +51,7 @@ def run_experiment(experiment_config):
     model = OCDnetModel(experiment_config, dm, 'predict')
     model.model.load_state_dict(checkpoint)
 
-    trainer = Trainer(devices=gpus,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.predict(model, datamodule=dm)
 

@@ -177,7 +177,6 @@ export:
   gpu_id: 0
   checkpoint: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt"
   onnx_file: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt.etlt"
-  save_engine: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt.trt"
 
 prune:
   model: "/data/zhimengf/tlt-experiments/checkpoint_epoch_80.tlt"

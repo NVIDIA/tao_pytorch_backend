@@ -44,8 +44,10 @@ class PoseClassificationModel(TAOLightningModule):
         # init the model
         self._build_model(export)
 
-        self.train_accuracy = torchmetrics.Accuracy()
-        self.val_accuracy = torchmetrics.Accuracy()
+        self.label_map = self.dataset_config["label_map"]
+        self.num_classes = len(self.label_map.keys())
+        self.train_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_classes)
+        self.val_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_classes)
 
         self.status_logging_dict = {}
 
@@ -123,12 +125,7 @@ class PoseClassificationModel(TAOLightningModule):
         return loss
 
     def on_train_epoch_end(self):
-        """
-        Log Training metrics to status.json at the end of the epoch.
-
-        Args:
-            training_step_outputs (list): List of outputs from each training step.
-        """
+        """Log Training metrics to status.json at the end of the epoch."""
         average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
         self.status_logging_dict = {}
@@ -185,9 +182,7 @@ class PoseClassificationModel(TAOLightningModule):
 
     def on_test_epoch_start(self):
         """Test epoch start"""
-        self.label_map = self.dataset_config["label_map"]
-        num_classes = len(self.label_map.keys())
-        self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int32)
+        self.confusion_matrix = np.zeros((self.num_classes, self.num_classes), dtype=np.int32)
 
     def test_step(self, batch, batch_idx):
         """Test step"""

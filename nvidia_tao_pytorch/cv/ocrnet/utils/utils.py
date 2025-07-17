@@ -320,10 +320,10 @@ def load_checkpoint(model_path, key, to_cpu=False):
         handle, temp_name = tempfile.mkstemp(".pth")
         os.close(handle)
         decrypt_pytorch(model_path, temp_name, key)
-        loaded_state = torch.load(temp_name, map_location=loc_type)
+        loaded_state = torch.load(temp_name, map_location=loc_type, weights_only=False)
         os.remove(temp_name)
     else:
-        loaded_state = torch.load(model_path, map_location=loc_type)
+        loaded_state = torch.load(model_path, map_location=loc_type, weights_only=False)
         if isinstance(loaded_state, dict):
             if "whole_model" in loaded_state:
                 loaded_state = pickle.loads(loaded_state["whole_model"])
@@ -354,3 +354,39 @@ def create_logger(log_file=None, rank=0, log_level=logging.INFO):
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
     return logger
+
+
+def quantize_model(ocr_model, dm):
+    """Quantize the OCRNetModel.
+
+    Args:
+        ocr_model (OCRNetModel): The candidate to be quantized.
+        dm (DataModule): DataModule to get calibration dataset.
+    """
+    # Init the stuff for QDQ
+    import modelopt.torch.quantization as mtq
+    from modelopt.torch.quantization import QuantModuleRegistry
+    import torch.nn as nn
+    # To avoid the conversion from nn.LSTM to QuantLSTM.
+    # The QuantLSTM is using LSTMCell which will be exported to _thnn_lstm_cell in ONNX.
+    # And the _thnn_lstm_cell cannot be consumed by TensorRT.
+    QuantModuleRegistry.unregister(nn.LSTM)
+    model_quant_config = mtq.INT8_DEFAULT_CFG.copy()
+    calib_dataset = dm.val_dataloader()
+    model = ocr_model.model
+    batch_max_length = ocr_model.max_label_length
+    model.to(device)
+
+    # A fake model forward loop function for mtq.quantize.
+    # @TODO(tylerz): Why do we need such calibration in QAT?
+    def forward_loop(model):
+        text_for_pred = torch.LongTensor(1, batch_max_length + 1).fill_(0).to(device)
+        for batch in calib_dataset:
+            image, _ = batch
+            image = image.to(device)
+            model(image, text_for_pred)
+
+    model_quant_config["quant_cfg"]["*rnn*"] = {"enable": False}
+
+    model = mtq.quantize(model, model_quant_config, forward_loop)
+    ocr_model.model = model

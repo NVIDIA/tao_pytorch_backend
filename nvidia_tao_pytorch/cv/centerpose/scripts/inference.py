@@ -18,17 +18,17 @@ import os
 
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.centerpose.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
 from nvidia_tao_pytorch.cv.centerpose.dataloader.pl_cp_data_module import CPDataModule
-from nvidia_tao_pytorch.cv.centerpose.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.centerpose.model.pl_centerpose_model import CenterPosePlModel
 
 
 def run_experiment(experiment_config, key):
     """Start the inference."""
-    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config, key)
+    model_path, trainer_kwargs = initialize_inference_experiment(experiment_config, key)
 
     if model_path.endswith('.tlt') or model_path.endswith('.pth'):
 
@@ -41,10 +41,7 @@ def run_experiment(experiment_config, key):
                                                        map_location="cpu",
                                                        experiment_spec=experiment_config)
 
-        trainer = Trainer(devices=gpus,
-                          default_root_dir=results_dir,
-                          accelerator='gpu',
-                          strategy='auto')
+        trainer = Trainer(**trainer_kwargs)
 
         trainer.predict(model, datamodule=dm)
 

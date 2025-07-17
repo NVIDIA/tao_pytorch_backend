@@ -96,11 +96,7 @@ class OpticalInspectionModel(TAOLightningModule):
         return loss
 
     def on_train_epoch_end(self):
-        """Log Training metrics to status.json
-
-        Args:
-            training_step_outputs: List of outputs from training steps in the epoch.
-        """
+        """Log Training metrics to status.json"""
         average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
 
         train_accuracy = self.train_metrics.compute()['total_accuracy'].item()

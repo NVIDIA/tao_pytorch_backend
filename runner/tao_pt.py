@@ -116,11 +116,15 @@ def instantiate_dev_docker(gpus, mount_file,
                            tag, command, ulimit=None,
                            shm_size="16G", run_as_user=False,
                            port_mapping=None,
-                           tty=True):
+                           tty=True,
+                           cached=None):
     """Instiate the docker container."""
     docker_image = "{}/{}@{}".format(DOCKER_REGISTRY, DOCKER_REPOSITORY, DOCKER_DIGEST)
     if tag is not None:
         docker_image = "{}/{}:{}".format(DOCKER_REGISTRY, DOCKER_REPOSITORY, tag)
+
+    if cached is not None:
+        docker_image = cached
 
     # Invoking the nvidia docker.
     gpu_string = get_docker_gpus_prefix(gpus)
@@ -203,6 +207,7 @@ def parse_cli_args(args=None):
     parser.add_argument("--run_as_user", help="Flag to run as user", action="store_true", default=False)
 
     parser.add_argument("--tag", help="The tag value for the local dev docker.", default=None, type=str)
+    parser.add_argument("--cached", help="The cached value for the local dev docker.", default=None, type=str)
     parser.add_argument("--ulimit", action='append', help="Docker ulimits for the host machine." )
     parser.add_argument(
         "--port",
@@ -240,7 +245,8 @@ def main(cl_args=None):
             args["ulimit"], args["shm_size"],
             args["run_as_user"],
             args['port'],
-            args['tty']
+            args['tty'],
+            args['cached']
         )
     except subprocess.CalledProcessError:
         # Do nothing - the errors are printed in entrypoint launch.

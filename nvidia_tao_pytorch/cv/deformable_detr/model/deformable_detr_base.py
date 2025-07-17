@@ -187,7 +187,7 @@ class DeformableDETR(nn.Module):
         for mask in masks:
             if self.export:
                 N, H, W = mask.shape
-                tensor_shape = torch.tensor([N, H, W], device=src.device)
+                tensor_shape = torch.empty(N, H, W, device=src.device)
                 pos.append(self.position_embedding(tensor_shape, src.device))
             else:
                 not_mask = ~mask

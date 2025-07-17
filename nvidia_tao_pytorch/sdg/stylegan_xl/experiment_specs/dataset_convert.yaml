@@ -1,0 +1,5 @@
+source: /localhome/local-maxhuang/projects.metropolis1/tmp/maxhuang/dataset/stylegan-xl/NEU_Metal_Surface_Defects_Data_JPG_Full/train
+results_dir: /localhome/local-maxhuang/projects.metropolis1/tmp/maxhuang/dataset/stylegan-xl/NEU_Metal_Surface_Defects_Data_JPG_Full/
+dest_file_name: train.zip
+resolution: [32, 32]
+transform: null

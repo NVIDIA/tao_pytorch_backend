@@ -39,7 +39,8 @@ def load_pretrained_weights(pretrained_backbone_path):
         dict: The state_dict for the PyTorch model.
     """
     temp = torch.load(pretrained_backbone_path,
-                      map_location="cpu")
+                      map_location="cpu",
+                      weights_only=False)
 
     if temp.get("state_dict_encrypted", False):
         # Retrieve encryption key from TLTPyTorchCookbook.

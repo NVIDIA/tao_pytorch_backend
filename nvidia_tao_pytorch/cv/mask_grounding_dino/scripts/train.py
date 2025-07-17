@@ -22,7 +22,7 @@ from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 
-from nvidia_tao_pytorch.cv.mask_grounding_dino.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.mask_grounding_dino.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.mask_grounding_dino.dataloader.od_data_module import ODVGDataModule
 from nvidia_tao_pytorch.cv.mask_grounding_dino.model.pl_gdino_model import MaskGDINOPlModel
 
@@ -31,7 +31,7 @@ from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_wei
 
 def run_experiment(experiment_config):
     """Start the training."""
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config)
 
     # build dataset and model for mask branch
     experiment_config.dataset.has_mask = True
@@ -81,11 +81,7 @@ def run_experiment(experiment_config):
     else:
         pt_model = MaskGDINOPlModel(experiment_config, cap_lists=cap_lists)
 
-    total_epochs = experiment_config.train.num_epochs
-
-    num_gpus = experiment_config.train.num_gpus
     num_nodes = experiment_config.train.num_nodes
-    validation_interval = experiment_config.train.validation_interval
 
     clip_grad_norm = experiment_config.train.clip_grad_norm
     is_dry_run = experiment_config.train.is_dry_run
@@ -102,7 +98,7 @@ def run_experiment(experiment_config):
                                   Only bf16, fp16, and fp32 are supported")
 
     strategy = 'auto'
-    if num_gpus > 1:
+    if len(trainer_kwargs['devices']) > 1:
         # By default find_unused_parameters is set to False in Lightning
         # If true, it introduces extra overhead and can't work with activation checkpointing
         if distributed_strategy.lower() == "ddp" and activation_checkpoint:
@@ -117,18 +113,12 @@ def run_experiment(experiment_config):
         else:
             raise NotImplementedError(f"{distributed_strategy} is not implemented. Only ddp and fsdp are supported")
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=gpus,
+    trainer = Trainer(**trainer_kwargs,
                       num_nodes=num_nodes,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=validation_interval,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
                       strategy=strategy,
                       precision=precision,
                       gradient_clip_val=clip_grad_norm,
                       use_distributed_sampler=False,
-                      enable_checkpointing=False,
                       fast_dev_run=is_dry_run)
 
     trainer.fit(pt_model, dm, ckpt_path=resume_ckpt)

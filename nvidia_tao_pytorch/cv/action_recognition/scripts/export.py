@@ -20,10 +20,10 @@ import onnx
 from onnxsim import simplify
 import onnx_graphsurgeon as gs
 
+from nvidia_tao_core.config.action_recognition.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.action_recognition.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.action_recognition.dataloader.pl_ar_data_module import ARDataModule
 from nvidia_tao_pytorch.cv.action_recognition.model.pl_ar_model import ActionRecognitionModel
 

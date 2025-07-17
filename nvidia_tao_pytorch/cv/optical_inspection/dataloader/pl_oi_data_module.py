@@ -52,20 +52,20 @@ class OIDataModule(pl.LightningDataModule):
         if stage == 'fit':
             train_data_path = self.dataset_config["train_dataset"]["csv_path"]
             val_data_path = self.dataset_config["validation_dataset"]["csv_path"]
-            self.df_train = pd.read_csv(train_data_path)
-            self.df_valid = pd.read_csv(val_data_path)
+            self.df_train = pd.read_csv(train_data_path, dtype={'object_name': str})
+            self.df_valid = pd.read_csv(val_data_path, dtype={'object_name': str})
 
         if stage == 'test':
             eval_data_path = self.dataset_config["test_dataset"]["csv_path"]
             logging.info("test_csv_path {}".format(eval_data_path))
-            self.df_test = pd.read_csv(eval_data_path)
+            self.df_test = pd.read_csv(eval_data_path, dtype={'object_name': str})
 
         if stage == 'predict':
             infer_data_path = self.dataset_config["infer_dataset"]["csv_path"]
             if not os.path.exists(infer_data_path):
                 raise FileNotFoundError(f"No inference csv file was found at {infer_data_path}")
             logging.info("Loading inference csv from : {}".format(infer_data_path))
-            self.df_infer = pd.read_csv(infer_data_path)
+            self.df_infer = pd.read_csv(infer_data_path, dtype={'object_name': str})
 
     def train_dataloader(self):
         """Build the dataloader for training.

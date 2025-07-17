@@ -19,7 +19,7 @@ import torch
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.pose_classification.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.pose_classification.model.pl_pc_model import PoseClassificationModel
 from nvidia_tao_pytorch.cv.pose_classification.model.st_gcn import Graph
 

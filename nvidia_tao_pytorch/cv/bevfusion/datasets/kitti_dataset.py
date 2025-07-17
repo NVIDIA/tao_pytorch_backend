@@ -42,7 +42,6 @@ class KittiPersonDataset(Det3DDataset):
     }
 
     def __init__(self,
-                 data_root: str,
                  ann_file: str,
                  pipeline: List[Union[dict, Callable]] = [],
                  modality: dict = {'use_camera': False, 'use_lidar': True},
@@ -57,7 +56,6 @@ class KittiPersonDataset(Det3DDataset):
         """
         Initialize Kitti Person Dataset
         Args:
-            data_root (str): Path of dataset root.
             ann_file (str): Path of annotation file.
             pipeline (List[dict]): Pipeline used for data processing.
                 Defaults to [].
@@ -101,7 +99,6 @@ class KittiPersonDataset(Det3DDataset):
         # override box_type with synthetic data type
         self.default_cam_key = default_cam_key
         super().__init__(
-            data_root=data_root,
             ann_file=ann_file,
             pipeline=pipeline,
             modality=modality,

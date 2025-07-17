@@ -17,7 +17,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from timm.models.layers import trunc_normal_, DropPath, LayerNorm2d
+from timm.layers import trunc_normal_, DropPath, LayerNorm2d
 
 
 def window_partition(x, window_size):

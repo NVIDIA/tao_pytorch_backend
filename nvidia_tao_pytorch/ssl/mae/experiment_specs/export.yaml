@@ -1,0 +1,51 @@
+# MAE Model Export Configuration
+# This configuration file defines parameters for exporting a trained MAE model to ONNX format
+
+results_dir: /path/to/results/mae
+
+model:
+  arch: "vit_large_patch16"
+  num_classes: 1000
+  drop_path_rate: 0.0
+  global_pool: true
+  decoder_depth: 1
+  decoder_embed_dim: 512
+
+train:
+  stage: "finetune"
+  pretrained_model_path: null
+
+dataset:
+  batch_size: 32
+  augmentation:
+    input_size: 224
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+export:
+  # GPU configuration
+  gpu_id: 0  # GPU device ID to use for export
+  on_cpu: false  # Whether to perform export on CPU instead of GPU
+
+  # Model checkpoint and output configuration
+  checkpoint: ${train.pretrained_model_path}  # Path to the model checkpoint
+  onnx_file: "${export.results_dir}/model.onnx"  # Output path for the ONNX model
+
+  # Input configuration
+  input_channel: 3  # Number of input channels (e.g., 3 for RGB)
+  input_width: 224  # Input image width
+  input_height: 224  # Input image height
+  batch_size: -1  # -1 for dynamic batch size
+
+  # ONNX export configuration
+  opset_version: 17  # ONNX opset version to use for export
+  verbose: true  # Whether to enable verbose logging during export
+
+# Training configuration (required for model loading)
+train:
+  pretrained_model_path: "path/to/your/model.pt"  # Path to the pretrained model weights
+
+# Dataset configuration (required for model loading)
+dataset:
+  segment:
+    num_classes: 1000  # Number of classes in the dataset 

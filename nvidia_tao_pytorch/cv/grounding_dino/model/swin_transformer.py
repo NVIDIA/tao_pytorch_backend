@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from timm.layers import DropPath, to_2tuple, trunc_normal_
 
 from nvidia_tao_pytorch.cv.backbone.vision_transformer import Mlp
 from nvidia_tao_pytorch.cv.backbone.swin_utils import (window_partition, WindowAttention)

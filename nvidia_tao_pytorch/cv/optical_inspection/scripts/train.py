@@ -15,20 +15,19 @@
 """Train Optical Inspection Siamese Network model."""
 import os
 from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import TensorBoardLogger
 
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.optical_inspection.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.optical_inspection.dataloader.pl_oi_data_module import OIDataModule
 from nvidia_tao_pytorch.cv.optical_inspection.model.pl_oi_model import OpticalInspectionModel
 
 
 def run_experiment(experiment_config, key):
     """Start the training."""
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config, key)
 
     dm = OIDataModule(experiment_config)
 
@@ -42,36 +41,22 @@ def run_experiment(experiment_config, key):
     else:
         oi_model = OpticalInspectionModel(experiment_config, dm)
 
-    total_epochs = experiment_config['train']['num_epochs']
     clip_grad = experiment_config['train']['clip_grad_norm']
-    validation_interval = experiment_config.train.validation_interval
     enable_tensorboard = experiment_config.train.tensorboard.enabled
 
-    trainer_kwargs = {}
     if enable_tensorboard:
-        ptl_loggers.append(
-            TensorBoardLogger(
-                save_dir=results_dir
-            )
-        )
         infrequent_logging_frequency = experiment_config.train.tensorboard.infrequent_logging_frequency
-        assert max(0, infrequent_logging_frequency) <= total_epochs, (
-            f"infrequent_logging_frequency {infrequent_logging_frequency} must be < num_epochs {total_epochs}"
+        assert max(0, infrequent_logging_frequency) <= trainer_kwargs['max_epochs'], (
+            f"infrequent_logging_frequency {infrequent_logging_frequency} must be < num_epochs {trainer_kwargs['max_epochs']}"
         )
         logging.info("Tensorboard logging enabled.")
     else:
         logging.info("Tensorboard logging disabled.")
     acc_flag = 'auto'
     trainer = Trainer(
-        devices=gpus,
-        max_epochs=total_epochs,
-        check_val_every_n_epoch=validation_interval,
-        default_root_dir=results_dir,
-        accelerator='gpu',
+        **trainer_kwargs,
         strategy=acc_flag,
         gradient_clip_val=clip_grad,
-        enable_checkpointing=False,
-        **trainer_kwargs
     )
 
     trainer.fit(oi_model, dm, ckpt_path=resume_ckpt)

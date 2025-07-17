@@ -17,7 +17,6 @@
 import os
 import copy
 from abc import abstractmethod
-import dataclasses
 from omegaconf import OmegaConf
 
 from mmengine.dist import get_dist_info, init_dist
@@ -31,7 +30,7 @@ class BEVFusionConfig(object):
                  config,
                  phase='train'):
         """Init Function."""
-        self.config = dataclasses.asdict(OmegaConf.to_object(config))
+        self.config = OmegaConf.to_container(config, resolve=True)
         self.input_modality = self.config['input_modality']
 
         self.updated_config = {}
@@ -74,7 +73,9 @@ class BEVFusionConfig(object):
         self.updated_config['visualizer'] = {'type': 'TAO3DLocalVisualizer',
                                              'vis_backends': {'type': 'LocalVisBackend'}, 'name': 'visualizer'}
         self.updated_config['work_dir'] = self.config['results_dir']
-        if self.config['train']['num_gpus'] > 1:
+        self.updated_config['env_cfg'] = {}
+        # The env_cfg has params for the distributed environment
+        if 'CUDA_VISIBLE_DEVICES' in os.environ.keys() and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
             self.updated_config['env_cfg'] = {'cudnn_benchmark': True,
                                               'mp_cfg': {'mp_start_method': 'fork', 'opencv_num_threads': 0},
                                               'dist_cfg': {'backend': 'nccl'}}
@@ -195,7 +196,7 @@ class BEVFusionConfig(object):
             if train_dataset_config['repeat_time'] is not None and train_dataset_config['repeat_time'] > 1:
                 train_dataloader['dataset'] = {'type': 'RepeatDataset', 'times': train_dataset_config['repeat_time'],
                                                'dataset':
-                                               {'type': dataset_config['type'], 'data_root': dataset_config['root_dir'],
+                                               {'type': dataset_config['type'],
                                                 'ann_file': train_dataset_config['ann_file'], 'pipeline': train_pipeline,
                                                 'metainfo': {'classes': dataset_config['classes']},
                                                 'modality': self.config['input_modality'], 'test_mode': False,
@@ -203,7 +204,7 @@ class BEVFusionConfig(object):
                                                 'box_type_3d': dataset_config['box_type_3d'], 'origin': origin,
                                                 'default_cam_key': self.config['dataset']['default_cam_key']}}
             else:
-                train_dataloader['dataset'] = {'type': dataset_config['type'], 'data_root': dataset_config['root_dir'],
+                train_dataloader['dataset'] = {'type': dataset_config['type'],
                                                'ann_file': train_dataset_config['ann_file'], 'pipeline': train_pipeline,
                                                'metainfo': {'classes': dataset_config['classes']},
                                                'modality': self.config['input_modality'], 'test_mode': False,
@@ -228,7 +229,7 @@ class BEVFusionConfig(object):
             val_dataloader['drop_last'] = False
             val_dataloader['persistent_workers'] = True
             val_dataloader['sampler'] = {'type': val_dataset_config['sampler'], 'shuffle': False}
-            val_dataloader['dataset'] = {'type': dataset_config['type'], 'data_root': dataset_config['root_dir'],
+            val_dataloader['dataset'] = {'type': dataset_config['type'],
                                          'ann_file': val_dataset_config['ann_file'], 'pipeline': val_pipeline,
                                          'metainfo': {'classes': dataset_config['classes']},
                                          'modality': self.config['input_modality'], 'test_mode': False,
@@ -320,7 +321,7 @@ class BEVFusionConfig(object):
             if test_dataset_config['ann_file'] is None and self.phase == 'evaluate':
                 raise ValueError('ann_file for test_dataset must be provided for evaluation')
 
-            test_dataloader['dataset'] = {'type': dataset_config['type'], 'data_root': dataset_config['root_dir'],
+            test_dataloader['dataset'] = {'type': dataset_config['type'],
                                           'ann_file': test_dataset_config['ann_file'], 'pipeline': test_pipeline,
                                           'metainfo': {'classes': dataset_config['classes']},
                                           'modality': self.config['input_modality'], 'test_mode': True,
@@ -420,4 +421,7 @@ class BEVFusionConfig(object):
         # This is here just to satisfy the current way of setting the learning rate
         self.updated_config['param_scheduler'] = train_param_config['lr_scheduler']
         self.updated_config['resume'] = train_param_config['resume']
-        self.updated_config['load_from'] = train_param_config['resume_training_checkpoint_path']
+        if train_param_config.get("pretrained_checkpoint", None) == "":
+            self.updated_config['load_from'] = None
+        else:
+            self.updated_config['load_from'] = train_param_config['pretrained_checkpoint']

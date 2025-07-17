@@ -1,4 +1,4 @@
-ARG PYTORCH_BASE_IMAGE=nvcr.io/nvidia/pytorch:24.04-py3
+ARG PYTORCH_BASE_IMAGE=nvcr.io/nvidia/pytorch:25.01-py3
 FROM ${PYTORCH_BASE_IMAGE}
 
 # Ensure apt-get won't prompt for selecting options
@@ -9,15 +9,39 @@ RUN apt-get upgrade && apt-get update && \
   rm requirements-apt.txt && \
   rm -rf /var/lib/apt/lists/*
 
-# uninstall stuff from base container
-RUN pip uninstall -y sacrebleu torchtext
+# TAO-CORE microservice dependencies
+WORKDIR /workspace/k8s
+RUN wget https://github.com/kubernetes-client/python/archive/refs/tags/v23.6.0.zip && \
+    unzip v23.6.0.zip && \
+    cd python-23.6.0 && \
+    sed -i "s/PACKAGE_NAME\ \=\ .*/PACKAGE_NAME = \"kubernetes-client\"/" setup.py && \
+    pip install --disable-pip-version-check -r requirements.txt && \
+    python setup.py install
+
+ARG TRT_VERSION_MAJOR=10
+ARG TRT_VERSION_MINOR=8
+ARG TRT_VERSION_PATCH=0
+ARG TRT_VERSION_BUILD=40
+
+ARG TRT_VERSION_MAJOR_MINOR=$TRT_VERSION_MAJOR.$TRT_VERSION_MINOR
+ARG TRT_VERSION_MAJOR_MINOR_PATCH=$TRT_VERSION_MAJOR.$TRT_VERSION_MINOR.$TRT_VERSION_PATCH
+ARG TRT_VERSION_FULL=$TRT_VERSION_MAJOR_MINOR_PATCH.$TRT_VERSION_BUILD
+
+ARG CUDA_VERSION_MAJOR=12
+ARG CUDA_VERSION_MINOR=8
+ARG CUDA_VERSION_PATCH=0
+ARG CUDA_VERSION_BUILD=038
+ARG CUDA_VERSION_MAJOR_MINOR=$CUDA_VERSION_MAJOR.$CUDA_VERSION_MINOR
+ARG CUDA_VERSION_FULL=$CUDA_VERSION_MAJOR_MINOR.$CUDA_VERSION_PATCH.$CUDA_VERSION_BUILD
+ARG CUDNN_VERSION=9.7.0.66
+
+ENV TRT_VERSION=$TRT_VERSION_FULL+cuda$CUDA_VERSION_FULL
+
 # Installing custom packages in /opt.
 WORKDIR /opt
 
 # Clone and checkout TensorRT OSS
-# Moving TensorRT to 8.6 branch.
-ENV TRT_TAG "release/8.6"
-ENV TRT_INCLUDE_DIR="/usr/include/x86_64-linux-gnu"
+ENV TRT_TAG="release/$TRT_VERSION_MAJOR_MINOR"
 # Install TRT OSS
 RUN mkdir trt_oss_src && \
   cd trt_oss_src && \
@@ -27,35 +51,21 @@ RUN mkdir trt_oss_src && \
   git submodule update --init --recursive && \
   mkdir -p build && cd build  && \
   cmake .. \
-    -DGPU_ARCHS="53;60;61;70;75;80;86;90" \
-    -DCMAKE_CUDA_ARCHITECTURES="53;60;61;70;75;80;86;90" \
-    -DTRT_LIB_DIR=/usr/lib/x86_64-linux-gnu \
-    -DTRT_BIN_DIR=`pwd`/out \
-    -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.4/bin/nvcc \
-    -DCUDNN_VERSION=9.1.0.70 && \
+    -DTRT_LIB_DIR=/usr/lib/$(uname -p)-linux-gnu \
+    -DTRT_OUT_DIR=`pwd`/out \
+    -DCUDA_VERSION=$CUDA_VERSION_MAJOR_MINOR \
+    -DCUDNN_VERSION=$CUDNN_VERSION && \
   make -j16 nvinfer_plugin nvinfer_plugin_static && \
-  cp libnvinfer_plugin.so.8.6.1 /usr/lib/x86_64-linux-gnu/libnvinfer_plugin.so.8.6.1 && \
-  cp libnvinfer_plugin_static.a /usr/lib/x86_64-linux-gnu/libnvinfer_plugin_static.a && \
+  cp out/libnvinfer_plugin.so.$TRT_VERSION_MAJOR_MINOR_PATCH /usr/lib/$(uname -p)-linux-gnu/libnvinfer_plugin.so.$TRT_VERSION_MAJOR_MINOR_PATCH && \
+  cp out/libnvinfer_plugin_static.a /usr/lib/$(uname -p)-linux-gnu/libnvinfer_plugin_static.a && \
   cd ../../../ && \
   rm -rf trt_oss_src
 
 COPY docker/requirements-pip.txt requirements-pip.txt
-RUN pip uninstall -y jupyterlab \
-  && pip install --upgrade pip \
+RUN  pip install --upgrade pip \
   && pip install -r requirements-pip.txt \
-  && rm requirements-pip.txt \
-  && mim install "mmengine==0.10.4" "mmpretrain>=1.0.0rc8"
+  && rm requirements-pip.txt
 
-ENV FORCE_CUDA="1"
-RUN mkdir mmcv_src && \
-  cd mmcv_src && \
-  echo "$PWD Building MMCV..." && \
-  git clone -b v2.1.0 https://github.com/open-mmlab/mmcv.git mmcv && \
-  cd mmcv && \
-  MMCV_WITH_OPS=1 pip install -v -e . 
-
-RUN pip install "mmsegmentation==1.2.2" "mmdeploy==1.3.1" "mmdet==3.3.0" "mmdet3d==1.4.0" \
-  && pip uninstall -y opencv-python && pip install opencv-python==4.8.0.74
 COPY docker/requirements-pip-pytorch.txt requirements-pip-pytorch.txt
 RUN pip install --ignore-installed --no-deps -r requirements-pip-pytorch.txt \
   && rm requirements-pip-pytorch.txt
@@ -63,6 +73,19 @@ RUN pip install --ignore-installed --no-deps -r requirements-pip-pytorch.txt \
 COPY docker/requirements-pip-odise.txt requirements-pip-odise.txt
 RUN pip install --ignore-installed --no-deps -r requirements-pip-odise.txt \
   && rm requirements-pip-odise.txt
+
+# Adding 9.0a to the list of supported architectures.
+ENV TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 9.0 9.0a 10.0 12.0+PTX"
+RUN mkdir xformers_src && \
+  cd xformers_src && \
+  git clone --recursive https://github.com/facebookresearch/xformers.git && \
+  cd xformers && \
+  git checkout v0.0.29.post2 && \
+  git submodule update --init --recursive && \
+  echo '' > requirements.txt && \
+  MAX_JOBS=16 pip install . && \
+  cd ../../ && \
+  rm -rf xformers_src
 
 # Setup user account
 ARG uid=1000

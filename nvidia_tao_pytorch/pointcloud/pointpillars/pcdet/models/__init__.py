@@ -58,10 +58,10 @@ def load_checkpoint(model_path, key, to_cpu=False):
         handle, temp_name = tempfile.mkstemp(".pth")
         os.close(handle)
         decrypt_pytorch(model_path, temp_name, key)
-        loaded_model = torch.load(temp_name, map_location=loc_type)
+        loaded_model = torch.load(temp_name, map_location=loc_type, weights_only=False)
         os.remove(temp_name)
     else:
-        loaded_model = torch.load(model_path, map_location=loc_type)
+        loaded_model = torch.load(model_path, map_location=loc_type, weights_only=False)
     epoch = it = 0
     opt_state = None
     # It can be a dict or a bare-metal model
