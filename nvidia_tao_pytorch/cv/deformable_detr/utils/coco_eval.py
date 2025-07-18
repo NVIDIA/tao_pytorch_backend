@@ -56,6 +56,9 @@ class CocoEvaluator(object):
 
     def update(self, predictions):
         """ update predictions """
+        if not predictions:
+            return
+
         img_ids = list(np.unique(list(predictions.keys())))
         self.img_ids.extend(img_ids)
 

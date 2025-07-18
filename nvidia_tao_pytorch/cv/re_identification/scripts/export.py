@@ -22,7 +22,7 @@ import onnx_graphsurgeon as gs
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.re_identification.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.re_identification.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.re_identification.model.pl_reid_model import ReIdentificationModel
 
 

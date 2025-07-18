@@ -14,10 +14,11 @@
 
 """Status logging decorators."""
 
-import os
-import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from functools import wraps
+from omegaconf import OmegaConf
+import os
 
+import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.utilities import update_results_dir
 
 
@@ -30,6 +31,8 @@ def monitor_status(name='module name', mode='train'):
             cfg = update_results_dir(cfg, task=mode)
             os.makedirs(cfg["results_dir"], exist_ok=True)
             results_dir = cfg["results_dir"]
+
+            OmegaConf.save(cfg, os.path.join(results_dir, "experiment.yaml"))
 
             status_file = os.path.join(results_dir, "status.json")
             status_logging.set_status_logger(

@@ -45,6 +45,7 @@ class DDModel(nn.Module):
                  dilation=False,
                  dropout_ratio=0.3,
                  export=False,
+                 export_format='onnx',
                  activation_checkpoint=True):
         """Initialize D-DETR Model.
 
@@ -69,6 +70,7 @@ class DDModel(nn.Module):
             dilation (bool): flag to indicate if dilation is used (only for ResNet).
             dropout_ratio (float): probability for the dropout layer.
             export (bool): flag to indicate if the current model is being used for ONNX export.
+            export_format (str): format for exporting (e.g. 'onnx' or 'xdl')
             activation_checkpoint (bool): flag to indicate if activation checkpointing is used.
         """
         super(__class__, self).__init__()  # pylint:disable=undefined-variable
@@ -110,6 +112,7 @@ class DDModel(nn.Module):
                                             dec_n_points=dec_n_points,
                                             enc_n_points=enc_n_points,
                                             export=export,
+                                            export_format=export_format,
                                             activation_checkpoint=activation_checkpoint)
 
         # build deformable detr model
@@ -161,6 +164,7 @@ def build_model(experiment_config,
     train_backbone = model_config.train_backbone
     pretrained_backbone = model_config.pretrained_backbone_path
     activation_checkpoint = experiment_config.train.activation_checkpoint
+    export_format = experiment_config.export.format
 
     model = DDModel(num_classes=num_classes,
                     hidden_dim=hidden_dim,
@@ -181,5 +185,6 @@ def build_model(experiment_config,
                     dilation=dilation,
                     dropout_ratio=dropout_ratio,
                     export=export,
+                    export_format=export_format,
                     activation_checkpoint=activation_checkpoint)
     return model

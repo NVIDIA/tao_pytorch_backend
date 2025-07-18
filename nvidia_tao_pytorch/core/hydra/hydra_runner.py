@@ -24,7 +24,10 @@ from typing import Any, Callable, Optional
 from hydra._internal.utils import _run_hydra, get_args_parser
 from hydra.core.config_store import ConfigStore
 from hydra.types import TaskFunction
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+
+# Register eval as a custom resolver
+OmegaConf.register_new_resolver("eval", lambda expr: eval(expr))
 
 
 def hydra_runner(

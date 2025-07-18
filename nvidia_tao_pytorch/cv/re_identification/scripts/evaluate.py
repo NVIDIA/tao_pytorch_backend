@@ -20,9 +20,11 @@ from pytorch_lightning import Trainer
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
-from nvidia_tao_pytorch.cv.re_identification.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.re_identification.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.re_identification.dataloader.pl_reid_data_module import REIDDataModule
 from nvidia_tao_pytorch.cv.re_identification.model.pl_reid_model import ReIdentificationModel
+
+logger = logging.getLogger(__name__)
 
 
 def run_experiment(experiment_config, key):
@@ -34,16 +36,15 @@ def run_experiment(experiment_config, key):
 
     Args:
         experiment_config (dict): The experiment configuration containing the model and evaluation parameters.
-        results_dir (str): The directory to save the evaluation results.
         key (str): The encryption key for intermediate checkpoints.
 
     Raises:
         Exception: If any error occurs during the evaluation process.
     """
-    results_dir, model_path, gpus = initialize_evaluation_experiment(experiment_config, key)
-    if len(gpus) > 1:
-        gpus = [gpus[0]]
-        logging.log(f"Re-Identification does not support multi-GPU evaluation at this time. Using only GPU {gpus}")
+    model_path, trainer_kwargs = initialize_evaluation_experiment(experiment_config, key)
+    if len(trainer_kwargs['devices']) > 1:
+        trainer_kwargs['devices'] = [trainer_kwargs['devices'][0]]
+        logger.info(f"Re-Identification does not support multi-GPU evaluation at this time. Using only GPU {trainer_kwargs['devices']}")
 
     dm = REIDDataModule(experiment_config)
     model = ReIdentificationModel.load_from_checkpoint(model_path,
@@ -54,10 +55,7 @@ def run_experiment(experiment_config, key):
     if "swin" in experiment_config.model.backbone:
         model.model.load_param(model_path)
 
-    trainer = Trainer(devices=gpus,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.test(model, datamodule=dm)
 

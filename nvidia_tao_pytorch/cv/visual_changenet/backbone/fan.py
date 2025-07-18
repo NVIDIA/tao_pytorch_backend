@@ -29,7 +29,7 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.helpers import build_model_with_cfg
+from timm.models import build_model_with_cfg
 from timm.layers import DropPath, trunc_normal_, to_2tuple
 
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.convnext_utils import _create_hybrid_backbone

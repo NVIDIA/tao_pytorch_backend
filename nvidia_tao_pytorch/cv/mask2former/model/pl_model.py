@@ -344,10 +344,6 @@ class Mask2formerPlModule(TAOLightningModule):
                 "frequency": 1},
             'monitor': self.experiment_spec.train.optim.monitor_name}
 
-    def on_train_epoch_start(self):
-        """Train epoch start. Declaring output list."""
-        self.training_step_outputs = []
-
     def training_step(self, batch, batch_idx):
         """Training step."""
         inputs = batch['images']
@@ -360,19 +356,18 @@ class Mask2formerPlModule(TAOLightningModule):
         weight_dict = self.criterion.weight_dict
 
         loss_total = sum(losses[k] * weight_dict[k] for k in losses.keys() if k in weight_dict)
-        self.log("train_loss", loss_total, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        self.log("train_loss", loss_total, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
         self.log("train_dice", losses['loss_dice'], on_step=True, on_epoch=False, prog_bar=False, sync_dist=True, batch_size=batch_size)
         self.log("train_loss_ce", losses['loss_ce'], on_step=True, on_epoch=False, prog_bar=False, sync_dist=True, batch_size=batch_size)
         self.log("train_loss_mask", losses['loss_mask'], on_step=True, on_epoch=False, prog_bar=False, sync_dist=True, batch_size=batch_size)
         self.log("lr", self.lr_schedulers().get_last_lr()[-1], on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
         self.log("lr_backbone", self.lr_schedulers().get_last_lr()[0], on_step=True, on_epoch=False, prog_bar=False, sync_dist=True)
 
-        self.training_step_outputs.append(loss_total)
         return loss_total
 
     def on_train_epoch_end(self):
         """Log Training metrics to status.json"""
-        average_train_loss = torch.stack(self.training_step_outputs).mean().item()
+        average_train_loss = self.trainer.logged_metrics["train_loss_epoch"].item()
         self.status_logging_dict = {}
         self.status_logging_dict["train_loss"] = average_train_loss
         status_logging.get_status_logger().kpi = self.status_logging_dict
@@ -380,7 +375,6 @@ class Mask2formerPlModule(TAOLightningModule):
             message="Train metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
-        self.training_step_outputs.clear()
 
     def on_validation_epoch_start(self) -> None:
         """

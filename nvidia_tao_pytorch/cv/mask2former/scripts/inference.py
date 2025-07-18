@@ -21,14 +21,14 @@ from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 
-from nvidia_tao_pytorch.cv.mask2former.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.mask2former.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.mask2former.dataloader.pl_data_module import SemSegmDataModule
 from nvidia_tao_pytorch.cv.mask2former.model.pl_model import Mask2formerPlModule
 
 
 def run_experiment(experiment_config):
     """Start the inference."""
-    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config)
+    model_path, trainer_kwargs = initialize_inference_experiment(experiment_config)
     pl_data = SemSegmDataModule(experiment_config.dataset)
 
     # Run inference using TAO model
@@ -39,11 +39,7 @@ def run_experiment(experiment_config):
         map_location="cpu",
         cfg=experiment_config)
 
-    trainer = Trainer(
-        devices=gpus,
-        default_root_dir=results_dir,
-        accelerator='gpu',
-        strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.predict(pl_model, pl_data, return_predictions=False)
 

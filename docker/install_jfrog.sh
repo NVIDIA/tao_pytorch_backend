@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-wget -qO - https://releases.jfrog.io/artifactory/api/gpg/key/public | apt-key add -;
-echo "deb https://releases.jfrog.io/artifactory/jfrog-debs xenial contrib" | tee -a /etc/apt/sources.list;
-apt-get update;
-apt-get install -y jfrog-cli;
+mkdir -p /usr/share/keyrings && \
+wget -qO - https://releases.jfrog.io/artifactory/api/v2/repositories/jfrog-debs/keyPairs/primary/public | gpg --dearmor -o /usr/share/keyrings/jfrog.gpg && \
+echo "deb [signed-by=/usr/share/keyrings/jfrog.gpg] https://releases.jfrog.io/artifactory/jfrog-debs focal contrib" | tee /etc/apt/sources.list.d/jfrog.list && \
+apt-get update && \
+apt-get install -y jfrog-cli-v2

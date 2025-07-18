@@ -54,8 +54,8 @@ class ReIdentificationModel(TAOLightningModule):
         # init the model
         self.model = self._build_model(export)
 
-        self.train_accuracy = torchmetrics.Accuracy()
-        self.val_accuracy = torchmetrics.Accuracy()
+        self.train_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_classes)
+        self.val_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_classes)
 
         if self.prepare_for_training:
             self.center_criterion = None

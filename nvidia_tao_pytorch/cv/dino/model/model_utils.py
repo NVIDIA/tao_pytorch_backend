@@ -169,6 +169,8 @@ def _get_activation_fn(activation):
     Raises:
         RuntimeError: if unsupported activation type is provided.
     """
+    if activation == 'silu':
+        return nn.SiLU()
     if activation == "relu":
         return F.relu
     if activation == "gelu":

@@ -50,9 +50,9 @@ class Model(nn.Module):
         elif self.stages['Feat'] == 'RCNN':
             self.FeatureExtraction = RCNN_FeatureExtractor(opt.input_channel, opt.output_channel)
         elif self.stages['Feat'] == 'ResNet':
-            self.FeatureExtraction = ResNet_FeatureExtractor(opt.input_channel, opt.output_channel, opt.quantize)
+            self.FeatureExtraction = ResNet_FeatureExtractor(opt.input_channel, opt.output_channel)
         elif self.stages['Feat'] == 'ResNet2X':
-            self.FeatureExtraction = ResNet_FeatureExtractor(opt.input_channel, opt.output_channel, opt.quantize, no_maxpool1=True)
+            self.FeatureExtraction = ResNet_FeatureExtractor(opt.input_channel, opt.output_channel, no_maxpool1=True)
         elif self.stages['Feat'] == "FAN_tiny_2X":
             self.FeatureExtraction = fan_tiny_8_p2_hybrid(in_chans=opt.input_channel, in_height=opt.imgH, in_width=opt.imgW)
             opt.output_channel = 192
@@ -97,13 +97,6 @@ class Model(nn.Module):
 
         """ Prediction stage """
         if self.stages['Pred'] == 'CTC':
-            # if self.export:
-            #     prediction = self.Prediction(contextual_feature.contiguous())
-            #     prediction = nn.functional.softmax(prediction, dim=2)
-            #     sequence_id = torch.argmax(prediction, dim=2)
-            #     sequence_prob = torch.max(prediction, dim=2)
-            #     return sequence_id, sequence_prob
-            # else:
             prediction = self.Prediction(contextual_feature.contiguous())
         else:
             prediction = self.Prediction(contextual_feature.contiguous(), text, is_train, batch_max_length=self.opt.batch_max_length)

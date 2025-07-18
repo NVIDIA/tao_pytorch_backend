@@ -23,10 +23,13 @@ from pytorch_lightning import Trainer
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.ocrnet.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocrnet.dataloader.pl_ocr_data_module import OCRDataModule
 from nvidia_tao_pytorch.cv.ocrnet.model.pl_ocrnet import OCRNetModel
+from nvidia_tao_pytorch.cv.ocrnet.model.model import Model
 from nvidia_tao_pytorch.cv.ocrnet.utils.utils import load_checkpoint
+
+logger = logging.getLogger(__name__)
 
 
 def run_experiment(experiment_spec, key):
@@ -37,10 +40,11 @@ def run_experiment(experiment_spec, key):
     if "val_gt_file" in experiment_spec["dataset"]:
         if experiment_spec["dataset"]["val_gt_file"] == "":
             experiment_spec["dataset"]["val_gt_file"] = None
-    results_dir, model_path, gpus = initialize_inference_experiment(experiment_spec, key)
-    if len(gpus) > 1:
-        gpus = [gpus[0]]
-        logging.log(f"OCRNet does not support multi-GPU inference at this time. Using only GPU {gpus}")
+
+    model_path, trainer_kwargs = initialize_inference_experiment(experiment_spec, key)
+    if len(trainer_kwargs['devices']) > 1:
+        trainer_kwargs['devices'] = [trainer_kwargs['devices'][0]]
+        logger.info(f"OCRNet does not support multi-GPU inference at this time. Using only GPU {trainer_kwargs['devices']}")
 
     dm = OCRDataModule(experiment_spec)
     dm.setup(stage='predict')
@@ -48,17 +52,28 @@ def run_experiment(experiment_spec, key):
     # If pruned, will load the pruned model graph during construction
     model = OCRNetModel(experiment_spec, dm)
     # load model
-    print('loading pretrained model from %s' % model_path)
     ckpt = load_checkpoint(model_path,
                            key=key,
                            to_cpu=True)
 
-    model.model.load_state_dict(ckpt.state_dict(), strict=True)
+    if not isinstance(ckpt, Model):
+        if "modelopt_state" in ckpt.keys():
+            # Evaluate the quantized model
+            logger.info(f"loading pretrained quantized model from {model_path}")
+            import modelopt.torch.opt as mto
+            from modelopt.torch.quantization import QuantModuleRegistry
+            import torch.nn as nn
+            QuantModuleRegistry.unregister(nn.LSTM)
+            qat_model = mto.restore(model.model, model_path)
+            model.model = qat_model
+        else:
+            # For loading public pretrained weights
+            model.model.load_state_dict(ckpt.state_dict(), strict=True)
+    else:
+        logger.info('loading pretrained model from %s' % model_path)
+        model.model.load_state_dict(ckpt.state_dict(), strict=True)
 
-    trainer = Trainer(devices=gpus,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.predict(model, datamodule=dm)
 

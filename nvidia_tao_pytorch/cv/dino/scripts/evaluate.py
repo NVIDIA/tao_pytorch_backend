@@ -16,17 +16,17 @@
 import os
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.dino.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.pl_od_data_module import ODDataModule
-from nvidia_tao_pytorch.cv.dino.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.dino.model.pl_dino_model import DINOPlModel
 
 
 def run_experiment(experiment_config, key):
     """Run experiment."""
-    results_dir, model_path, gpus = initialize_evaluation_experiment(experiment_config, key)
+    model_path, trainer_kwargs = initialize_evaluation_experiment(experiment_config, key)
 
     # tlt inference
     if model_path.endswith('.tlt') or model_path.endswith('.pth'):
@@ -39,10 +39,7 @@ def run_experiment(experiment_config, key):
                                                  map_location="cpu",
                                                  experiment_spec=experiment_config)
 
-        trainer = Trainer(devices=gpus,
-                          default_root_dir=results_dir,
-                          accelerator='gpu',
-                          strategy='auto')
+        trainer = Trainer(**trainer_kwargs)
 
         trainer.test(model, datamodule=dm)
 

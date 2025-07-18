@@ -11,8 +11,10 @@ fi
 
 export NV_TAO_PYTORCH_TOP="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 
+# In the release image, tao-core is pip installed
+# For local testing, we add tao-core to the pythonpath (from pov of inside container) so imports will work
 function tao_pt {
-   python $NV_TAO_PYTORCH_TOP/runner/tao_pt.py "$@"
+   PYTHONPATH=/tao-pt/tao-core:$PYTHONPATH python $NV_TAO_PYTORCH_TOP/runner/tao_pt.py "$@"
 }
 export -f tao_pt
 

@@ -21,14 +21,14 @@ from pytorch_lightning import Trainer
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
-from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.optical_inspection.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.optical_inspection.dataloader.pl_oi_data_module import OIDataModule
 from nvidia_tao_pytorch.cv.optical_inspection.model.pl_oi_model import OpticalInspectionModel
 
 
 def run_experiment(experiment_config, key):
     """Start the inference."""
-    results_dir, model_path, gpus = initialize_inference_experiment(experiment_config, key)
+    model_path, trainer_kwargs = initialize_inference_experiment(experiment_config, key)
 
     dm = OIDataModule(experiment_config)
 
@@ -39,10 +39,7 @@ def run_experiment(experiment_config, key):
         dm=dm
     )
 
-    trainer = Trainer(devices=gpus,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
-                      strategy='auto')
+    trainer = Trainer(**trainer_kwargs)
 
     trainer.predict(model, datamodule=dm)
 

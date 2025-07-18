@@ -18,8 +18,6 @@ from pycocotools.coco import COCO
 from pycocotools.mask import encode
 from pycocotools.cocoeval import COCOeval
 
-from mmcv.cnn import ConvModule
-
 import torchmetrics
 import pytorch_lightning as pl
 
@@ -30,12 +28,13 @@ from torch import nn
 import torch.nn.functional as F
 
 from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank, is_dist_avail_and_initialized
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_pytorch.core.modules.conv_module import ConvModule
 from nvidia_tao_pytorch.cv.mal.datasets.data_aug import Denormalize
 from nvidia_tao_pytorch.cv.mal.lr_schedulers.cosine_lr import adjust_learning_rate
 from nvidia_tao_pytorch.cv.mal.models import vit_builder
 from nvidia_tao_pytorch.cv.mal.optimizers.adamw import AdamWwStep
-from nvidia_tao_pytorch.core.distributed.comm import get_global_rank, is_dist_avail_and_initialized
 
 
 class _IncompatibleKeys(namedtuple('IncompatibleKeys', ['missing_keys', 'unexpected_keys'])):
@@ -271,7 +270,7 @@ class MALStudentNetwork(pl.LightningModule):
         # Load pretrained weights
         if cfg.train.pretrained_model_path:
             print('Loading backbone weights...')
-            state_dict = torch.load(cfg.train.pretrained_model_path, map_location="cpu")
+            state_dict = torch.load(cfg.train.pretrained_model_path, map_location="cpu",  weights_only=False)
             if 'state_dict' in state_dict.keys():
                 state_dict = state_dict['state_dict']
             if 'model' in state_dict.keys():
@@ -336,7 +335,7 @@ class MALStudentNetwork(pl.LightningModule):
                     c = seg_feat.shape[1]
                     masked_roi_feat = roi_feat[masking]
                     seg = (masked_roi_feat[:, None, :] @ seg_feat.reshape(mn, c, mh * mw * 4)).reshape(mn, 1, mh * 2, mw * 2)
-                    seg = F.interpolate(seg, size=(maxh, maxw), mode='bilinear', align_corners=False)
+                    seg = F.interpolate(seg, size=(maxh, maxw), mode='bilinear', align_corners=False).to(seg.dtype)
                     seg_all[masking] = seg
             ret_vals = {'feat': feat, 'seg': seg_all, 'spatial_feat': spatial_feat_ori, 'masking_list': masking_list}
         else:

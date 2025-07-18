@@ -1,0 +1,98 @@
+encryption_key: tlt_encode
+task: classify
+train:
+  resume_training_checkpoint_path: null
+  classify:
+    loss: "contrastive"
+    cls_weight: [1.0, 10.0]
+  num_epochs: 1
+  num_nodes: 1
+  validation_interval: 1
+  checkpoint_interval: 1
+  optim:
+    lr: 1E-5
+    optim: "adamw"
+    policy: "linear" 
+    momentum: 0.9
+    weight_decay: 0.01
+  results_dir: "${results_dir}/train"
+  tensorboard:
+    enabled: True
+    infrequent_logging_frequency: 1
+results_dir: /results
+model:
+  backbone:
+    type: "c_radio_p3_vit_huge_patch16_224_mlpnorm"
+    pretrained_backbone_path: /tao-pt/tao-experiments/pretrained_models/c_radio_p3.ckpt
+    freeze_backbone: False
+  classify:
+    train_margin_euclid: 2.0
+    eval_margin: 0.005
+    embedding_vectors: 5
+    embed_dec: 30
+    difference_module: 'learnable'
+    learnable_difference_modules: 4
+  decode_head:
+    use_summary_token: True
+    feature_strides: [4, 8, 16, 32]
+dataset:
+  classify:
+    train_dataset:
+      csv_path: /data/dataset_convert/train_combined.csv
+      images_dir: /data/images/
+    validation_dataset:
+      csv_path: /data/dataset_convert/valid_combined.csv
+      images_dir: /data/images/
+    test_dataset:
+      csv_path: /data/dataset_convert/valid_combined.csv
+      images_dir: /data/images/
+    infer_dataset:
+      csv_path: /data/dataset_convert/valid_combined.csv
+      images_dir: /data/images/
+    image_ext: .jpg
+    batch_size: 16
+    workers: 2
+    fpratio_sampling: 0.2
+    num_input: 1
+    num_golden: 4
+    input_map: null
+    image_width: 224
+    image_height: 224
+    augmentation_config:
+      rgb_input_mean: [0.485, 0.456, 0.406]
+      rgb_input_std: [0.229, 0.224, 0.225]
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: True
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list: [90, 180, 270]
+        enable: True
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: True
+      with_scale_random_crop:
+        enable: True
+      with_random_crop: True
+      with_random_blur: True
+      augment: False
+    num_classes: 2
+evaluate: 
+  checkpoint: "${results_dir}/train/changenet_classify.pth"
+  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  batch_size: ${dataset.classify.batch_size}
+inference:
+  checkpoint: "${results_dir}/train/changenet_classify.pth"
+  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  batch_size: ${dataset.classify.batch_size}
+export:
+  gpu_id: 0
+  checkpoint: "${results_dir}/train/changenet_classify.pth"
+  onnx_file: "${results_dir}/export/changenet-classify.onnx"
+  input_width: 224
+  input_height: 224
+  batch_size: ${dataset.classify.batch_size}

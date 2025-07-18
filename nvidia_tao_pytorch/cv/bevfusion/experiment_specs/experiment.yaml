@@ -1,29 +1,28 @@
 results_dir: /results
 dataset:
   type: KittiPersonDataset
-  root_dir: /data/
   gt_box_type: camera
   default_cam_key: CAM2
   train_dataset:
     repeat_time: 2
-    ann_file: /data/kitti_person_infos_train.pkl
+    ann_file: /results/kitti_person_infos_val.pkl
     data_prefix: 
-      pts: training/velodyne_reduced
-      img: training/image_2
+      pts: /results/training/velodyne_reduced
+      img: /data/training/image_2
     batch_size: 4
     num_workers: 8
   val_dataset:
-    ann_file: /data/kitti_person_infos_val.pkl
+    ann_file: /results/kitti_person_infos_val.pkl
     data_prefix: 
-      pts: training/velodyne_reduced
-      img: training/image_2
+      pts: /results/training/velodyne_reduced
+      img: /data/training/image_2
     batch_size: 2
     num_workers: 4
   test_dataset:
-    ann_file: /data/kitti_person_infos_val.pkl
+    ann_file: /results/kitti_person_infos_val.pkl
     data_prefix: 
-      pts: training/velodyne_reduced
-      img: training/image_2
+      pts: /results/training/velodyne_reduced
+      img: /data/training/image_2
     batch_size: 4
     num_workers: 4
 model:

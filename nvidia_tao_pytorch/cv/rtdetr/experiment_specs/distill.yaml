@@ -1,0 +1,169 @@
+results_dir: /tao_experiments/rtdetr_convnext_tiny
+train:
+  num_gpus: 4
+  num_nodes: 1
+  validation_interval: 3
+  checkpoint_interval: 3
+  clip_grad_norm: 0.1
+  is_dry_run: false
+  enable_ema: False
+  ema:
+    decay: 0.999
+    every_n_steps: 1
+    validate_original_weights: false
+    cpu_offload: false
+  optim:
+    optimizer: AdamW
+    monitor_name: val_loss
+    lr: 0.0001
+    lr_backbone: 1.0e-05
+    momentum: 0.9
+    weight_decay: 0.0001
+    lr_scheduler: MultiStep
+    lr_steps:
+    - 70
+    lr_step_size: 1000
+    lr_decay: 0.1
+    warmup_steps: 0
+  num_epochs: 60
+  precision: bf16
+dataset:
+  train_data_sources:
+    - image_dir: /datasets/coco/train2017
+      json_file: /datasets/coco/annotations/instances_train2017.json
+  val_data_sources:
+      image_dir: /datasets/coco/val2017
+      json_file: /datasets/coco/annotations/instances_val2017.json
+  num_classes: 80
+  batch_size: 16
+  workers: 8
+  remap_mscoco_category: True
+  pin_memory: true
+  dataset_type: serialized
+  eval_class_ids: null
+  augmentation:
+    multi_scales:
+    - 480
+    - 512
+    - 544
+    - 576
+    - 608
+    - 640
+    - 672
+    - 704
+    - 736
+    - 768
+    - 800
+    train_spatial_size:
+    - 640
+    - 640
+    eval_spatial_size:
+    - 640
+    - 640
+    distortion_prob: 0.8
+    iou_crop_prob: 0.8
+model:
+  backbone: convnext_tiny
+  pretrained_backbone_path: /tao_experiments/rtdetr_convnext_tiny/convnext_tiny_22k_224.pth
+  train_backbone: True
+  load_teacher_enc_dec: True
+  num_queries: 300
+  num_select: 300
+  num_feature_levels: 3
+  return_interm_indices:
+  - 1
+  - 2
+  - 3
+  feat_strides:
+  - 8
+  - 16
+  - 32
+  hidden_dim: 256
+  nheads: 8
+  dropout_ratio: 0.0
+  enc_layers: 1
+  dim_feedforward: 1024
+  use_encoder_idx:
+  - 2
+  pe_temperature: 10000
+  expansion: 1.0
+  depth_mult: 1
+  enc_act: gelu
+  act: silu
+  dec_layers: 6
+  dn_number: 100
+  feat_channels:
+  - 256
+  - 256
+  - 256
+  eval_idx: -1
+  vfl_loss_coef: 1.0
+  bbox_loss_coef: 5.0
+  giou_loss_coef: 2.0
+  alpha: 0.75
+  gamma: 2.0
+  clip_max_norm: 0.1
+  aux_loss: true
+  loss_types:
+  - vfl
+  - boxes
+  backbone_names:
+  - backbone.0
+  linear_proj_names:
+  - reference_points
+  - sampling_offsets
+distill:
+  teacher:
+    backbone: convnext_large
+    train_backbone: False
+    num_queries: 300
+    num_select: 300
+    num_feature_levels: 3
+    return_interm_indices:
+    - 1
+    - 2
+    - 3
+    feat_strides:
+    - 8
+    - 16
+    - 32
+    hidden_dim: 256
+    nheads: 8
+    dropout_ratio: 0.0
+    enc_layers: 1
+    dim_feedforward: 1024
+    use_encoder_idx:
+    - 2
+    pe_temperature: 10000
+    expansion: 1.0
+    depth_mult: 1
+    enc_act: gelu
+    act: silu
+    dec_layers: 6
+    dn_number: 100
+    feat_channels:
+    - 256
+    - 256
+    - 256
+    eval_idx: -1
+    vfl_loss_coef: 1.0
+    bbox_loss_coef: 5.0
+    giou_loss_coef: 2.0
+    alpha: 0.75
+    gamma: 2.0
+    clip_max_norm: 0.1
+    aux_loss: true
+    loss_types:
+    - vfl
+    - boxes
+    backbone_names:
+    - backbone.0
+    linear_proj_names:
+    - reference_points
+    - sampling_offsets
+  pretrained_teacher_model_path: /tao_experiments/rtdetr_convnext_large/train/model_epoch_070.pth
+  bindings:
+  - teacher_module_name: 'srcs'
+    student_module_name: 'srcs'
+    criterion: IOU
+    weight: 20

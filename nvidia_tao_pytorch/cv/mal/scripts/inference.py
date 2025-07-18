@@ -11,10 +11,10 @@ import warnings
 
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.mal.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
-from nvidia_tao_pytorch.cv.mal.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.mal.datasets.pl_wsi_data_module import WSISDataModule
 from nvidia_tao_pytorch.cv.mal.models.mal import MALPseudoLabels
 from nvidia_tao_pytorch.cv.mal.utils.config_utils import update_config
@@ -29,7 +29,7 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @monitor_status(name="MAL", mode="inference")
 def run_inference(cfg: ExperimentConfig) -> None:
     """Run pseudo-label generation."""
-    results_dir, model_path, gpus = initialize_inference_experiment(cfg)
+    model_path, trainer_kwargs = initialize_inference_experiment(cfg)
     cfg = update_config(cfg, 'inference')
 
     cfg.train.lr = 0
@@ -58,10 +58,7 @@ def run_inference(cfg: ExperimentConfig) -> None:
                                                  categories=dm.val_dataset.coco.dataset['categories'])
 
     trainer = Trainer(
-        devices=gpus,
-        strategy='auto',
-        default_root_dir=results_dir,
-        accelerator='gpu',
+        **trainer_kwargs,
         precision='16-mixed',
         check_val_every_n_epoch=1
     )

@@ -212,14 +212,15 @@ class CDDataAugmentation:
                 contrast = random.uniform(*color_jitter.contrast)
                 saturation = random.uniform(*color_jitter.saturation)
                 hue = random.uniform(*color_jitter.hue)
-                for img, img1 in zip(imgs, imgs1):
+                k = len(imgs1) // len(imgs)
+                for i in range(len(imgs)):
                     tf = transforms.ColorJitter(
                         (brightness, brightness),
                         (contrast, contrast),
                         (saturation, saturation),
                         (hue, hue))
-                    imgs_tf.append(tf(img))
-                    imgs1_tf.append(tf(img1))
+                    imgs_tf.append(tf(imgs[i]))
+                    imgs1_tf.extend([tf(imgs1[i * k + j]) for j in range(k)])
                 imgs, imgs1 = imgs_tf, imgs1_tf
 
         if to_tensor:

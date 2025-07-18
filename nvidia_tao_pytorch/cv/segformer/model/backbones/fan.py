@@ -1,11 +1,24 @@
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021-2022, NVIDIA Corporation & Affiliates. All rights reserved.
 #
 # This work is made available under the Nvidia Source Code License-NC.
 # To view a copy of this license, visit
-# https://github.com/NVlabs/FAN/blob/main/LICENSE
+# https://github.com/NVlabs/FAN/blob/master/LICENSE
+#
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-
-"""FAN Transformer Backbone Module for Segmentation."""
+"""FAN Module."""
 
 import math
 from functools import partial
@@ -14,20 +27,20 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
-from mmseg.registry import MODELS
-from mmengine.model import BaseModule
+
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.layers import DropPath, trunc_normal_, to_2tuple
+from timm.models.helpers import build_model_with_cfg
+from timm.layers import DropPath, trunc_normal_, to_2tuple
 
 from nvidia_tao_pytorch.cv.segformer.model.backbones.convnext_utils import _create_hybrid_backbone
 from nvidia_tao_pytorch.cv.backbone.fan import (PositionalEncodingFourier, Mlp, ConvPatchEmbed,
                                                 ClassAttentionBlock, adaptive_avg_pool)
 
 
-def _cfg(url='', **kwargs):
+def _cfg_256(url='', **kwargs):
     return {
         'url': url,
-        'num_classes': 1000, 'input_size': (3, 224, 224), 'pool_size': None,
+        'num_classes': 2, 'input_size': (3, 256, 256), 'pool_size': None,
         'crop_pct': 1.0, 'interpolation': 'bicubic', 'fixed_input_size': True,
         'mean': IMAGENET_DEFAULT_MEAN, 'std': IMAGENET_DEFAULT_STD,
         'first_conv': 'patch_embed.proj.0.0', 'classifier': 'head',
@@ -36,11 +49,11 @@ def _cfg(url='', **kwargs):
 
 
 default_cfgs = {
-    'fan_tiny_12_p4_224': _cfg(url=''),
-    'fan_small_12_p16_224': _cfg(url=''),
-    'fan_base_12_p16_224': _cfg(url=''),
-    'fan_large_12_p16_224': _cfg(url=''),
-
+    # Patch size 16
+    'fan_tiny_8_p16_256': _cfg_256(),
+    'fan_small_12_p4_256': _cfg_256(),
+    'fan_base_16_p4_256': _cfg_256(),
+    'fan_large_16_p4_256': _cfg_256(),
 }
 
 
@@ -341,7 +354,7 @@ class FANBlock(nn.Module):
         return x
 
 
-class FAN(BaseModule):
+class FAN(nn.Module):
     """Based on timm https://github.com/rwightman/pytorch-image-models/tree/master/timm"""
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
@@ -498,83 +511,107 @@ class FAN(BaseModule):
         return None
 
 
-# FAN-Hybrid models
-@MODELS.register_module()
-class fan_tiny_8_p4_hybrid(FAN):
+def checkpoint_filter_fn(state_dict, model):
+    """Filter loaded checkpoints"""
+    if 'model' in state_dict:
+        state_dict = state_dict['model']
+    # For consistency with timm's transformer models while being compatible with official weights source we rename
+    # pos_embeder to pos_embed. Also account for use_pos_embed == False
+    use_pos_embed = getattr(model, 'pos_embed', None) is not None
+    pos_embed_keys = [k for k in state_dict if k.startswith('pos_embed')]
+    for k in pos_embed_keys:
+        if use_pos_embed:
+            state_dict[k.replace('pos_embeder.', 'pos_embed.')] = state_dict.pop(k)
+        else:
+            del state_dict[k]
+    # timm's implementation of class attention in CaiT is slightly more efficient as it does not compute query vectors
+    # for all tokens, just the class token. To use official weights source we must split qkv into q, k, v
+    if 'cls_attn_blocks.0.attn.qkv.weight' in state_dict and 'cls_attn_blocks.0.attn.q.weight' in model.state_dict():
+        num_ca_blocks = len(model.cls_attn_blocks)
+        for i in range(num_ca_blocks):
+            qkv_weight = state_dict.pop(f'cls_attn_blocks.{i}.attn.qkv.weight')
+            qkv_weight = qkv_weight.reshape(3, -1, qkv_weight.shape[-1])
+            for j, subscript in enumerate('qkv'):
+                state_dict[f'cls_attn_blocks.{i}.attn.{subscript}.weight'] = qkv_weight[j]
+            qkv_bias = state_dict.pop(f'cls_attn_blocks.{i}.attn.qkv.bias', None)
+            if qkv_bias is not None:
+                qkv_bias = qkv_bias.reshape(3, -1)
+                for j, subscript in enumerate('qkv'):
+                    state_dict[f'cls_attn_blocks.{i}.attn.{subscript}.bias'] = qkv_bias[j]
+    return state_dict
+
+
+def _create_fan(variant, pretrained=False, default_cfg=None, **kwargs):
+    """Create FAN backbone"""
+    default_cfg = default_cfg or default_cfgs[variant]
+    model = build_model_with_cfg(
+        FAN, variant, pretrained, pretrained_cfg=default_cfg, pretrained_filter_fn=checkpoint_filter_fn, **kwargs)
+    return model
+
+
+# FANHybrid-T
+def fan_tiny_8_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Tiny"""
+    depth = 8
+    model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
+    backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
 
-    def __init__(self, **kwargs):
-        """Init Function"""
-        depth = 8
-        model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
-        backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
-        super(fan_tiny_8_p4_hybrid, self).__init__(patch_size=16, in_chans=3, num_classes=1000, embed_dim=192, depth=depth, backbone=backbone, out_idx=7,
-                                                   num_heads=8, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
-                                                   act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True)
+    model_kwargs = dict(
+        patch_size=16, in_chans=3, embed_dim=192, depth=depth,  out_idx=7, feat_downsample=False,
+        num_heads=8, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
+        act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
+        num_classes=num_classes)
+
+    model = _create_fan('fan_tiny_8_p16_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
+    return model
 
 
-@MODELS.register_module()
-class fan_small_12_p4_hybrid(FAN):
+# FANHybrid-S
+def fan_small_12_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Small"""
+    depth = 10
+    model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
+    backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
 
-    def __init__(self, **kwargs):
-        """Init Function"""
-        depth = 10
-        model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
-        backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
-        super(fan_small_12_p4_hybrid, self).__init__(patch_size=16, in_chans=3, num_classes=1000, embed_dim=384, depth=depth, backbone=backbone, out_idx=9,
-                                                     num_heads=8, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
-                                                     act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, feat_downsample=False)
+    model_kwargs = dict(
+        patch_size=16, in_chans=3, embed_dim=384, depth=depth,  out_idx=9, feat_downsample=False,
+        num_heads=8, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
+        act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
+        num_classes=num_classes)
+
+    model = _create_fan('fan_small_12_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
+    return model
 
 
-@MODELS.register_module()
-class fan_base_16_p4_hybrid(FAN):
+# FANHybrid-B
+def fan_base_16_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Base"""
+    depth = 16
+    model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
+    backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
 
-    def __init__(self, **kwargs):
-        """Init Function"""
-        depth = 16
-        model_args = dict(depths=[3, 3], dims=[128, 256, 512, 1024], use_head=False)
-        backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
-        super(fan_base_16_p4_hybrid, self).__init__(patch_size=16, in_chans=3, num_classes=1000, embed_dim=448, depth=depth, backbone=backbone, out_idx=15, feat_downsample=False,
-                                                    num_heads=8, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
-                                                    act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, default_cfg=None)
+    model_kwargs = dict(
+        patch_size=16, in_chans=3, embed_dim=448, depth=depth,  out_idx=15, feat_downsample=False,
+        num_heads=8, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
+        act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
+        num_classes=num_classes)
+
+    model = _create_fan('fan_base_16_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
+    return model
 
 
-@MODELS.register_module()
-class fan_large_16_p4_hybrid(FAN):
+# FANHybrid-L
+def fan_large_16_p4_hybrid(num_classes, pretrained=False, **kwargs):
     """FAN Hybrid Large"""
+    depth = 22
+    model_args = dict(depths=[3, 5], dims=[128, 256, 512, 1024], use_head=False)
+    backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
 
-    def __init__(self, **kwargs):
-        """Init Function"""
-        depth = 22
-        model_args = dict(depths=[3, 5], dims=[128, 256, 512, 1024], use_head=False)
-        backbone = _create_hybrid_backbone(pretrained=False, pretrained_strict=False, **model_args)
-        super(fan_large_16_p4_hybrid, self).__init__(patch_size=16, in_chans=3, num_classes=1000, embed_dim=480, depth=depth, backbone=backbone, out_idx=18,
-                                                     num_heads=10, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
-                                                     act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, use_checkpoint=False)
+    model_kwargs = dict(
+        patch_size=16, in_chans=3, embed_dim=480, depth=depth,  out_idx=18, feat_downsample=False,
+        num_heads=10, mlp_ratio=4., qkv_bias=True, attn_drop_rate=0., drop_path_rate=0.,
+        act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, drop_rate=0.,
+        num_classes=num_classes)
 
-
-# FAN-ViT Models
-@MODELS.register_module()
-class fan_small_12_p16_224(FAN):
-    """FAN ViT Small"""
-
-    def __init__(self, **kwargs):
-        """Init Function"""
-        depth = 12
-        super(fan_small_12_p16_224, self).__init__(patch_size=16, in_chans=3, num_classes=1000, embed_dim=384, depth=depth,
-                                                   num_heads=8, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
-                                                   act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True)
-
-
-@MODELS.register_module()
-class fan_base_18_p16_224(FAN):
-    """FAN ViT Base"""
-
-    def __init__(self, **kwargs):
-        """Init Function"""
-        depth = 18
-        super(fan_base_18_p16_224, self).__init__(patch_size=16, in_chans=3, num_classes=1000, embed_dim=448, depth=depth,
-                                                  num_heads=8, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rate=0., se_style=True, out_idx=16,
-                                                  act_layer=None, norm_layer=None, cls_attn_layers=2, use_pos_embed=True, eta=1., tokens_norm=True, use_checkpoint=False)
+    model = _create_fan('fan_large_16_p4_256', pretrained=pretrained,  backbone=backbone, **model_kwargs)
+    return model

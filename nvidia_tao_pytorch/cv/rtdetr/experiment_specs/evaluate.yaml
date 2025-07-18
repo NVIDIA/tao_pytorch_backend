@@ -1,0 +1,17 @@
+evaluate:
+  num_gpus: 1
+  checkpoint: "???"
+dataset:
+  test_data_sources:
+    image_dir: "???"
+    json_file: "???"
+  num_classes: 80
+  batch_size: 16
+  workers: 8
+  remap_mscoco_category: True
+model:
+  backbone: fan_small
+  return_interm_indices: [1, 2, 3]
+  dec_layers: 6
+  enc_layers: 1
+  num_queries: 300

@@ -26,12 +26,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics
-# from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
+import modelopt.torch.opt as mto
 
 from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
+from nvidia_tao_core.config.ocrnet.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocrnet.model.build_nn_model import build_ocrnet_model
-from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocrnet.utils.utils import (CTCLabelConverter,
                                                       AttnLabelConverter)
 TABLE_HEADER = ['Ground Truth', 'Prediction', 'Confidence && T/F']
@@ -101,6 +101,11 @@ class OCRNetModel(TAOLightningModule):
         """Init training for OCRNet."""
         super().__init__(experiment_spec)
         self.dm = dm
+        self.quantized = experiment_spec.model.quantize
+        if self.quantized:
+            self.save_func = mto.save
+        else:
+            self.save_func = torch.save
 
         with open(self.dataset_config.character_list_file, "r") as f:
             self.characters = "".join([ch.strip() for ch in f.readlines()])
@@ -124,10 +129,10 @@ class OCRNetModel(TAOLightningModule):
         if self.experiment_spec.train.model_ema:
             self.model_ema = ModelEmaV2(self.model)
 
-        self.val_accuracy = torchmetrics.Accuracy()
+        self.val_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_class)
         self.best_acc = -1
         if self.model_ema is not None:
-            self.val_ema_accuracy = torchmetrics.Accuracy()
+            self.val_ema_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_class)
             self.best_ema_acc = -1
         self.check_val_batch_idx = 0
 
@@ -142,7 +147,6 @@ class OCRNetModel(TAOLightningModule):
         """Internal function to build the model."""
         self.model = build_ocrnet_model(experiment_spec=self.experiment_spec,
                                         num_class=self.num_class)
-        print(self.model)
 
     def configure_optimizers(self):
         """Configure optimizers for training"""
@@ -282,7 +286,7 @@ class OCRNetModel(TAOLightningModule):
         def val_epoch_end():
             current_acc = self.val_accuracy.compute()
             if current_acc > self.best_acc:
-                torch.save(self.model, f'{self.experiment_spec.train.results_dir}/best_accuracy.pth')
+                self.save_func(self.model, f'{self.experiment_spec.train.results_dir}/best_accuracy.pth')
                 self.best_acc = current_acc
             current_model_log = f'{"Current_accuracy":17s}: {current_acc:0.3f}'
             best_model_log = f'{"Best_accuracy":17s}: {self.best_acc:0.3f}'
@@ -291,7 +295,7 @@ class OCRNetModel(TAOLightningModule):
             if self.model_ema is not None:
                 current_ema_acc = self.val_ema_accuracy.compute()
                 if current_ema_acc > self.best_ema_acc:
-                    torch.save(self.model_ema.module, f'{self.experiment_spec.train.results_dir}/best_accuracy_ema.pth')
+                    self.save_func(self.model_ema.module, f'{self.experiment_spec.train.results_dir}/best_accuracy_ema.pth')
                     self.best_ema_acc = current_ema_acc
                 current_model_log = f'{"Current_ema_accuracy":17s}: {current_ema_acc:0.3f}'
                 best_model_log = f'{"Best_ema_accuracy":17s}: {self.best_ema_acc:0.3f}'
@@ -322,7 +326,11 @@ class OCRNetModel(TAOLightningModule):
 
     def on_test_epoch_start(self):
         """Test epoch start"""
-        self.test_accuracy = torchmetrics.Accuracy()
+        self.test_accuracy = torchmetrics.Accuracy(task="multiclass",
+                                                   num_classes=self.num_class,
+                                                   compute_on_cpu=False,
+                                                   sync_on_compute=False,
+                                                   dist_sync_on_step=True)
 
     def test_step(self, batch, batch_idx):
         """Test step"""
@@ -345,16 +353,16 @@ class OCRNetModel(TAOLightningModule):
     def on_test_epoch_end(self):
         """Test epoch end"""
         test_acc = self.test_accuracy.compute().item() * 100
-        print(f'Accuracy: {test_acc:0.3f}')
-        self.dm.console_logger.info(f"Accuracy: {test_acc:0.3f}")
-        self.status_logging_dict = {}
-        self.status_logging_dict["test_acc"] = test_acc
-        status_logging.get_status_logger().kpi = self.status_logging_dict
-        status_logging.get_status_logger().write(
-            message="Test metrics generated.",
-            status_level=status_logging.Status.RUNNING
-        )
-        self.test_accuracy = None
+        if self.trainer.local_rank == 0:
+            self.dm.console_logger.info(f"Accuracy: {test_acc:0.3f}")
+            self.status_logging_dict = {}
+            self.status_logging_dict["test_acc"] = test_acc
+            status_logging.get_status_logger().kpi = self.status_logging_dict
+            status_logging.get_status_logger().write(
+                message="Test metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
+            self.test_accuracy = None
 
     def on_predict_epoch_start(self):
         """Predict epoch start"""
@@ -464,11 +472,16 @@ class OCRNetModel(TAOLightningModule):
                 pred_max_prob = pred_max_prob[:pred_EOS]
 
             # calculate confidence score (= multiply of pred_max_prob)
-            confidence_score = pred_max_prob.cumprod(dim=0)[-1]
+            try:
+                confidence_score = pred_max_prob.cumprod(dim=0)[-1]
+            except Exception:
+                confidence_score = 0  # for empty pred case, when prune after "end of sentence" token ([s])
 
             self.table_data.append((img_name, pred, f"{confidence_score:0.4f}"))
 
-    # TODO seanf: why is this here?
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Save the model architecture in the checkpoint"""
-        checkpoint["whole_model"] = pickle.dumps(self.model)
+        # This is for resuming training from a pruned model. The default ckpt is saved with weights only.
+        if not self.quantized:
+            # ModelOpt quantized model cannot be pickle dump.
+            checkpoint["whole_model"] = pickle.dumps(self.model)

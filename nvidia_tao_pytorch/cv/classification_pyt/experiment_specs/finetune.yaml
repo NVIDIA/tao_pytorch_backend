@@ -1,0 +1,67 @@
+results_dir: ???
+wandb:
+  enable: False
+train:
+  seed: 47
+  resume_training_checkpoint_path: null
+  num_epochs: 300
+  num_nodes: 1
+  num_gpus: 1
+  gpu_ids: [0]
+  validation_interval: 1
+  checkpoint_interval: 1
+  tensorboard:
+    enabled: True
+  optim:
+    lr: 0.00015
+    optim: "adamw"
+    policy: "cosine"
+    weight_decay: 0.1
+    skip_names: ["norm", "bias"]
+    warmup_epochs: 20
+model:
+  backbone:
+    type: "fan_tiny_12_p16_224"
+    freeze_backbone: False
+  head:
+    type: "TAOLinearClsHead"
+    binary: False
+    topk: [1, 5]
+    loss:
+      type: CrossEntropyLoss
+dataset:
+  dataset: "CLDataset"
+  root_dir: /dataset/imagenet2012
+  batch_size: 128
+  workers: 1
+  num_classes: 1000
+  img_size: 224
+  augmentation:
+    mixup_cutmix: True
+    random_flip:
+      vflip_probability: 0
+      hflip_probability: 0.5
+      enable: True
+    random_aug:
+      enable: True
+    random_erase:
+      enable: True
+    random_rotate:
+      rotate_probability: 0.5
+      angle_list: [90, 180, 270]
+      enable: False
+    random_color:
+      brightness: 0.4
+      contrast: 0.4
+      saturation: 0.4
+      enable: False
+    with_scale_random_crop:
+      enable: False
+    with_random_crop: True
+    with_random_blur: False
+  train_dataset:
+    images_dir: /dataset/imagenet2012/train
+  val_dataset:
+    images_dir: /dataset/imagenet2012/val
+  test_dataset:
+    images_dir: /dataset/imagenet2012/test

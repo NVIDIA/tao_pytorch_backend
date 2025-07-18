@@ -38,7 +38,6 @@ class TAO3DSyntheticDataset(Det3DDataset):
     }
 
     def __init__(self,
-                 data_root: str,
                  ann_file: str,
                  pipeline: List[Union[dict, Callable]] = [],
                  box_type_3d: str = 'LiDAR',
@@ -53,7 +52,6 @@ class TAO3DSyntheticDataset(Det3DDataset):
         """
         Initialize TAO3DSynthetic Dataset
         Args:
-            data_root (str): Path of dataset root.
             ann_file (str): Path of annotation file.
             pipeline (list[dict]): Pipeline used for data processing.
                 Defaults to [].
@@ -82,7 +80,6 @@ class TAO3DSyntheticDataset(Det3DDataset):
                              frame_based"
 
         super().__init__(
-            data_root=data_root,
             ann_file=ann_file,
             modality=modality,
             default_cam_key=default_cam_key,

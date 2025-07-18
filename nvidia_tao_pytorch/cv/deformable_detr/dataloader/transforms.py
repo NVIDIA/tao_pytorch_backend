@@ -233,7 +233,7 @@ def resize(image, target, size, max_size=None):
         if max_size is not None:
             min_original_size = float(min((w, h)))
             max_original_size = float(max((w, h)))
-            if max_original_size / min_original_size * size > max_size:
+            if size is None or max_original_size / min_original_size * size > max_size:
                 size = int(round(max_size * min_original_size / max_original_size))
 
         if (w <= h and w == size) or (h <= w and h == size):
@@ -430,6 +430,39 @@ class RandomHorizontalFlip(object):
         if random.random() < self.p:
             return hflip(img, target)
         return img, target
+
+
+class ResizeAndPad(object):
+    """Resize class by preserving aspect ratio."""
+
+    def __init__(self, max_size=None):
+        """Initialize the RandomResize Class.
+
+        Args:
+            max_size (int): maximum size to perform random resize.
+        """
+        self.max_size = max_size
+
+    def __call__(self, img, target=None):
+        """Call RandomResize.
+
+        Args:
+            image (PIL.Image): Pillow Image.
+            target (dict): Annotations.
+
+        Returns:
+            image (PIL.Image): Resized Image.
+            target (dict): Resized Annotations.
+        """
+        img, target = resize(img, target, None, self.max_size)
+        height, width = target['size']
+        if height > width:
+            pad_x = self.max_size - width
+            pad_y = self.max_size - height
+        else:
+            pad_x = self.max_size - width
+            pad_y = self.max_size - height
+        return pad(img, target, (pad_x, pad_y))
 
 
 class RandomResize(object):

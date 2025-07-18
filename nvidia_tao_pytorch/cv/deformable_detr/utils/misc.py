@@ -75,7 +75,8 @@ def load_pretrained_weights(pretrained_path, parser=None):
         parser (function): function to parse the state dict for a custom model.
     """
     temp = torch.load(pretrained_path,
-                      map_location="cpu")
+                      map_location="cpu",
+                      weights_only=False)
 
     if temp.get("state_dict_encrypted", False):
         # Retrieve encryption key from TLTPyTorchCookbook.

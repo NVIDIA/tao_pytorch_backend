@@ -1,0 +1,35 @@
+train:
+  num_gpus: 1
+  num_nodes: 1
+  validation_interval: 1
+  optim:
+    lr_backbone: 1e-5
+    lr: 1e-4
+    lr_steps: [1000]
+    momentum: 0.9
+  num_epochs: 72
+  precision: bf16
+  activation_checkpoint: True
+  enable_ema: True
+  ema:
+    decay: 0.999
+dataset:
+  train_data_sources:
+    - image_dir: "???"
+      json_file: "???"
+  val_data_sources:
+    image_dir: "???"
+    json_file: "???"
+  num_classes: 80
+  batch_size: 4
+  workers: 8
+  dataset_type: serialized
+  remap_mscoco_category: True  # Set this to True only if you're running COCO training
+model:
+  backbone: fan_small
+  train_backbone: True
+  pretrained_backbone_path: "???"
+  return_interm_indices: [1, 2, 3]
+  dec_layers: 6
+  enc_layers: 1
+  num_queries: 300

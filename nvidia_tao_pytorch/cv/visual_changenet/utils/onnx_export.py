@@ -87,8 +87,7 @@ class ONNXExporter(object):
     @staticmethod
     def check_onnx(onnx_file):
         """Check_onnx"""
-        model = onnx.load(onnx_file)
-        onnx.checker.check_model(model)
+        onnx.checker.check_model(onnx_file)
 
     @staticmethod
     def onnx_change(onnx_file):

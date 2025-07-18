@@ -16,7 +16,8 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule
+
+from nvidia_tao_pytorch.core.modules.conv_module import ConvModule
 
 
 def resize(input,   # pylint: disable=W0622
@@ -90,7 +91,7 @@ class FANNeck(nn.Module):
             in_channels=embedding_dim * 4,
             out_channels=embedding_dim,
             kernel_size=1,
-            norm_cfg=dict(type='SyncBN', requires_grad=True)
+            norm='SyncBN'
         )
         self.out_channels = embedding_dim
 

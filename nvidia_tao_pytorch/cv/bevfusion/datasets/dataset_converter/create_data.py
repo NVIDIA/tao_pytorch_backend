@@ -41,7 +41,7 @@ def kitti_data_prep(root_path,
             Default: False.
     """
     create_kitti_info_file(root_path, info_prefix, with_plane, out_dir, mode=mode)
-    create_reduced_point_cloud(root_path, info_prefix, mode=mode)
+    create_reduced_point_cloud(root_path, info_prefix, mode=mode, save_path=out_dir)
     if mode == 'training':
         info_train_path = osp.join(out_dir, f'{info_prefix}_infos_train.pkl')
         info_val_path = osp.join(out_dir, f'{info_prefix}_infos_val.pkl')
@@ -97,7 +97,7 @@ def tao3d_data_prep(root_path,
                 pkl_name = osp.join(out_dir, 'pkls', '{}_{}.pkl'.format(info_prefix, seq_name))
                 print(f'Sequence {seq_name} info file is saved to {pkl_name}')
                 mmengine.dump(image_infos, pkl_name, 'pkl')
-                create_reduced_point_cloud_tao3d(root_path, info_path=pkl_name)
+                create_reduced_point_cloud_tao3d(root_path, info_path=pkl_name, save_path=out_dir)
                 update_pkl_infos('tao3d', out_dir=osp.join(out_dir, 'pkls'), pkl_path=pkl_name)
         output_pkl = osp.join(out_dir, '{}_{}.pkl'.format(info_prefix, mode))
         merge_pkls(seq_list, info_prefix, osp.join(out_dir, 'pkls'), output_pkl)

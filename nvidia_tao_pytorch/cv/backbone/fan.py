@@ -14,9 +14,8 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.helpers import build_model_with_cfg
+from timm.models import build_model_with_cfg, register_model
 from timm.models.vision_transformer import Mlp as MlpOri
-from timm.models.registry import register_model
 from timm.layers import DropPath, trunc_normal_, to_2tuple
 
 from nvidia_tao_pytorch.cv.backbone.convnext_utils import _create_hybrid_backbone

@@ -24,10 +24,10 @@ import os
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.ocdnet.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.ocdnet.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocdnet.data_loader.pl_ocd_data_module import OCDDataModule
 from nvidia_tao_pytorch.cv.ocdnet.model.pl_ocd_model import OCDnetModel
 
@@ -35,14 +35,12 @@ from nvidia_tao_pytorch.cv.ocdnet.model.pl_ocd_model import OCDnetModel
 def run_experiment(experiment_config):
     """Start the training."""
     experiment_config = OmegaConf.to_container(experiment_config)
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config)
     dm = OCDDataModule(experiment_config)
     dm.setup(stage='fit')
     ocd_model = OCDnetModel(experiment_config, dm, 'fit')
 
-    total_epochs = experiment_config['train']['num_epochs']
-    assert total_epochs != experiment_config['train']['lr_scheduler']['args']['warmup_epoch'], "num_epochs should not be same as warmup_epoch."
-    val_inter = experiment_config['train']['validation_interval']
+    assert trainer_kwargs['max_epochs'] != experiment_config['train']['lr_scheduler']['args']['warmup_epoch'], "num_epochs should not be same as warmup_epoch."
     clip_grad = experiment_config['train']['trainer']['clip_grad_norm']
     activation_checkpoint = experiment_config['model']['activation_checkpoint']
     distributed_strategy = experiment_config['train']['distributed_strategy']
@@ -57,7 +55,7 @@ def run_experiment(experiment_config):
 
     sync_batchnorm = False
     strategy = 'auto'
-    if len(gpus) > 1:
+    if len(trainer_kwargs['devices']) > 1:
         # By default find_unused_parameters is set to False in Lightning
         # This introduces extra overhead and can't work with activation checkpointing
         if distributed_strategy.lower() == "ddp" and activation_checkpoint:
@@ -80,18 +78,12 @@ def run_experiment(experiment_config):
             print("Setting sync batch norm")
             sync_batchnorm = True
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=gpus,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=val_inter,
-                      default_root_dir=results_dir,
-                      accelerator="gpu",
+    trainer = Trainer(**trainer_kwargs,
                       strategy=strategy,
                       gradient_clip_val=clip_grad,
                       num_sanity_val_steps=0,
                       precision=precision,
                       sync_batchnorm=sync_batchnorm,
-                      enable_checkpointing=False,
                       fast_dev_run=is_dry_run)
 
     trainer.fit(ocd_model, dm, ckpt_path=resume_ckpt)

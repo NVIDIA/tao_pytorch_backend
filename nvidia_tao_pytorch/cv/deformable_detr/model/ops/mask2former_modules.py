@@ -16,15 +16,15 @@
 import os
 import warnings
 import math
+import sys
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.nn.init import xavier_uniform_, constant_
 
-from mmcv.ops.multi_scale_deform_attn import multi_scale_deformable_attn_pytorch
-from nvidia_tao_pytorch.cv.deformable_detr.model.ops.modules import _is_power_of_2
 from nvidia_tao_pytorch.cv.deformable_detr.model.ops.functions import MSDeformAttnFunction, load_ops
+from nvidia_tao_pytorch.cv.deformable_detr.model.ops.modules import _is_power_of_2, multi_scale_deformable_attn_pytorch
 
 
 class MSDeformAttn(nn.Module):
@@ -64,7 +64,7 @@ class MSDeformAttn(nn.Module):
         self._reset_parameters()
         # load custom ops
         ops_dir = os.path.dirname(os.path.abspath(__file__))
-        lib_name = "MultiScaleDeformableAttention.cpython-310-x86_64-linux-gnu.so"
+        lib_name = f"MultiScaleDeformableAttention.cpython-{sys.version_info.major}{sys.version_info.minor}-{os.uname().machine}-linux-gnu.so"
         load_ops(ops_dir, lib_name)
 
     def _reset_parameters(self):

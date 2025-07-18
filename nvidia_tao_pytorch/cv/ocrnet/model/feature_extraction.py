@@ -15,7 +15,6 @@
 """OCRNet feature extraction module."""
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_quantization import nn as quant_nn
 
 
 class VGG_FeatureExtractor(nn.Module):
@@ -84,16 +83,15 @@ class RCNN_FeatureExtractor(nn.Module):
 class ResNet_FeatureExtractor(nn.Module):
     """ FeatureExtractor of FAN (http://openaccess.thecvf.com/content_ICCV_2017/papers/Cheng_Focusing_Attention_Towards_ICCV_2017_paper.pdf) """
 
-    def __init__(self, input_channel, output_channel=512, quantize=False, no_maxpool1=False):
+    def __init__(self, input_channel, output_channel=512, no_maxpool1=False):
         """Init.
 
         Args:
             input_channel (int): The number of input channels.
             output_channel (int, optional): The number of output channels. Default is 512.
-            quantize (bool, optional): Whether to use quantization. Default is False.
         """
         super(ResNet_FeatureExtractor, self).__init__()
-        self.ConvNet = ResNet(input_channel, output_channel, BasicBlock, [1, 2, 5, 3], quantize=quantize, no_maxpool1=no_maxpool1)
+        self.ConvNet = ResNet(input_channel, output_channel, BasicBlock, [1, 2, 5, 3], no_maxpool1=no_maxpool1)
 
     def forward(self, input):  # pylint: disable=redefined-builtin
         """Forward."""
@@ -173,7 +171,7 @@ class BasicBlock(nn.Module):
 
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, quantize=False):
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
         """Init.
 
         Args:
@@ -181,28 +179,18 @@ class BasicBlock(nn.Module):
             planes (int): The number of output channels.
             stride (int, optional): The stride of the convolutional layer. Default is 1.
             downsample (nn.Module, optional): The downsampling layer. Default is None.
-            quantize (bool, optional): Whether to use quantization. Default is False.
         """
         super(BasicBlock, self).__init__()
-        self.quantize = quantize
-        self.conv1 = self._conv3x3(inplanes, planes, quantize=self.quantize)
+        self.conv1 = self._conv3x3(inplanes, planes)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = self._conv3x3(planes, planes, quantize=self.quantize)
+        self.conv2 = self._conv3x3(planes, planes)
         self.bn2 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
 
-        if self.quantize:
-            self.residual_quantizer = \
-                quant_nn.TensorQuantizer(quant_nn.QuantConv2d.default_quant_desc_input)
-
-    def _conv3x3(self, in_planes, out_planes, stride=1, quantize=False):
+    def _conv3x3(self, in_planes, out_planes, stride=1):
         """3x3 convolution with padding"""
-        if quantize:
-            return quant_nn.QuantConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                                        padding=1, bias=False)
-
         return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                          padding=1, bias=False)
 
@@ -220,26 +208,16 @@ class BasicBlock(nn.Module):
         if self.downsample is not None:
             residual = self.downsample(x)
 
-        if self.quantize:
-            out += self.residual_quantizer(residual)
-        else:
-            out += residual
+        out += residual
         out = self.relu(out)
 
         return out
 
 
-def get_conv2d(quantize=False):
-    """Helper function for quantize model."""
-    if quantize:
-        return quant_nn.QuantConv2d
-    return nn.Conv2d
-
-
 class ResNet(nn.Module):
     """ResNet module."""
 
-    def __init__(self, input_channel, output_channel, block, layers, quantize=False, no_maxpool1=False):
+    def __init__(self, input_channel, output_channel, block, layers, no_maxpool1=False):
         """Init.
 
         Args:
@@ -247,19 +225,17 @@ class ResNet(nn.Module):
             output_channel (int): The number of output channels.
             block (nn.Module): The block to use for the ResNet network.
             layers (list): A list of integers specifying the number of blocks in each layer.
-            quantize (bool, optional): Whether to use quantization. Default is False.
         """
         super(ResNet, self).__init__()
-        self.quantize = quantize
         self.no_maxpool1 = no_maxpool1
         self.output_channel_block = [int(output_channel / 4), int(output_channel / 2), output_channel, output_channel]
 
         self.inplanes = int(output_channel / 8)
-        self.conv0_1 = get_conv2d(self.quantize)(input_channel, int(output_channel / 16),
-                                                 kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv0_1 = nn.Conv2d(input_channel, int(output_channel / 16),
+                                 kernel_size=3, stride=1, padding=1, bias=False)
         self.bn0_1 = nn.BatchNorm2d(int(output_channel / 16))
-        self.conv0_2 = get_conv2d(self.quantize)(int(output_channel / 16), self.inplanes,
-                                                 kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv0_2 = nn.Conv2d(int(output_channel / 16), self.inplanes,
+                                 kernel_size=3, stride=1, padding=1, bias=False)
         self.bn0_2 = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
 
@@ -267,36 +243,32 @@ class ResNet(nn.Module):
             self.maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
 
         self.layer1 = self._make_layer(block, self.output_channel_block[0], layers[0])
-        self.conv1 = get_conv2d(self.quantize)(self.output_channel_block[0], self.output_channel_block[
-                                               0], kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(self.output_channel_block[0], self.output_channel_block[
+                               0], kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(self.output_channel_block[0])
 
         self.maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         self.layer2 = self._make_layer(block, self.output_channel_block[1], layers[1], stride=1)
-        self.conv2 = get_conv2d(self.quantize)(self.output_channel_block[1], self.output_channel_block[
-                                               1], kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(self.output_channel_block[1], self.output_channel_block[
+                               1], kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(self.output_channel_block[1])
 
         self.maxpool3 = nn.MaxPool2d(kernel_size=2, stride=(2, 1), padding=(0, 1))
         self.layer3 = self._make_layer(block, self.output_channel_block[2], layers[2], stride=1)
-        self.conv3 = get_conv2d(self.quantize)(self.output_channel_block[2], self.output_channel_block[
-                                               2], kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(self.output_channel_block[2], self.output_channel_block[
+                               2], kernel_size=3, stride=1, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(self.output_channel_block[2])
 
         self.layer4 = self._make_layer(block, self.output_channel_block[3], layers[3], stride=1)
-        self.conv4_1 = get_conv2d(self.quantize)(self.output_channel_block[3], self.output_channel_block[
-                                                 3], kernel_size=2, stride=(2, 1), padding=(0, 1), bias=False)
+        self.conv4_1 = nn.Conv2d(self.output_channel_block[3], self.output_channel_block[
+                                 3], kernel_size=2, stride=(2, 1), padding=(0, 1), bias=False)
         self.bn4_1 = nn.BatchNorm2d(self.output_channel_block[3])
-        self.conv4_2 = get_conv2d(self.quantize)(self.output_channel_block[3], self.output_channel_block[
-                                                 3], kernel_size=2, stride=1, padding=0, bias=False)
+        self.conv4_2 = nn.Conv2d(self.output_channel_block[3], self.output_channel_block[
+                                 3], kernel_size=2, stride=1, padding=0, bias=False)
         self.bn4_2 = nn.BatchNorm2d(self.output_channel_block[3])
 
-    def _conv1x1(self, in_planes, out_planes, stride=1, quantize=False):
+    def _conv1x1(self, in_planes, out_planes, stride=1):
         """conv1x1 helper."""
-        if quantize:
-            return quant_nn.QuantConv2d(in_planes, out_planes, kernel_size=1, stride=stride,
-                                        bias=False)
-
         return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride,
                          bias=False)
 
@@ -304,14 +276,9 @@ class ResNet(nn.Module):
         """make resnet block."""
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            # downsample = nn.Sequential(
-            #     nn.Conv2d(self.inplanes, planes * block.expansion,
-            #               kernel_size=1, stride=stride, bias=False),
-            #     nn.BatchNorm2d(planes * block.expansion),
-            # )
             downsample = nn.Sequential(
                 self._conv1x1(self.inplanes, planes * block.expansion,
-                              stride=stride, quantize=self.quantize),
+                              stride=stride),
                 nn.BatchNorm2d(planes * block.expansion),
             )
 

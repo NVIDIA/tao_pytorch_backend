@@ -44,14 +44,15 @@ from functools import partial
 import torch
 import torch.nn as nn
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.helpers import named_apply, build_model_with_cfg
-from timm.models.layers import ClassifierHead, SelectAdaptivePool2d, DropPath, to_2tuple
+from timm.models import named_apply, build_model_with_cfg
+from timm.layers import ClassifierHead, SelectAdaptivePool2d, DropPath, to_2tuple
 from nvidia_tao_pytorch.cv.backbone.convnext_utils import checkpoint_filter_fn, _init_weights, LayerNorm2d, ConvMlp
 from nvidia_tao_pytorch.cv.ocdnet.utils.linear_activation import LinearActivation, QuantizedConv2d
 
 QUANT = False
 if QUANT:
-    from pytorch_quantization.nn import QuantLinear, TensorQuantizer
+    from modelopt.torch.quantization.nn.modules.quant_linear import QuantLinear
+    from modelopt.torch.quantization.nn.modules.tensor_quantizer import TensorQuantizer
 
 
 def _cfg(url='', **kwargs):

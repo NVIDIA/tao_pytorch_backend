@@ -27,8 +27,7 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.fx_features import register_notrace_function
-from timm.models.helpers import build_model_with_cfg
+from timm.models import register_notrace_function, build_model_with_cfg
 from timm.models.vision_transformer import checkpoint_filter_fn, init_weights_vit_timm
 from timm.layers import PatchEmbed, Mlp, DropPath, _assert, trunc_normal_, to_2tuple
 

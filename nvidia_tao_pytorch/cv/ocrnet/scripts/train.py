@@ -21,9 +21,10 @@ from pytorch_lightning import Trainer
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.ocrnet.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.ocrnet.dataloader.pl_ocr_data_module import OCRDataModule
 from nvidia_tao_pytorch.cv.ocrnet.model.pl_ocrnet import OCRNetModel
+from nvidia_tao_pytorch.cv.ocrnet.utils.utils import quantize_model
 
 
 def run_experiment(experiment_spec: ExperimentConfig):
@@ -34,27 +35,22 @@ def run_experiment(experiment_spec: ExperimentConfig):
     if "val_gt_file" in experiment_spec["dataset"]:
         if experiment_spec["dataset"]["val_gt_file"] == "":
             experiment_spec["dataset"]["val_gt_file"] = None
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_spec)
-
-    total_epochs = experiment_spec.train.num_epochs
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_spec)
 
     dm = OCRDataModule(experiment_spec)
     dm.setup(stage='fit')
     ocrnet_model = OCRNetModel(experiment_spec, dm)
+    if experiment_spec.model.quantize:
+        quantize_model(ocrnet_model, dm)
+    print(ocrnet_model.model)
     clip_grad = experiment_spec.train.clip_grad_norm
     distributed_strategy = 'auto'
-    if len(gpus) > 1:
-        distributed_strategy = experiment_spec.train.distributed_strategy
-    val_inter = experiment_spec.train.validation_interval
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=gpus,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=val_inter,
-                      default_root_dir=results_dir,
-                      enable_checkpointing=False,
+    if len(trainer_kwargs['devices']) > 1:
+        distributed_strategy = experiment_spec.train.distributed_strategy
+
+    trainer = Trainer(**trainer_kwargs,
                       strategy=distributed_strategy,
-                      accelerator='gpu',
                       num_sanity_val_steps=0,
                       gradient_clip_val=clip_grad)
 

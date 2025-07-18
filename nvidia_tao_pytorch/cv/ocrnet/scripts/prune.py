@@ -22,7 +22,7 @@ import torch
 
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.ocrnet.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.ocrnet.default_config import ExperimentConfig
 
 
 def legacy_pruner(opt, model, device):

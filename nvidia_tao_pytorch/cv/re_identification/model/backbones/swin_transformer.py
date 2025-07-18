@@ -613,7 +613,6 @@ class PatchEmbed(BaseModule):
         bias=True,
         norm_cfg=None,
         input_size=None,
-        init_cfg=None,
     ):
         """Initializes the PatchEmbed module.
 
@@ -636,8 +635,6 @@ class PatchEmbed(BaseModule):
             input_size (int | tuple | None): The size of input, which will be
                 used to calculate the out size. Only work when `dynamic_size`
                 is False. Default: None.
-            init_cfg (`mmcv.ConfigDict`, optional): The Config for initialization.
-                Default: None.
         """
         super(PatchEmbed, self).__init__()
 
@@ -1468,8 +1465,7 @@ class SwinTransformer(BaseModule):
             conv_type='Conv2d',
             kernel_size=patch_size,
             stride=strides[0],
-            norm_cfg=norm_cfg if patch_norm else None,
-            init_cfg=None)
+            norm_cfg=norm_cfg if patch_norm else None)
 
         if self.use_abs_pos_embed:
             patch_row = pretrain_img_size[0] // patch_size
@@ -1576,7 +1572,7 @@ class SwinTransformer(BaseModule):
         for i in range(1, self.frozen_stages + 1):
 
             if (i - 1) in self.out_indices:
-                norm_layer = getattr(self, f'norm{i-1}')
+                norm_layer = getattr(self, f'norm{i - 1}')
                 norm_layer.eval()
                 for param in norm_layer.parameters():
                     param.requires_grad = False
@@ -1608,7 +1604,7 @@ class SwinTransformer(BaseModule):
                     constant_init(m.bias, 0)
                     constant_init(m.weight, 1.0)
         else:
-            ckpt = torch.load(pretrained, map_location='cpu')
+            ckpt = torch.load(pretrained, map_location='cpu', weights_only=False)
             if "state_dict_encrypted" in ckpt:
                 if ckpt.get("state_dict_encrypted", False):
                     # Retrieve encryption key from TLTPyTorchCookbook.

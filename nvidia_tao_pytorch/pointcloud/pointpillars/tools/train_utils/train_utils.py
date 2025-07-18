@@ -15,6 +15,7 @@
 """Training utilities for PointPillars."""
 import glob
 import os
+import shutil
 import struct
 import tempfile
 import time
@@ -137,17 +138,20 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
             )
 
             # save trained model
+            suffix = 'pth'
+            if key:
+                suffix = 'tlt'
             trained_epoch = cur_epoch + 1
             if trained_epoch % ckpt_save_interval == 0 and rank == 0:
 
-                ckpt_list = glob.glob(str(ckpt_save_dir / 'checkpoint_epoch_*.tlt'))
+                ckpt_list = glob.glob(str(ckpt_save_dir / f'checkpoint_epoch_*.{suffix}'))
                 ckpt_list.sort(key=os.path.getmtime)
 
                 if ckpt_list.__len__() >= max_ckpt_save_num:
                     for cur_file_idx in range(0, len(ckpt_list) - max_ckpt_save_num + 1):
                         os.remove(ckpt_list[cur_file_idx])
 
-                ckpt_name = ckpt_save_dir / ('checkpoint_epoch_%d.tlt' % trained_epoch)
+                ckpt_name = ckpt_save_dir / (f'checkpoint_epoch_{trained_epoch}.{suffix}')
                 save_checkpoint(
                     checkpoint_model(model, optimizer, trained_epoch, accumulated_iter),
                     ckpt_name,
@@ -228,5 +232,8 @@ def save_checkpoint(state, filename, key):
     handle, temp_name = tempfile.mkstemp(".tlt")
     os.close(handle)
     torch.save(state, temp_name)
-    encrypt_pytorch(temp_name, filename, key)
-    os.remove(temp_name)
+    if key:
+        encrypt_pytorch(temp_name, filename, key)
+        os.remove(temp_name)
+    else:
+        shutil.move(temp_name, filename)

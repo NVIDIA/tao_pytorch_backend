@@ -1,0 +1,71 @@
+results_dir: ???
+wandb:
+  enable: False
+train:
+  seed: 47
+  resume_training_checkpoint_path: null
+  num_epochs: 50
+  num_nodes: 1
+  num_gpus: 8
+  gpu_ids: [0,1,2,3,4,5,6,7]
+  validation_interval: 1
+  checkpoint_interval: 1
+  tensorboard:
+    enabled: True
+  optim:
+    lr: 0.0005
+    optim: "adamw"
+    policy: "step"
+    weight_decay: 0.001
+    betas: [0.0, 0.9]
+    skip_names: ['PatchEmbed']
+distill:
+  teacher:
+    backbone:
+      type: "vit_large_patch14_dinov2_swiglu"
+      pretrained_backbone_path: ???
+      freeze_backbone: True
+  pretrained_teacher_model_path: ???
+evaluate:
+  checkpoint: /home/scratch.p3/yuw/tmp/nvdinov2_epoch_10.pth
+model:
+  backbone:
+    type: "vit_large_patch14_dinov2_swiglu"
+    freeze_backbone: False
+  head:
+    type: "TAOLinearClsHead"
+    binary: False
+    topk: [1, 5]
+    loss:
+      type: CrossEntropyLoss
+dataset:
+  dataset: "CLDataset"
+  root_dir: /dataset/imagenet2012
+  batch_size: 64
+  workers: 2
+  num_classes: 1000
+  img_size: 448
+  augmentation:
+    random_flip:
+      vflip_probability: 0
+      hflip_probability: 0.5
+      enable: True
+    random_rotate:
+      rotate_probability: 0.5
+      angle_list: [90, 180, 270]
+      enable: False
+    random_color:
+      brightness: 0.4
+      contrast: 0.4
+      saturation: 0.4
+      enable: True
+    with_scale_random_crop:
+      enable: False
+    with_random_crop: True
+    with_random_blur: False
+  train_dataset:
+    images_dir: /dataset/imagenet2012/train
+  val_dataset:
+    images_dir: /dataset/imagenet2012/train
+  test_dataset:
+    images_dir: /dataset/imagenet2012/test

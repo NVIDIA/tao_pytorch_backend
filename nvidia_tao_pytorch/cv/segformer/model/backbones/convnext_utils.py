@@ -1,10 +1,3 @@
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
-#
-# This work is made available under the Nvidia Source Code License-NC.
-# To view a copy of this license, visit
-# https://github.com/NVlabs/FAN/blob/main/LICENSE
-
-# -------------------------------------------------------------------------
 # MIT License
 #
 # Copyright (c) 2021 Facebook, Inc. and its affiliates.
@@ -29,6 +22,21 @@
 #
 # Modified by Daquan Zhou
 # -------------------------------------------------------------------------
+#
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """ ConvNeXt
 
 Paper: `A ConvNet for the 2020s` - https://arxiv.org/pdf/2201.03545.pdf
@@ -43,10 +51,15 @@ from functools import partial
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from timm.models.fx_features import register_notrace_module
 from timm.models.helpers import named_apply, build_model_with_cfg
-from timm.models.layers import ClassifierHead, SelectAdaptivePool2d, DropPath
-from nvidia_tao_pytorch.cv.backbone.convnext_utils import checkpoint_filter_fn, _init_weights, LayerNorm2d, ConvMlp
+from timm.layers import trunc_normal_, ClassifierHead, SelectAdaptivePool2d, DropPath, Mlp
+
+# Model_registry will add each entrypoint fn to this
+__all__ = ['ConvNeXt']
 
 
 def _cfg(url='', **kwargs):
@@ -78,27 +91,67 @@ default_cfgs = dict(
 )
 
 
-class Mlp(nn.Module):
-    """MLP Module."""
+def _is_contiguous(tensor: torch.Tensor) -> bool:
+    """Check if the tensor is continguous for torch jit script purpose"""
+    # jit is oh so lovely :/
+    # if torch.jit.is_tracing():
+    #     return True
+    if torch.jit.is_scripting():
+        return tensor.is_contiguous()
+    return tensor.is_contiguous(memory_format=torch.contiguous_format)
 
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
-        """Init Function."""
+
+class ConvMlp(nn.Module):
+    """ MLP using 1x1 convs that keeps spatial dims"""
+
+    def __init__(
+            self, in_features, hidden_features=None, out_features=None, act_layer=nn.ReLU, norm_layer=None, drop=0.):
+        """Initialize the ConvMlp Class.
+
+        Args:
+            in_features: number of input features
+            hidden_feautres: number of hidden features
+            out_features: number of output features
+            act_layer: activation layer class to be used
+            norm_layer: normalization layer class to be used
+            drop: dropout probability
+        """
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.fc2 = nn.Linear(hidden_features, out_features)
-
+        self.fc1 = nn.Conv2d(in_features, hidden_features, kernel_size=1, bias=True)
+        self.norm = norm_layer(hidden_features) if norm_layer else nn.Identity()
         self.act = act_layer()
+        self.fc2 = nn.Conv2d(hidden_features, out_features, kernel_size=1, bias=True)
         self.drop = nn.Dropout(drop)
 
     def forward(self, x):
-        """Forward Function."""
+        """Forward function"""
         x = self.fc1(x)
+        x = self.norm(x)
         x = self.act(x)
         x = self.drop(x)
         x = self.fc2(x)
-        x = self.drop(x)
+        return x
+
+
+@register_notrace_module
+class LayerNorm2d(nn.LayerNorm):
+    """ LayerNorm for channels_first tensors with 2d spatial dimensions (ie N, C, H, W)."""
+
+    def __init__(self, normalized_shape, eps=1e-6):
+        """Initialize the LayerNorm2d Class."""
+        super().__init__(normalized_shape, eps=eps)
+
+    def forward(self, x) -> torch.Tensor:
+        """Forward function"""
+        if _is_contiguous(x):
+            return F.layer_norm(
+                x.permute(0, 2, 3, 1), self.normalized_shape, self.weight, self.bias, self.eps).permute(0, 3, 1, 2)
+
+        s, u = torch.var_mean(x, dim=1, keepdim=True)
+        x = (x - u) * torch.rsqrt(s + self.eps)
+        x = x * self.weight[:, None, None] + self.bias[:, None, None]
         return x
 
 
@@ -111,16 +164,15 @@ class ConvNeXtBlock(nn.Module):
     Unlike the official impl, this one allows choice of 1 or 2, 1x1 conv can be faster with appropriate
     choice of LayerNorm impl, however as model size increases the tradeoffs appear to change and nn.Linear
     is a better choice. This was observed with PyTorch 1.10 on 3090 GPU, it could change over time & w/ different HW.
+
+    Args:
+        dim (int): Number of input channels.
+        drop_path (float): Stochastic depth rate. Default: 0.0
+        ls_init_value (float): Init value for Layer Scale. Default: 1e-6.
     """
 
     def __init__(self, dim, drop_path=0., ls_init_value=1e-6, conv_mlp=True, mlp_ratio=4, norm_layer=None):
-        """Initialize ConvNext Block.
-
-        Args:
-            dim (int): Number of input channels.
-            drop_path (float): Stochastic depth rate. Default: 0.0
-            ls_init_value (float): Init value for Layer Scale. Default: 1e-6.
-        """
+        """Initialize the ConvNeXtBlock Class."""
         super().__init__()
         if not norm_layer:
             norm_layer = partial(LayerNorm2d, eps=1e-6) if conv_mlp else partial(nn.LayerNorm, eps=1e-6)
@@ -133,7 +185,7 @@ class ConvNeXtBlock(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
-        """Forward function."""
+        """Forward function"""
         shortcut = x
         x = self.conv_dw(x)
         if self.use_conv_mlp:
@@ -151,17 +203,11 @@ class ConvNeXtBlock(nn.Module):
 
 
 class ConvNeXtStage(nn.Module):
-    """ConvNeXt Stage."""
 
     def __init__(
             self, in_chs, out_chs, stride=2, depth=2, dp_rates=None, ls_init_value=1.0, conv_mlp=True,
             norm_layer=None, cl_norm_layer=None, cross_stage=False):
-        """Initialize ConvNext Stage.
-
-        Args:
-            in_chs (int): Number of input channels.
-            out_chs (int): Number of output channels.
-        """
+        """Initialize the ConvNeXtStage Class."""
         super().__init__()
 
         if in_chs != out_chs or stride > 1:
@@ -180,15 +226,25 @@ class ConvNeXtStage(nn.Module):
         )
 
     def forward(self, x):
-        """Forward function."""
+        """Forward function"""
         x = self.downsample(x)
         x = self.blocks(x)
         return x
 
 
 class ConvNeXt(nn.Module):
-    """ ConvNeXt
-    A PyTorch impl of : `A ConvNet for the 2020s`  - https://arxiv.org/pdf/2201.03545.pdf
+    r""" ConvNeXt
+        A PyTorch impl of : `A ConvNet for the 2020s`  - https://arxiv.org/pdf/2201.03545.pdf
+
+    Args:
+        in_chans (int): Number of input image channels. Default: 3
+        num_classes (int): Number of classes for classification head. Default: 1000
+        depths (tuple(int)): Number of blocks at each stage. Default: [3, 3, 9, 3]
+        dims (tuple(int)): Feature dimension at each stage. Default: [96, 192, 384, 768]
+        drop_rate (float): Head dropout rate
+        drop_path_rate (float): Stochastic depth rate. Default: 0.
+        ls_init_value (float): Init value for Layer Scale. Default: 1e-6.
+        head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
     """
 
     def __init__(
@@ -196,19 +252,9 @@ class ConvNeXt(nn.Module):
             depths=(3, 3, 9, 3), dims=(96, 192, 384, 768),  ls_init_value=1e-6, conv_mlp=True, use_head=True,
             head_init_scale=1., head_norm_first=False, norm_layer=None, drop_rate=0., drop_path_rate=0.,
     ):
-        """ Initialize the ConvNext Class
-        Args:
-            in_chans (int): Number of input image channels. Default: 3
-            num_classes (int): Number of classes for classification head. Default: 1000
-            depths (tuple(int)): Number of blocks at each stage. Default: [3, 3, 9, 3]
-            dims (tuple(int)): Feature dimension at each stage. Default: [96, 192, 384, 768]
-            drop_rate (float): Head dropout rate
-            drop_path_rate (float): Stochastic depth rate. Default: 0.
-            ls_init_value (float): Init value for Layer Scale. Default: 1e-6.
-            head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
-        """
+        """Initialize the ConvNeXt Class."""
         super().__init__()
-        assert output_stride == 32
+        assert output_stride == 32, 'ConvNeXt output_stride != 32 currently not supported'
         if norm_layer is None:
             norm_layer = partial(LayerNorm2d, eps=1e-6)
             cl_norm_layer = norm_layer if conv_mlp else partial(nn.LayerNorm, eps=1e-6)
@@ -270,11 +316,11 @@ class ConvNeXt(nn.Module):
         named_apply(partial(_init_weights, head_init_scale=head_init_scale), self)
 
     def get_classifier(self):
-        """Returns classifier of ConvNeXt."""
+        """Returns classifier"""
         return self.head.fc
 
     def reset_classifier(self, num_classes=0, global_pool='avg'):
-        """Redefine the classification head"""
+        """Redefine classifier of FAN"""
         if isinstance(self.head, ClassifierHead):
             # norm -> global pool -> fc
             self.head = ClassifierHead(
@@ -290,7 +336,7 @@ class ConvNeXt(nn.Module):
             ]))
 
     def forward_features(self, x, return_feat=False):
-        """Forward Features."""
+        """Extract features"""
         x = self.stem(x)
         out_list = []
         # import pdb; pdb.set_trace()
@@ -302,14 +348,49 @@ class ConvNeXt(nn.Module):
         return x, out_list if return_feat else x
 
     def forward(self, x):
-        """Forward Function."""
+        """Forward function"""
         x = self.forward_features(x)
         x = self.head(x)
         return x
 
 
+def _init_weights(module, name=None, head_init_scale=1.0):
+    """Initialize weights"""
+    if isinstance(module, nn.Conv2d):
+        trunc_normal_(module.weight, std=.02)
+        nn.init.constant_(module.bias, 0)
+    elif isinstance(module, nn.Linear):
+        trunc_normal_(module.weight, std=.02)
+        nn.init.constant_(module.bias, 0)
+        if name and 'head.' in name:
+            module.weight.data.mul_(head_init_scale)
+            module.bias.data.mul_(head_init_scale)
+
+
+def checkpoint_filter_fn(state_dict, model):
+    """ Remap FB checkpoints -> timm """
+    if 'model' in state_dict:
+        state_dict = state_dict['model']
+    out_dict = {}
+    import re
+    for k, v in state_dict.items():
+        k = k.replace('downsample_layers.0.', 'stem.')
+        k = re.sub(r'stages.([0-9]+).([0-9]+)', r'stages.\1.blocks.\2', k)
+        k = re.sub(r'downsample_layers.([0-9]+).([0-9]+)', r'stages.\1.downsample.\2', k)
+        k = k.replace('dwconv', 'conv_dw')
+        k = k.replace('pwconv', 'mlp.fc')
+        k = k.replace('head.', 'head.fc.')
+        if k in model.state_dict().keys():
+            if k.startswith('norm.'):
+                k = k.replace('norm', 'head.norm')
+            if v.ndim == 2 and 'head' not in k:
+                model_shape = model.state_dict()[k].shape
+                v = v.reshape(model_shape)
+            out_dict[k] = v
+    return out_dict
+
+
 def _create_hybrid_backbone(variant='convnext_base_in22k', pretrained=False, **kwargs):
-    """Helper function to create the hybrid model."""
     model = build_model_with_cfg(
         ConvNeXt, variant, pretrained,
         pretrained_cfg=default_cfgs[variant],

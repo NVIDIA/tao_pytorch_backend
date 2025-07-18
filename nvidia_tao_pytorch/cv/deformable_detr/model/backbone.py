@@ -18,8 +18,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torchvision.models._utils import IntermediateLayerGetter
-from typing import Optional
-from typing import Dict, List
+from typing import Optional, Dict
 import numpy as np
 
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
@@ -232,7 +231,4 @@ class Joiner(nn.Sequential):
 
         """
         xs = self[0](input_tensors)
-        out: List[torch.Tensor] = []
-        for _, x in sorted(xs.items()):
-            out.append(x)
-        return out
+        return list(xs.values())

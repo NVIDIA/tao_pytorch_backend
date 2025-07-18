@@ -20,25 +20,9 @@ import onnx
 from onnxsim import simplify
 import os
 
-try:
-    import tensorrt as trt  # pylint: disable=unused-import  # noqa: F401
-    from nvidia_tao_pytorch.pointcloud.pointpillars.tools.export.tensorrt import (
-        Calibrator,
-        ONNXEngineBuilder
-    )
-    trt_available = True
-except:  # noqa: E722
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.warning(
-        "Failed to import TensorRT package, exporting TLT to a TensorRT engine "
-        "will not be available."
-    )
-    trt_available = False
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.core.path_utils import expand_path
-from nvidia_tao_pytorch.pointcloud.pointpillars.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.pointpillars.default_config import ExperimentConfig
 from nvidia_tao_pytorch.pointcloud.pointpillars.tools.export.simplifier_onnx import (
     simplify_onnx
 )
@@ -233,11 +217,7 @@ spec_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 )
 def main(cfg: ExperimentConfig) -> None:
     """Main function."""
-    if not trt_available:
-        raise ValueError("Failed to import tensorrt library, exporting to a Tensorrt engine not possible")
-    # INT8 is not yet fully supported, raise error if one tries to use it
-    if cfg.export.data_type.lower() == "int8":
-        raise ValueError("INT8 is not supported for PointPillars, please use FP32/FP16")
+    torch.multiprocessing.set_start_method('spawn')
     logger = common_utils.create_logger()
     logger.info('Exporting the model...')
     gpu_id = cfg.export.gpu_id or 0
@@ -330,39 +310,6 @@ def main(cfg: ExperimentConfig) -> None:
         status_level=status_logging.Status.RUNNING,
         message=f'Model exported to {output_file}'
     )
-    # Save TRT engine
-    if cfg.export.save_engine:
-        if cfg.export.data_type.lower() == "int8":
-            if cfg.export.cal_data_path:
-                calibrator = Calibrator(
-                    cfg.export.cal_data_path,
-                    cfg.export.cal_cache_file,
-                    cfg.export.cal_num_batches,
-                    cfg.export.batch_size,
-                    cfg.inference.max_points_num
-                )
-            else:
-                raise ValueError("Cannot find caliration data path")
-        else:
-            calibrator = None
-        builder = ONNXEngineBuilder(
-            tmp_onnx_file,
-            max_batch_size=cfg.export.batch_size,
-            min_batch_size=cfg.export.batch_size,
-            opt_batch_size=cfg.export.batch_size,
-            dtype=cfg.export.data_type,
-            max_workspace_size=cfg.export.workspace_size * 1024 * 1024,
-            dynamic_batch=True,
-            calibrator=calibrator
-        )
-        engine = builder.get_engine()
-        with open(expand_path(cfg.export.save_engine), "wb") as outf:
-            outf.write(engine.serialize())
-        logger.info(f'TensorRT engine saved to {cfg.export.save_engine}')
-        status_logging.get_status_logger().write(
-            status_level=status_logging.Status.RUNNING,
-            message=f'TensorRT engine saved to {cfg.export.save_engine}'
-        )
     if output_file.endswith('.etlt') and cfg.key:
         os.remove(tmp_onnx_file)
 

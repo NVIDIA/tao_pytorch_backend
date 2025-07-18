@@ -329,7 +329,6 @@ class GDINOPlModel(TAOLightningModule):
             self.status_logging_dict = {}
             self.status_logging_dict["val_mAP"] = str(mAP)
             self.status_logging_dict["val_mAP50"] = str(mAP50)
-            self.status_logging_dict["current_epoch"] = str(self.current_epoch)
             self.status_logging_dict["val_loss"] = average_val_loss
             status_logging.get_status_logger().kpi = self.status_logging_dict
             status_logging.get_status_logger().write(

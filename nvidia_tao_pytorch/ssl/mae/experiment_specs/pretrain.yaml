@@ -1,0 +1,27 @@
+results_dir: /tao_experiments/fcmae/pretrain
+dataset:
+  batch_size: 16
+  train_data_sources: /datasets/split/train
+  val_data_sources: /datasets/split/val
+  test_data_sources: /datasets/split/test
+  augmentation:
+    smoothing: 0.1
+    cutmix: 1.0
+    mixup: 0.8
+    input_size: 224
+train:
+  stage: "pretrain"
+  precision: 'bf16'
+  num_gpus: 4
+  checkpoint_interval: 5
+  validation_interval: 5
+  num_epochs: 100
+  optim:
+    type: "AdamW"
+    lr: 0.002
+    weight_decay: 0.05
+    layer_decay: 0.65
+    lr_scheduler: "cosine"
+    warmup_epochs: 5
+model:
+  arch: convnextv2_base

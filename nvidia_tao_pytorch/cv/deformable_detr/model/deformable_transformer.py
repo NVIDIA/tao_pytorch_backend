@@ -31,7 +31,7 @@ class DeformableTransformer(nn.Module):
                  num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=1024, dropout=0.3,
                  activation="relu", return_intermediate_dec=True,
                  num_feature_levels=4, dec_n_points=4,  enc_n_points=4,
-                 export=False, activation_checkpoint=True):
+                 export=False, export_format='onnx', activation_checkpoint=True):
         """Initialize Deformable Transformer Module.
 
         Args:
@@ -47,6 +47,7 @@ class DeformableTransformer(nn.Module):
             dec_n_points (int): number of reference points in the decoder.
             enc_n_points (int): number of reference points in the encoder.
             export (bool): flag to indicate if the current model is being used for ONNX export.
+            export_format (str): format for exporting (e.g. 'onnx' or 'xdl')
             activation_checkpoint (bool): flag to indicate if activation checkpointing is used.
         """
         super().__init__()
@@ -54,6 +55,7 @@ class DeformableTransformer(nn.Module):
         self.d_model = d_model
         self.nhead = nhead
         self.export = export
+        self.export_format = export_format
         self.activation_checkpoint = activation_checkpoint
 
         encoder_args = {
@@ -64,11 +66,12 @@ class DeformableTransformer(nn.Module):
             "n_levels": num_feature_levels,
             "n_heads": nhead,
             "n_points": enc_n_points,
-            "export": self.export
+            "export": self.export,
         }
 
         decoder_args = dict(encoder_args)
         decoder_args["n_points"] = dec_n_points
+        decoder_args["export_format"] = self.export_format
 
         self.encoder = DeformableTransformerEncoder(num_encoder_layers, encoder_args,
                                                     export=self.export, activation_checkpoint=self.activation_checkpoint)
@@ -241,6 +244,9 @@ class DeformableTransformerEncoder(nn.Module):
             else:
                 H_, W_ = spatial_shapes[lvl, 0], spatial_shapes[lvl, 1]
 
+            torch._check(int(H_ * W_) != int(W_))
+            torch._check(int(W_) > 1)
+
             range_y = torch.arange(H_, dtype=torch.int32, device=device).float() + 0.5
             range_x = torch.arange(W_, dtype=torch.int32, device=device).float() + 0.5
 
@@ -253,6 +259,8 @@ class DeformableTransformerEncoder(nn.Module):
             reference_points_list.append(ref)
         reference_points = torch.cat(reference_points_list, 1)
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
+
+        torch._check(int(reference_points.shape[1]) < 9223372036854775807)
 
         return reference_points
 
@@ -280,7 +288,8 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
     def __init__(self, d_model=256, d_ffn=1024,
                  dropout=0.3, activation="relu",
-                 n_levels=4, n_heads=8, n_points=4, export=False):
+                 n_levels=4, n_heads=8, n_points=4,
+                 export=False, export_format='onnx'):
         """Initializes the Transformer Decoder Layer.
 
         Args:
@@ -291,16 +300,18 @@ class DeformableTransformerDecoderLayer(nn.Module):
             n_heads (int): number of heads.
             n_points (int): number of encoder layers.
             export (bool): flag to indicate if the current model is being used for ONNX export.
+            export_format (str): format for exporting (e.g. 'onnx' or 'xdl')
         """
         super().__init__()
         self.export = export
+        self.export_format = export_format
         # cross attention
         self.cross_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
         # self attention
-        if self.export:
+        if self.export and self.export_format != "xdl":
             # Starting from PyT 1.14, _scaled_dot_product_attention has been switched to C++ backend
             # which is not exportable as ONNX operator
             # However, the training / eval time can be greatly optimized by Torch selecting the optimal

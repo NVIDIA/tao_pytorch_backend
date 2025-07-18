@@ -69,6 +69,7 @@ class ChangeNetPlModel(TAOLightningModule):
         self.cls_weight = self.train_config.classify.cls_weight
         self.n_class = self.dataset_config.num_classes
         self.batch_size = self.dataset_config.batch_size
+        self.num_golden = self.dataset_config.num_golden
 
         #  training log
         self.epoch_acc = 0
@@ -183,11 +184,19 @@ class ChangeNetPlModel(TAOLightningModule):
             "compare_sample", img_in1,
             logging_frequency=self.tensorboard.infrequent_logging_frequency
         )
-        self.visualize_image(
-            "golden_sample", img_in2,
-            logging_frequency=self.tensorboard.infrequent_logging_frequency
-        )
+        if self.num_golden > 1:
+            for i in range(img_in2.shape[1]):
+                self.visualize_image(
+                    f"golden_sample{i}", img_in2[:, i],
+                    logging_frequency=self.tensorboard.infrequent_logging_frequency
+                )
+        else:
+            self.visualize_image(
+                "golden_sample", img_in2,
+                logging_frequency=self.tensorboard.infrequent_logging_frequency
+            )
         _ = self._forward_pass(batch)
+
         loss, siam_score = self._backward_G()
         self.train_metrics.update(siam_score, label)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)

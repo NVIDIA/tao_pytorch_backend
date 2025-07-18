@@ -16,43 +16,42 @@
 Evaluation of Segformer model.
 """
 import os
+from pytorch_lightning import Trainer
 
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
-from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.cv.segformer.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.segformer.utils.config import MMSegmentationConfig
-
-# Triggers build of custom modules
-from nvidia_tao_pytorch.cv.segformer.model import * # noqa pylint: disable=W0401, W0614
-from nvidia_tao_pytorch.cv.segformer.dataloader import * # noqa pylint: disable=W0401, W0614
-
-from mmengine.runner import Runner
-from mmengine.config import Config
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
+from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
+from nvidia_tao_core.config.segformer.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.segformer.dataloader.pl_segformer_data_module import SFDataModule
+from nvidia_tao_pytorch.cv.segformer.model.segformer_pl_model import SegFormerPlModel
 
 
-def run_experiment(experiment_config):
-    """Start the evaluate.
-    Args:
-        experiment_config (Dict): Config dictionary containing epxeriment parameters
-        results_dir (str): Results dir to save the evaluation result
+def run_experiment(experiment_config, key):
+    """Run experiment."""
+    model_path, trainer_kwargs = initialize_evaluation_experiment(experiment_config, key)
 
-    """
-    results_dir, model_path, _ = initialize_evaluation_experiment(experiment_config)
+    if model_path.endswith('.tlt') or model_path.endswith('.pth'):
+        # build dataloader
+        dm = SFDataModule(experiment_config.dataset.segment)
+        dm.setup(stage="test")
 
-    mmseg_config = MMSegmentationConfig(experiment_config, phase="evaluate")
-    eval_cfg = mmseg_config.updated_config
+        # build model and load from the given checkpoint
+        model = SegFormerPlModel.load_from_checkpoint(
+            model_path,
+            map_location="cpu",
+            experiment_spec=experiment_config
+        )
 
-    eval_cfg["work_dir"] = results_dir
-    # This is provided in notebook
-    eval_cfg["load_from"] = model_path
+    elif model_path.endswith('.engine'):
+        raise NotImplementedError("TensorRT evaluation is supported through tao-deploy. Please use tao-deploy to generate TensorRT engine and run evaluation.")
 
-    eval_cfg = Config(eval_cfg)
-    runner = Runner.from_cfg(eval_cfg)
+    else:
+        raise NotImplementedError("Model path format is only supported for .tlt or .pth")
 
-    # start testing
-    metrics = runner.test()
-    print(metrics)
+    trainer = Trainer(**trainer_kwargs)
+
+    trainer.test(model, datamodule=dm)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,12 +60,17 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Load experiment specification, additially using schema for validation/retrieving the default values.
 # --config_path and --config_name will be provided by the entrypoint script.
 @hydra_runner(
-    config_path=os.path.join(spec_root, "experiment_specs"), config_name="test_isbi", schema=ExperimentConfig
+    config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment_spec", schema=ExperimentConfig
 )
 @monitor_status(name="Segformer", mode="evaluate")
 def main(cfg: ExperimentConfig) -> None:
     """Run the training process."""
-    run_experiment(experiment_config=cfg)
+    # Obfuscate logs.
+    obfuscate_logs(cfg)
+    run_experiment(
+        experiment_config=cfg,
+        key=cfg.encryption_key
+    )
 
 
 if __name__ == "__main__":

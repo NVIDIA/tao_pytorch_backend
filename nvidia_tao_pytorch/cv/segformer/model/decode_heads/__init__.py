@@ -12,6 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Init module."""
-
-from .segformer_head import *  # noqa: F403, F401
+"""Decoder head module."""

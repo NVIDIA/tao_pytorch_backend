@@ -18,14 +18,14 @@ import math
 import warnings
 from typing import Optional
 import os
+import sys
 
 import torch
 import torch.nn as nn
 from torch.nn.init import constant_, xavier_uniform_
 
-from mmcv.ops.multi_scale_deform_attn import multi_scale_deformable_attn_pytorch
-
 from nvidia_tao_pytorch.cv.deformable_detr.model.ops.functions import MSDeformAttnFunction, load_ops
+from nvidia_tao_pytorch.cv.deformable_detr.model.ops.modules import multi_scale_deformable_attn_pytorch
 
 
 # helpers
@@ -91,7 +91,7 @@ class GDINOMultiScaleDeformableAttention(nn.Module):
         self.init_weights()
         # load custom ops
         ops_dir = os.path.dirname(os.path.abspath(__file__))
-        lib_name = "MultiScaleDeformableAttention.cpython-310-x86_64-linux-gnu.so"
+        lib_name = f"MultiScaleDeformableAttention.cpython-{sys.version_info.major}{sys.version_info.minor}-{os.uname().machine}-linux-gnu.so"
         load_ops(ops_dir, lib_name)
 
     def _reset_parameters(self):

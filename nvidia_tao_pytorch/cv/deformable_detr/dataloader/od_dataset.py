@@ -157,7 +157,7 @@ class ODDataset(Dataset):
 class ODPredictDataset(Dataset):
     """Base Object Detection Predict Dataset Class."""
 
-    def __init__(self, dataset_list: List[Any], label_map_path: str, transforms=None):
+    def __init__(self, dataset_list: List[Any], label_map_path: str, transforms=None, start_from_one=True):
         """Initialize the Object Detetion Dataset Class for inference.
 
         Unlike ODDataset, this class does not require COCO JSON file.
@@ -178,7 +178,7 @@ class ODPredictDataset(Dataset):
         # Load classmap and reformat it to COCO categories format
         with open(label_map_path, "r") as f:
             classmap = [line.rstrip() for line in f.readlines()]
-        self.label_map = [{"id": i + 1, "name": c} for i, c in enumerate(classmap)]
+        self.label_map = [{"id": i + int(start_from_one), "name": c} for i, c in enumerate(classmap)]
 
         self.ids = []
         for seq in dataset_list:

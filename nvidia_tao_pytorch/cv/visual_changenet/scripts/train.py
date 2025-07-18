@@ -19,50 +19,29 @@ import os
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
-from nvidia_tao_pytorch.core.path_utils import expand_path
 from nvidia_tao_pytorch.core.tlt_logging import logging, obfuscate_logs
 from nvidia_tao_pytorch.cv.optical_inspection.dataloader.pl_oi_data_module import OIDataModule
-from nvidia_tao_pytorch.cv.visual_changenet.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.visual_changenet.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.dataloader.pl_changenet_data_module import CNDataModule
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.cn_pl_model import ChangeNetPlModel as ChangeNetPlSegment
 from nvidia_tao_pytorch.cv.visual_changenet.classification.models.cn_pl_model import ChangeNetPlModel as ChangeNetPlClassifier
 
 from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import TensorBoardLogger
-
-
-# TODO: @zbhat modify this to get model with best val accuracy for evaluation
-# TODO: @seanf this isn't used anywhere, but is it still necessary given how we now save checkpoints?
-def get_latest_tlt_model(results_dir):
-    """Utility function to return the latest tlt model in a dir."""
-    trainable_ckpts = [int(item.split('.')[0].split('_')[1]) for item in os.listdir(results_dir)
-                       if item.endswith(".tlt")]
-    num_ckpts = len(trainable_ckpts)
-    if num_ckpts == 0:
-        return None
-    latest_step = sorted(trainable_ckpts, reverse=True)[0]
-    latest_checkpoint = expand_path(os.path.join(results_dir, f"iter_{latest_step}.tlt"))
-    if not os.path.isfile(latest_checkpoint):
-        raise FileNotFoundError("Checkpoint file not found at {}")
-    return latest_checkpoint
 
 
 def run_experiment(experiment_config, key):
     """Start the training."""
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config, key)
 
     task = experiment_config.task
     num_nodes = experiment_config.train.num_nodes
-    total_epochs = experiment_config.train.num_epochs
-    validation_interval = experiment_config.train.validation_interval
     enable_tensorboard = experiment_config.train.tensorboard.enabled
 
     # Load pretrained model as starting point if pretrained path is provided
     pretrained_path = experiment_config.train.pretrained_model_path
-
-    precision = '32-true'
-    sync_batchnorm = False
-    trainer_kwargs = {}
+    use_distributed_sampler = experiment_config.train.use_distributed_sampler
+    sync_batchnorm = experiment_config.train.sync_batchnorm
+    precision = experiment_config.train.precision
 
     assert task in ['segment', 'classify'], "Visual ChangeNet only supports 'segment' and 'classify' tasks."
     if task == 'classify':
@@ -80,14 +59,9 @@ def run_experiment(experiment_config, key):
         strategy = 'auto'
 
         if enable_tensorboard:
-            ptl_loggers.append(
-                TensorBoardLogger(
-                    save_dir=results_dir
-                )
-            )
             infrequent_logging_frequency = experiment_config.train.tensorboard.infrequent_logging_frequency
-            assert max(0, infrequent_logging_frequency) <= total_epochs, (
-                f"infrequent_logging_frequency {infrequent_logging_frequency} must be < num_epochs {total_epochs}"
+            assert max(0, infrequent_logging_frequency) <= trainer_kwargs['max_epochs'], (
+                f"infrequent_logging_frequency {infrequent_logging_frequency} must be < num_epochs {trainer_kwargs['max_epochs']}"
             )
             logging.info("Tensorboard logging enabled.")
         else:
@@ -107,25 +81,18 @@ def run_experiment(experiment_config, key):
             model = ChangeNetPlSegment(experiment_config)
 
         strategy = 'auto'
-        if len(gpus) > 1:
+        if len(trainer_kwargs['devices']) > 1:
             strategy = 'ddp_find_unused_parameters_true'
 
     else:
         raise NotImplementedError('Only tasks supported by Visual ChangeNet are: "segment" and "classify"')
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=gpus,
+    trainer = Trainer(**trainer_kwargs,
                       num_nodes=num_nodes,
-                      max_epochs=total_epochs,
-                      check_val_every_n_epoch=validation_interval,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
                       strategy=strategy,
                       precision=precision,
-                      use_distributed_sampler=False,
-                      sync_batchnorm=sync_batchnorm,
-                      enable_checkpointing=False,
-                      **trainer_kwargs
+                      use_distributed_sampler=use_distributed_sampler,
+                      sync_batchnorm=sync_batchnorm
                       )
 
     trainer.fit(model, dm, ckpt_path=resume_ckpt)

@@ -15,7 +15,7 @@
 """Common Training Flow"""
 
 import os
-from omegaconf import OmegaConf
+# from omegaconf import OmegaConf
 from pytorch_lightning import seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch.backends.cudnn as cudnn
@@ -24,7 +24,7 @@ from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCoo
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.mlops import check_wandb_logged_in, initialize_wandb
 from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_pytorch.core.utilities import check_and_create, get_latest_checkpoint
+from nvidia_tao_pytorch.core.utilities import get_latest_checkpoint
 
 
 def initialize_train_experiment(cfg, key=None):
@@ -32,8 +32,6 @@ def initialize_train_experiment(cfg, key=None):
     TLTPyTorchCookbook.set_passphrase(key)
 
     results_dir = cfg["results_dir"]
-    check_and_create(results_dir)
-    OmegaConf.save(cfg, os.path.join(results_dir, "experiment.yaml"))
     loggers = [TensorBoardLogger(save_dir=results_dir, version=1, name="lightning_logs")]
 
     total_epochs = cfg["train"]["num_epochs"]
@@ -88,7 +86,17 @@ def initialize_train_experiment(cfg, key=None):
             )
             loggers.append(wandb_logger)
 
-    return results_dir, resume_ckpt, gpus, loggers
+    trainer_kwargs = {'logger': loggers,
+                      'devices': gpus,
+                      'max_epochs': total_epochs,
+                      'check_val_every_n_epoch': validation_interval,
+                      'default_root_dir': results_dir,
+                      'accelerator': 'gpu',
+                      # This is false since we define our own ModelCheckpoint callbacks
+                      'enable_checkpointing': False
+                      }
+
+    return resume_ckpt, trainer_kwargs
 
 
 def initialize_evaluation_experiment(cfg, key=None):
@@ -111,7 +119,13 @@ def initialize_evaluation_experiment(cfg, key=None):
     cfg["evaluate"]["num_gpus"] = len(gpus)
     cfg["evaluate"]["gpu_ids"] = gpus
 
-    return results_dir, model_path, gpus
+    trainer_kwargs = {'devices': gpus,
+                      'default_root_dir': results_dir,
+                      'accelerator': 'gpu',
+                      'strategy': 'auto'
+                      }
+
+    return model_path, trainer_kwargs
 
 
 def initialize_inference_experiment(cfg, key=None):
@@ -135,4 +149,10 @@ def initialize_inference_experiment(cfg, key=None):
     cfg["inference"]["num_gpus"] = len(gpus)
     cfg["inference"]["gpu_ids"] = gpus
 
-    return results_dir, model_path, gpus
+    trainer_kwargs = {'devices': gpus,
+                      'default_root_dir': results_dir,
+                      'accelerator': 'gpu',
+                      'strategy': 'auto'
+                      }
+
+    return model_path, trainer_kwargs

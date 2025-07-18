@@ -21,10 +21,10 @@ import pickle  # nosec B403
 import torch
 import numpy as np
 import multiprocessing as mp
+from pytorch_lightning.utilities.rank_zero import rank_zero_info
 
 from nvidia_tao_pytorch.core.distributed.comm import get_local_rank, get_global_rank, get_local_size, local_scatter
 from nvidia_tao_pytorch.core.distributed.safe_unpickler import SafeUnpickler
-from nvidia_tao_pytorch.core.tlt_logging import logging
 
 
 class NumpySerializedList:
@@ -36,17 +36,15 @@ class NumpySerializedList:
             buffer = pickle.dumps(data, protocol=-1)
             return np.frombuffer(buffer, dtype=np.uint8)
 
-        if get_local_rank() == 0:
-            logging.info(
-                f"Serializing {len(lst)} elements to byte tensors and concatenating them all ..."
-            )
+        rank_zero_info(
+            f"Serializing {len(lst)} elements to byte tensors and concatenating them all ..."
+        )
         self._lst = [_serialize(x) for x in lst]
         self._addr = np.asarray([len(x) for x in self._lst], dtype=np.int64)
         self._addr = np.cumsum(self._addr)
         self._lst = np.concatenate(self._lst)
 
-        if get_local_rank() == 0:
-            logging.info(f"Serialized dataset takes {len(self._lst) / 1024**2:.2f} MiB")
+        rank_zero_info(f"Serialized dataset takes {len(self._lst) / 1024**2:.2f} MiB")
 
     def __len__(self):
         """__len__"""
@@ -105,7 +103,7 @@ class TorchShmSerializedList(TorchSerializedList):
         if get_local_rank() > 0:
             # Materialize the tensor from shared memory.
             self._addr, self._lst = mp.reduction.ForkingPickler.loads(handle)
-            logging.info(
-                f"Worker {get_global_rank()} obtains a dataset of length="
-                f"{len(self)} from its local leader."
-            )
+        rank_zero_info(
+            f"Worker {get_global_rank()} obtains a dataset of length="
+            f"{len(self)} from its local leader."
+        )

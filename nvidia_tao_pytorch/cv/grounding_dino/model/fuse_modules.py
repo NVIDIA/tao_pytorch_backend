@@ -17,7 +17,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.layers import DropPath
+from timm.layers import DropPath
 
 
 class BiMultiHeadAttention(nn.Module):

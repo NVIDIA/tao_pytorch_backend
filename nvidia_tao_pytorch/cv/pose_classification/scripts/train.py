@@ -20,7 +20,7 @@ from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
-from nvidia_tao_pytorch.cv.pose_classification.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.pose_classification.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.pose_classification.dataloader.pl_pc_data_module import PCDataModule
 from nvidia_tao_pytorch.cv.pose_classification.model.pl_pc_model import PoseClassificationModel
 
@@ -38,25 +38,16 @@ def run_experiment(experiment_config, key):
     Args:
         experiment_config (dict): The experiment configuration containing the model, training, and other parameters.
         key (str): The encryption key for intermediate checkpoints.
-        results_dir (str): The directory to save the trained model checkpoints and logs.
     """
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config, key)
 
     dm = PCDataModule(experiment_config)
     pc_model = PoseClassificationModel(experiment_config)
 
-    num_epochs = experiment_config['train']['num_epochs']
-    validation_interval = experiment_config['train']['validation_interval']
     grad_clip = experiment_config['train']['grad_clip']
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=gpus,
-                      max_epochs=num_epochs,
-                      check_val_every_n_epoch=validation_interval,
-                      default_root_dir=results_dir,
-                      accelerator='gpu',
+    trainer = Trainer(**trainer_kwargs,
                       strategy='auto',
-                      enable_checkpointing=False,
                       gradient_clip_val=grad_clip)
 
     # Overload connector to enable intermediate ckpt encryption & decryption.

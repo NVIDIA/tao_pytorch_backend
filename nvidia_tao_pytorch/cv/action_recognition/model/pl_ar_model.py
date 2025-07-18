@@ -43,8 +43,10 @@ class ActionRecognitionModel(TAOLightningModule):
         self._build_model(export)
         self.dm = dm
 
-        self.train_accuracy = torchmetrics.Accuracy()
-        self.val_accuracy = torchmetrics.Accuracy()
+        self.label_map = self.dataset_config["label_map"]
+        self.num_classes = len(self.label_map.keys())
+        self.train_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_classes)
+        self.val_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.num_classes)
 
         self.status_logging_dict = {}
 
@@ -153,9 +155,7 @@ class ActionRecognitionModel(TAOLightningModule):
 
     def on_test_epoch_start(self) -> None:
         """ Test epoch start."""
-        self.label_map = self.dataset_config["label_map"]
-        num_classes = len(self.label_map.keys())
-        self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int32)
+        self.confusion_matrix = torch.zeros((self.num_classes, self.num_classes), dtype=torch.int32)
         self.eval_mode_flag = self.experiment_spec["evaluate"]["video_eval_mode"] == "conv"
 
     def test_step(self, batch, batch_idx):
@@ -185,25 +185,30 @@ class ActionRecognitionModel(TAOLightningModule):
 
     def on_test_epoch_end(self):
         """Test epoch end."""
-        percentage_confusion_matrix, accuracy, m_accuracy = self.compute_metrics(self.confusion_matrix)
+        confusion_matrix_gathered = self.all_gather(self.confusion_matrix)
+        if self.trainer.local_rank == 0:
+            confusion_matrix_gathered = confusion_matrix_gathered.cpu().numpy()
+            if len(confusion_matrix_gathered.shape) == 3:
+                confusion_matrix_gathered = np.sum(confusion_matrix_gathered, axis=0)
+            percentage_confusion_matrix, accuracy, m_accuracy = self.compute_metrics(confusion_matrix_gathered)
 
-        id2name = {v: k for k, v in self.label_map.items()}
-        print("*******************************")
-        for idx in range(len(self.label_map)):
-            cls_acc = percentage_confusion_matrix[idx][idx]
-            print("{:<14}{:.4}".format(
-                id2name[idx], cls_acc))
+            id2name = {v: k for k, v in self.label_map.items()}
+            print("*******************************")
+            for idx in range(len(self.label_map)):
+                cls_acc = percentage_confusion_matrix[idx][idx]
+                print("{:<14}{:.4}".format(
+                    id2name[idx], cls_acc))
 
-        print("*******************************")
-        print("Total accuracy: {}".format(round(accuracy, 3)))
-        print("Average class accuracy: {}".format(round(m_accuracy, 3)))
+            print("*******************************")
+            print("Total accuracy: {}".format(round(accuracy, 3)))
+            print("Average class accuracy: {}".format(round(m_accuracy, 3)))
 
-        status_logging.get_status_logger().kpi = {"accuracy": round(accuracy, 3),
-                                                  "m_accuracy": round(m_accuracy, 3)}
-        status_logging.get_status_logger().write(
-            message="Test metrics generated.",
-            status_level=status_logging.Status.RUNNING
-        )
+            status_logging.get_status_logger().kpi = {"accuracy": round(accuracy, 3),
+                                                      "m_accuracy": round(m_accuracy, 3)}
+            status_logging.get_status_logger().write(
+                message="Test metrics generated.",
+                status_level=status_logging.Status.RUNNING
+            )
 
         self.confusion_matrix = []
 

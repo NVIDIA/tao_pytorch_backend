@@ -70,7 +70,7 @@ class TAOBEVFusionLoggerHook(LoggerHook):
         self.monitor_data = {}
         self.monitor_data["mode"] = "train"
 
-        self.monitor_data["cur_iter"] = runner.iter + 1
+        self.monitor_data["epoch"] = runner.iter + 1
         time = float(log_str.split(" time: ")[1].split(" ")[0])
         if time < 1:
             self.monitor_data["time_per_iter"] = f"00:00:0{time}"

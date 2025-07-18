@@ -13,13 +13,14 @@
 # limitations under the License.
 
 """Train Re-Identification model."""
+import math
 import os
 
 from nvidia_tao_pytorch.core.connectors.checkpoint_connector import TLTCheckpointConnector
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
-from nvidia_tao_pytorch.cv.re_identification.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.re_identification.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.re_identification.dataloader.pl_reid_data_module import REIDDataModule
 from nvidia_tao_pytorch.cv.re_identification.model.pl_reid_model import ReIdentificationModel
 
@@ -36,38 +37,39 @@ def run_experiment(experiment_config, key):
 
     Args:
         experiment_config (ExperimentConfig): The experiment configuration containing the model, training, and other parameters.
-        results_dir (str): The directory to save the trained model checkpoints and logs.
         key (str): The encryption key for intermediate checkpoints.
 
     Raises:
         AssertionError: If checkpoint_interval is greater than num_epochs.
     """
-    results_dir, resume_ckpt, gpus, ptl_loggers = initialize_train_experiment(experiment_config, key)
+    resume_ckpt, trainer_kwargs = initialize_train_experiment(experiment_config, key)
 
     dm = REIDDataModule(experiment_config)
+    dm.setup('fit')
     reid_model = ReIdentificationModel(experiment_config, prepare_for_training=True)
 
-    num_epochs = experiment_config['train']['num_epochs']
-    validation_interval = experiment_config['train']['validation_interval']
     grad_clip = experiment_config['train']['grad_clip']
 
+    # @seanf: there's some buggy behavior with Lightning/Pytorch when using custom samplers
+    # Patch fix is to either (a) set the length of the sampler to infinity, but then the progress bar will
+    # show ? for the number of epochs (though it will function correctly), or (b) have it do the validation
+    # check right before the last batch. We choose the latter
+    # See: https://github.com/Lightning-AI/pytorch-lightning/issues/10290
+    num_batches = len(dm.train_dataloader())
+    # Round down to 2 decimal places
+    val_check_interval = math.floor(((num_batches - 1) / num_batches) * 100) / 100
+
     acc_flag = 'auto'
-    if len(gpus) > 1:
+    if len(trainer_kwargs['devices']) > 1:
         acc_flag = 'ddp_find_unused_parameters_true'
 
-    trainer = Trainer(logger=ptl_loggers,
-                      devices=len(gpus),
-                      max_epochs=num_epochs,
-                      check_val_every_n_epoch=validation_interval,
-                      default_root_dir=results_dir,
+    trainer = Trainer(**trainer_kwargs,
                       num_sanity_val_steps=0,
-                      val_check_interval=0.99,
+                      val_check_interval=val_check_interval,
                       precision='16-mixed',
-                      accelerator='gpu',
                       strategy=acc_flag,
                       use_distributed_sampler=False,
                       sync_batchnorm=True,
-                      enable_checkpointing=False,
                       gradient_clip_val=grad_clip)
 
     # Overload connector to enable intermediate ckpt encryption and decryption.

@@ -4,18 +4,24 @@ set -eo pipefail
 # cd "$( dirname "${BASH_SOURCE[0]}" )"
 
 registry="nvcr.io"
-tao_version="5.0.0"
-repository="nvidia/tao/tao-toolkit"
-tag="${tao_version}-pyt-base"
-
-# Required for the tao-converter since it is now a submodule.
-git submodule update --init --recursive
+pytorch_version="2.1.0"
+tao_version="5.2.0"
+repository="nvstaging/tao/tao-toolkit-pyt"
+build_id="01"
+tag="v${tao_version}-pyt${pytorch_version}-py3-${build_id}"
 
 # Build parameters.
+SKIP_SUBMODULE_INIT="1"
 BUILD_DOCKER="0"
-BUILD_WHEELS="0"
+BUILD_WHEEL="0"
 PUSH_DOCKER="0"
 FORCE="0"
+
+# Required for tao-core and tao-converter since they are submodules.
+if [ $SKIP_SUBMODULE_INIT = "0" ]; then
+    echo "Updating submodules ..."
+    git submodule update --init --recursive
+fi
 
 wheel_dir=${NV_TAO_PYTORCH_TOP}/dist
 
@@ -81,7 +87,8 @@ if [ $BUILD_DOCKER = "1" ]; then
           mkdir -p $wheel_dir
         fi
         echo "Building source code wheel ..."
-        tao_pt --env 'TORCH_CUDA_ARCH_LIST="5.3 6.0 6.1 7.0 7.5 8.0 8.6 9.0"' -- python setup.py bdist_wheel
+        # tao_pt --env 'TORCH_CUDA_ARCH_LIST="5.3 6.0 6.1 7.0 7.5 8.0 8.6 9.0"' -- bash /tao-pt/release/docker/build_wheel.sh
+        tao_pt -- python setup.py bdist_wheel
     else
         echo "Skipping wheel builds ..."
     fi
@@ -105,7 +112,7 @@ if [ $BUILD_DOCKER = "1" ]; then
     fi
 elif [ $RUN_DOCKER ="1" ]; then
     echo "Running docker interactively..."
-    docker run --gpus all -v $HOME/tlt-experiments:/workspace/tlt-experiments  \
+    docker run --gpus all -v $HOME/tlt-experiments:/workspace/tlt-experiments \
                           --network=host \
                           --shm-size=30g \
                           --ulimit memlock=-1 \

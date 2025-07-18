@@ -20,7 +20,8 @@ import torch
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 
-from nvidia_tao_pytorch.cv.mask_grounding_dino.config.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.grounding_dino.scripts.export import serialize_nvdsinfer_config
+from nvidia_tao_core.config.mask_grounding_dino.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.mask_grounding_dino.model.pl_gdino_model import MaskGDINOPlModel
 from nvidia_tao_pytorch.cv.mask_grounding_dino.utils.onnx_export import MaskGDINOExporter
 
@@ -69,6 +70,8 @@ def run_export(experiment_config):
     input_channel = experiment_config.export.input_channel
     input_width = experiment_config.export.input_width
     input_height = experiment_config.export.input_height
+    input_shape = [input_channel, input_height, input_width]
+    serialize_nvdsinfer = experiment_config.export.serialize_nvdsinfer
     opset_version = experiment_config.export.opset_version
     batch_size = experiment_config.export.batch_size
     on_cpu = experiment_config.export.on_cpu
@@ -92,7 +95,20 @@ def run_export(experiment_config):
     if not os.path.exists(output_root):
         os.makedirs(output_root)
 
+    input_names = ["inputs", "input_ids", "attention_mask", "position_ids", "token_type_ids", "text_token_mask"]
+    output_names = ["pred_logits", "pred_boxes", "pred_masks"]
+
     caption = "the running dog ."
+    if serialize_nvdsinfer:
+        serialize_nvdsinfer_config(
+            output_root,
+            output_file,
+            input_shape,
+            output_names,
+            input_width,
+            input_height,
+            input_channel
+        )
     # load model
     pl_model = MaskGDINOPlModel.load_from_checkpoint(
         model_path,
@@ -120,8 +136,6 @@ def run_export(experiment_config):
     dummy_input = torch.randn(input_batch_size, input_channel, input_height, input_width).to(device)
 
     args = (dummy_input, input_ids, attention_mask, position_ids, token_type_ids, text_token_mask)
-    input_names = ["inputs", "input_ids", "attention_mask", "position_ids", "token_type_ids", "text_token_mask"]
-    output_names = ["pred_logits", "pred_boxes", "pred_masks"]
 
     onnx_export = MaskGDINOExporter()
     onnx_export.export_model(model,

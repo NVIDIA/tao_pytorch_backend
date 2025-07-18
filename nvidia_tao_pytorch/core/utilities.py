@@ -169,14 +169,78 @@ def data_to_device(data):
     return cuda_data
 
 
+def write_classes_file(classes_file, class_names):
+    """Write the classes file.
+
+    Args:
+        classes_file (str): Path to the classes file.
+        class_names (list): List of class names.
+
+    Returns:
+        int: Number of classes.
+    """
+    classfile_root = os.path.dirname(classes_file)
+    if not os.path.exists(classfile_root):
+        os.makedirs(classfile_root, exist_ok=True)
+    assert isinstance(class_names, list), "class_names must be a list"
+    class_string = ";".join(class_names)
+    with open(classes_file, "w", encoding="utf-8") as cf:
+        cf.write(f"{class_string}\n")
+    num_classes = len(class_names)
+    assert num_classes > 0, "class_names must contain at least one class"
+    return num_classes
+
+
+def get_nvdsinfer_yaml(
+    nvdsinfer_dataclass,
+    labels_file: str,
+    num_classes: int,
+    output_file: str,
+    input_shape: list,
+    output_names: list,
+    offsets: list = None
+):
+    """Serialize the deepstream nvinfer config element.
+
+    Args:
+        nvdsinfer_dataclass (type): Nvdsinfer dataclass for default config.
+        labels_file (str): Path to the labels file.
+        num_classes (int): Number of classes.
+        output_file (str): Path to the output config file.
+        input_shape (list): Input tensor shape in c,h,w order.
+        output_names (list): List of the output tensors in the model.
+        offsets (list): List of the offsets for the model.
+    Returns:
+        str: The serialized nvdsinfer configuration.
+    """
+    nvds_config = nvdsinfer_dataclass()
+    nvds_config.property_field.onnx_file = os.path.basename(output_file)
+    nvds_config.property_field.output_blob_names = output_names
+    nvds_config.property_field.num_detected_classes = num_classes
+    if offsets:
+        nvds_config.property_field.offsets = offsets
+    if labels_file is not None:
+        nvds_config.property_field.labelfile_path = f"{os.path.basename(labels_file)}"
+    nvds_config.property_field.infer_dims = input_shape
+    return str(nvds_config)
+
+
 def encrypt_onnx(tmp_file_name, output_file_name, key):
-    """Encrypt the onnx model"""
-    with open(tmp_file_name, "rb") as open_temp_file, open(output_file_name,
-                                                           "wb") as open_encoded_file:
+    """Encrypt the onnx model.
+
+    Args:
+        tmp_file_name (str): Path to temporary file.
+        output_file_name (str): Path to output encrypted file.
+        key (str): Encryption key.
+    """
+    with open(tmp_file_name, "rb") as open_temp_file, \
+         open(output_file_name, "wb") as open_encoded_file:
         # set the input name magic number
         open_encoded_file.write(struct.pack("<i", 0))
 
         encrypt_stream(
-            input_stream=open_temp_file, output_stream=open_encoded_file,
-            passphrase=key, encryption=True
+            input_stream=open_temp_file,
+            output_stream=open_encoded_file,
+            passphrase=key,
+            encryption=True
         )

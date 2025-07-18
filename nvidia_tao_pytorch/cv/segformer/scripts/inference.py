@@ -12,59 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Evaluation of Segformer model.
-"""
+"""Inference of Segformer model."""
+
 import os
+from pytorch_lightning import Trainer
 
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_experiment
-from nvidia_tao_pytorch.cv.segformer.config.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.segformer.utils.config import MMSegmentationConfig
-
-# Triggers build of custom modules
-from nvidia_tao_pytorch.cv.segformer.model import * # noqa pylint: disable=W0401, W0614
-from nvidia_tao_pytorch.cv.segformer.dataloader import * # noqa pylint: disable=W0401, W0614
-
-from mmengine.config import Config
-from mmseg.apis import MMSegInferencer
+from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
+from nvidia_tao_core.config.segformer.default_config import ExperimentConfig
+from nvidia_tao_pytorch.cv.segformer.dataloader.pl_segformer_data_module import SFDataModule
+from nvidia_tao_pytorch.cv.segformer.model.segformer_pl_model import SegFormerPlModel
 
 
-def run_experiment(experiment_config):
-    """Start the inference.
-    Args:
-        experiment_config (Dict): Config dictionary containing epxeriment parameters
-        results_dir (str): Results dir to save the inference images
+def run_experiment(experiment_config, key):
+    """Start the inferencing."""
+    model_path, trainer_kwargs = initialize_inference_experiment(experiment_config, key)
 
-    """
-    results_dir, model_path, _ = initialize_inference_experiment(experiment_config)
+    dm = SFDataModule(experiment_config.dataset.segment)
+    dm.setup(stage="predict")
 
-    mmseg_config = MMSegmentationConfig(experiment_config, phase="inference")
-    eval_cfg = mmseg_config.updated_config
+    model = SegFormerPlModel.load_from_checkpoint(
+        model_path,
+        map_location="cpu",
+        experiment_spec=experiment_config,
+        dm=dm
+    )
+    trainer = Trainer(
+        **trainer_kwargs
+    )
 
-    eval_cfg["visualizer"]["save_dir"] = results_dir
-    mmseg_model_config = Config(eval_cfg)
-
-    # @sean: we manually delete our custom load annotations for inference visualization
-    # This is done in MMSegInferencer, but only does it for "LoadAnnotations, our custom-named one is skipped
-    pipeline_cfg = mmseg_model_config.test_dataloader.dataset.pipeline
-    # Loading annotations is also not applicable
-    for i, transform in enumerate(pipeline_cfg):
-        if transform['type'] == "TAOLoadAnnotations":
-            del pipeline_cfg[i]
-
-    classes = mmseg_model_config.test_dataloader.dataset.metainfo.classes
-    palette = mmseg_model_config.test_dataloader.dataset.metainfo.palette
-
-    inferencer = MMSegInferencer(
-        model=mmseg_model_config,
-        weights=model_path,
-        classes=classes,
-        palette=palette)
-
-    img_dir = mmseg_model_config.test_dataloader.dataset.data_prefix.img_path
-    inferencer(img_dir, out_dir=results_dir, img_out_dir='vis_tao', pred_out_dir='mask_tao')
+    trainer.predict(model, datamodule=dm)
 
 
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -73,12 +52,17 @@ spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Load experiment specification, additially using schema for validation/retrieving the default values.
 # --config_path and --config_name will be provided by the entrypoint script.
 @hydra_runner(
-    config_path=os.path.join(spec_root, "experiment_specs"), config_name="test_isbi", schema=ExperimentConfig
+    config_path=os.path.join(spec_root, "experiment_specs"), config_name="experiment_spec", schema=ExperimentConfig
 )
-@monitor_status(name="Segformer", mode="inference")
+@monitor_status(name="SegFormer", mode="inference")
 def main(cfg: ExperimentConfig) -> None:
-    """Run the Inference process."""
-    run_experiment(experiment_config=cfg)
+    """Run the training process."""
+    # Obfuscate logs.
+    obfuscate_logs(cfg)
+    run_experiment(
+        experiment_config=cfg,
+        key=cfg.encryption_key
+    )
 
 
 if __name__ == "__main__":

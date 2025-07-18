@@ -16,7 +16,7 @@
 
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from nvidia_tao_pytorch.cv.optical_inspection.dataloader.oi_dataset import SiameseNetworkTRIDataset, get_sampler
+from nvidia_tao_pytorch.cv.optical_inspection.dataloader.oi_dataset import MultiGoldenDataset, SiameseNetworkTRIDataset, get_sampler
 
 # START SIAMESE DATALOADER
 
@@ -39,6 +39,7 @@ def build_dataloader(df, weightedsampling, split, data_config):
     image_height = data_config["image_height"]
     rgb_mean = data_config["augmentation_config"]["rgb_input_mean"]
     rgb_std = data_config["augmentation_config"]["rgb_input_std"]
+    dataset_class = MultiGoldenDataset if "num_golden" in data_config and data_config["num_golden"] > 1 else SiameseNetworkTRIDataset
 
     train_transforms = transforms.Compose(
         [
@@ -63,11 +64,11 @@ def build_dataloader(df, weightedsampling, split, data_config):
 
     if split == 'train':
         input_data_path = data_config["train_dataset"]["images_dir"]
-        dataset = SiameseNetworkTRIDataset(data_frame=df,
-                                           train=True,
-                                           input_data_path=input_data_path,
-                                           transform=train_transforms,
-                                           data_config=data_config)
+        dataset = dataset_class(data_frame=df,
+                                train=True,
+                                input_data_path=input_data_path,
+                                transform=train_transforms,
+                                data_config=data_config)
 
         if weightedsampling:
             fpratio_sampling = data_config['fpratio_sampling']
@@ -80,30 +81,30 @@ def build_dataloader(df, weightedsampling, split, data_config):
 
     elif split == 'valid':
         input_data_path = data_config["validation_dataset"]["images_dir"]
-        dataset = SiameseNetworkTRIDataset(data_frame=df,
-                                           train=False,
-                                           input_data_path=input_data_path,
-                                           transform=test_transforms,
-                                           data_config=data_config)
+        dataset = dataset_class(data_frame=df,
+                                train=False,
+                                input_data_path=input_data_path,
+                                transform=test_transforms,
+                                data_config=data_config)
+
         dataloader_kwargs["shuffle"] = False
 
     elif split == 'test':
         input_data_path = data_config["test_dataset"]["images_dir"]
-        dataset = SiameseNetworkTRIDataset(data_frame=df,
-                                           train=False,
-                                           input_data_path=input_data_path,
-                                           transform=test_transforms,
-                                           data_config=data_config)
-
+        dataset = dataset_class(data_frame=df,
+                                train=False,
+                                input_data_path=input_data_path,
+                                transform=test_transforms,
+                                data_config=data_config)
         dataloader_kwargs["shuffle"] = False
 
     elif split == 'infer':
         input_data_path = data_config["infer_dataset"]["images_dir"]
-        dataset = SiameseNetworkTRIDataset(data_frame=df,
-                                           train=False,
-                                           input_data_path=input_data_path,
-                                           transform=test_transforms,
-                                           data_config=data_config)
+        dataset = dataset_class(data_frame=df,
+                                train=False,
+                                input_data_path=input_data_path,
+                                transform=test_transforms,
+                                data_config=data_config)
 
         dataloader_kwargs["shuffle"] = False
 

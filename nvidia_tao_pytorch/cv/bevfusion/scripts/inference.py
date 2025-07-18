@@ -22,7 +22,7 @@ from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 # Triggers build of custom modules
-from nvidia_tao_pytorch.cv.bevfusion.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.bevfusion.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.bevfusion.utils.config import BEVFusionConfig
 from nvidia_tao_pytorch.cv.bevfusion.inferencer import TAOMultiModalDet3DInferencer, prepare_inferencer_args
 from nvidia_tao_pytorch.cv.bevfusion.visualization import TAO3DLocalVisualizer # noqa pylint: disable=W0611

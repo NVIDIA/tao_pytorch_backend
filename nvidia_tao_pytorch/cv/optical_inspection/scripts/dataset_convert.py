@@ -19,7 +19,7 @@ import os
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_pytorch.cv.optical_inspection.config.default_config import ExperimentConfig
+from nvidia_tao_core.config.optical_inspection.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.optical_inspection.utils.data_preprocess import output_combined_dataset, preprocess_boards_cam
 
 

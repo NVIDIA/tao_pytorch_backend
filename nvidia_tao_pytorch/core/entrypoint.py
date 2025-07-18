@@ -22,19 +22,20 @@ import pkgutil
 import subprocess
 import shlex
 import sys
+import torch
 from time import time
 import yaml
 from contextlib import contextmanager
 
 from nvidia_tao_pytorch.core.telemetry.nvml_utils import get_device_details
 from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_core.telemetry.telemetry import send_telemetry_data
+from nvidia_tao_pytorch.core.telemetry.telemetry import send_telemetry_data
+from nvidia_tao_pytorch.core.distributed.validator import validate_configs
 
 LIGHTNING_EXCLUDED_NETWORKS = [
-    "classification_pyt",
     "bevfusion",
-    "segformer",
     "pointpillars",
+    "rtdetr",
 ]
 
 
@@ -154,7 +155,7 @@ def launch(args, unknown_args, subtasks, network=None):
     unknown_args_as_str = " " + " ".join(unknown_args)
 
     # Set gpus - overwrite if fields are inconsistent
-    # Precedence for gpu setting: cmdline > specfile > default
+    # Precedence for gpu setting: env > cmdline > specfile > default
     overrides = ["num_gpus", "gpu_ids", "cuda_blocking"]
     num_gpus = 1
     gpu_ids = [0]
@@ -197,6 +198,49 @@ def launch(args, unknown_args, subtasks, network=None):
         gpu_ids = list(range(num_gpus)) if len(gpu_ids) != num_gpus else gpu_ids
         logging.info(f"Using GPUs {gpu_ids} (total {num_gpus})")
 
+    # Configure multinode
+    multinode = [f"--nnodes={num_nodes}", f"--nproc-per-node={num_gpus}"]
+    if os.environ.get("WORLD_SIZE"):
+        try:
+            validate_configs(logging)
+
+            logging.warning("[Multinode] Overriding configs (num_nodes, num_gpus, gpu_ids) with environment variables.")
+            num_nodes = int(os.environ.get("WORLD_SIZE"))
+            num_gpus = int(os.environ.get("NUM_GPU_PER_NODE", torch.cuda.device_count()))
+            gpu_ids = list(range(num_gpus))
+
+            # Update multinode config in spec file
+            with open(args["experiment_spec_file"], "r") as spec:
+                exp_config = yaml.safe_load(spec)
+
+            train_config = exp_config.get("train", {})
+            if "num_nodes" in train_config:
+                train_config["num_nodes"] = num_nodes
+            if "num_gpus" in train_config:
+                train_config["num_gpus"] = num_gpus
+            if "gpu_ids" in train_config:
+                train_config["gpu_ids"] = gpu_ids
+
+            if train_config:
+                exp_config["train"] = train_config
+                with open(args["experiment_spec_file"], "w") as spec:
+                    yaml.dump(exp_config, spec, default_flow_style=False)
+
+            multinode = [
+                f"--nnodes={num_nodes}",
+                f"--nproc-per-node={num_gpus}",
+                f"--node-rank={os.getenv('NODE_RANK') or os.getenv('RANK')}",
+                f"--master-addr={os.getenv('MASTER_ADDR', 'localhost')}",
+                f"--master-port={os.getenv('MASTER_PORT', '29500')}",
+            ]
+        except Exception as e:
+            logging.warning(f"[Multinode] Error overriding configs: {e}")
+            logging.warning("[Multinode] Using default configs.")
+            num_nodes = 1
+            num_gpus = torch.cuda.device_count()
+            gpu_ids = list(range(num_gpus))
+            multinode = [f"--nnodes={num_nodes}", f"--nproc-per-node={num_gpus}"]
+
     # All future logic will look at this envvar for guidance on which devices to use
     os.environ["TAO_VISIBLE_DEVICES"] = str(gpu_ids)[1:-1]
 
@@ -205,12 +249,21 @@ def launch(args, unknown_args, subtasks, network=None):
 
     log_file = ""
     if os.getenv("JOB_ID"):
-        log_file = f"/{os.getenv('JOB_ID')}.txt"
+        logs_dir = os.getenv('TAO_MICROSERVICES_TTY_LOG', '/results')
+        log_file = f"{logs_dir}/{os.getenv('JOB_ID')}/microservices_log.txt"
 
     # Create a system call.
     if network in LIGHTNING_EXCLUDED_NETWORKS:
         os.environ["CUDA_VISIBLE_DEVICES"] = os.environ["TAO_VISIBLE_DEVICES"]
-        call = (f"torchrun --nproc_per_node={num_gpus} --nnodes={num_nodes} " + script + script_args + unknown_args_as_str)
+        if not os.getenv("RANK") and os.getenv("NODE_RANK"):
+            os.environ["RANK"] = os.getenv("NODE_RANK")
+        call = (
+            "torchrun" +
+            f" {' '.join(multinode)} " +
+            script +
+            script_args +
+            unknown_args_as_str
+        )
     else:
         call = "python " + script + script_args + unknown_args_as_str
 
@@ -258,12 +311,12 @@ def launch(args, unknown_args, subtasks, network=None):
             if proc.returncode == 0:
                 process_passed = True
 
-    except (KeyboardInterrupt, SystemExit) as e:
-        logging.info("Command was interrupted due to ", e)
+    except (KeyboardInterrupt, SystemExit):
+        logging.exception("Command was interrupted")
         process_passed = True
     except subprocess.CalledProcessError as e:
         if e.output is not None:
-            logging.info(e.output)
+            logging.exception(e.output)
         process_passed = False
 
     end = time()
@@ -291,7 +344,7 @@ def launch(args, unknown_args, subtasks, network=None):
 
     if not process_passed:
         logging.warning("Execution status: FAIL")
-        return False
+        sys.exit(1)
 
     logging.info("Execution status: PASS")
-    return True
+    sys.exit(0)

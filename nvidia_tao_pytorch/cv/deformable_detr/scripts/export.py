@@ -17,13 +17,14 @@
 import os
 import torch
 
+from nvidia_tao_core.config.deformable_detr.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
-from nvidia_tao_pytorch.core.utilities import encrypt_onnx
+from nvidia_tao_pytorch.core.utilities import encrypt_onnx, write_classes_file, get_nvdsinfer_yaml
 from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_pytorch.cv.deformable_detr.config.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.deformable_detr.model.pl_dd_model import DeformableDETRModel
+from nvidia_tao_pytorch.cv.deformable_detr.types.ddetr_nvdsinfer import DDETRNvDSInferConfig
 from nvidia_tao_pytorch.cv.deformable_detr.utils.onnx_export import ONNXExporter
 
 
@@ -53,6 +54,36 @@ def main(cfg: ExperimentConfig) -> None:
     run_export(cfg)
 
 
+def get_model_classes(experiment_config):
+    """Get the number of classes and class names from the dataset configuration.
+
+    Args:
+        experiment_config: Experiment configuration containing dataset information
+
+    Returns:
+        tuple: (num_classes, class_names)
+            - num_classes (int): Number of classes the model was trained on
+            - class_names (list): List of class names in order of their IDs
+    """
+    from nvidia_tao_pytorch.cv.deformable_detr.dataloader.pl_od_data_module import ODDataModule
+
+    dm = ODDataModule(experiment_config.dataset)
+    dm.setup(stage="fit")
+
+    categories = dm.val_dataset.label_map
+    categories = sorted(categories, key=lambda x: x['id'])
+    class_names = [cat['name'] for cat in categories]
+    class_ids = [cat['id'] for cat in categories]
+    class_names = ["unknown"] * (max(class_ids) + 1)
+    for cat in categories:
+        class_names[cat['id']] = cat['name']
+
+    if min(class_ids) > 0:
+        class_names[0] = "background"
+
+    return len(class_names), class_names
+
+
 def run_export(experiment_config):
     """Wrapper to run export of tlt models.
 
@@ -76,6 +107,8 @@ def run_export(experiment_config):
     input_channel = experiment_config.export.input_channel
     input_width = experiment_config.export.input_width
     input_height = experiment_config.export.input_height
+    input_shape = [input_channel, input_height, input_width]
+    serialize_nvdsinfer = experiment_config.export.serialize_nvdsinfer
     opset_version = experiment_config.export.opset_version
     batch_size = experiment_config.export.batch_size
     on_cpu = experiment_config.export.on_cpu
@@ -99,6 +132,35 @@ def run_export(experiment_config):
     if not os.path.exists(output_root):
         os.makedirs(output_root)
 
+    # Get class information
+    num_classes, class_names = get_model_classes(experiment_config)
+    logging.info(f"Model was trained on {num_classes} classes: {class_names}")
+
+    # Setting up input/output tensor names.
+    input_names = ['inputs']
+    output_names = ["pred_logits", "pred_boxes"]
+
+    if serialize_nvdsinfer:
+        # Write class names to labels file
+        labels_file = os.path.join(output_root, "labels.txt")
+        write_classes_file(labels_file, class_names)
+
+        # Generate nvdsinfer config
+        nvdsinfer_yaml_file = os.path.join(output_root, "nvdsinfer_config.yaml")
+        logging.info(f"Serializing the deepstream config to {nvdsinfer_yaml_file}")
+
+        nvdsinfer_config = get_nvdsinfer_yaml(
+            DDETRNvDSInferConfig,
+            labels_file,
+            num_classes,
+            output_file,
+            input_shape,
+            output_names
+        )
+
+        with open(nvdsinfer_yaml_file, "w") as nvds_file:
+            nvds_file.write(nvdsinfer_config)
+
     # load model
     pl_model = DeformableDETRModel.load_from_checkpoint(model_path,
                                                         map_location='cpu' if on_cpu else 'cuda',
@@ -109,14 +171,11 @@ def run_export(experiment_config):
     if not on_cpu:
         model.cuda()
 
-    input_names = ['inputs']
-    output_names = ["pred_logits", "pred_boxes"]
-
     # create dummy input
     if on_cpu:
-        dummy_input = torch.ones(input_batch_size, input_channel, input_height, input_width, device='cpu')
+        dummy_input = torch.ones(input_batch_size, *input_shape, device='cpu')
     else:
-        dummy_input = torch.ones(input_batch_size, input_channel, input_height, input_width, device='cuda')
+        dummy_input = torch.ones(input_batch_size, *input_shape, device='cuda')
 
     if output_file.endswith('.etlt'):
         tmp_onnx_file = output_file.replace('.etlt', '.onnx')
