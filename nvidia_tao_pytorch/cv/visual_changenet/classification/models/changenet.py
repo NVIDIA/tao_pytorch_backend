@@ -437,11 +437,7 @@ class ChangeNetClassify(nn.Module):
                     use_summary_token=use_summary_token)
 
             elif self.difference_module == 'euclidean':
-                self.backbone = radio_model_dict[self.model_name](
-                    resolution=[224, 224],
-                    init_cfg={'checkpoint': pretrained_backbone_path}
-                )
-                pretrained_backbone_ckp = None
+                self.backbone = radio_model_dict[self.model_name](resolution=[224, 224])
 
         elif 'vit' in self.model_name:
             assert output_shape[0] == output_shape[1], 'ViT Backbones only support square input image where input_width == input_height'

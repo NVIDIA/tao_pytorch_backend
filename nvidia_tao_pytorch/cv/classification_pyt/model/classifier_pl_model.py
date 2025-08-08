@@ -72,9 +72,7 @@ class ClassifierPlModel(TAOLightningModule):
         self.lr_policy_params = self.optimizer.policy_params
         self.max_epochs = self.train_config.num_epochs
         self.monitor_name = self.train_config.optim.monitor_name
-
-        self.n_class = self.dataset_config.num_classes
-        self.binary = self.model_config.head.binary
+        self.num_classes = self.dataset_config.num_classes
 
         # construct prediction id 2 class name mapping for visualization
         self.id_2_class_names = {}
@@ -89,18 +87,13 @@ class ClassifierPlModel(TAOLightningModule):
 
         train_acc = {}
         val_acc = {}
-        if self.binary:
-            self.sigmoid = torch.nn.Sigmoid()
-            train_acc["train_binary_acc"] = Accuracy(task="binary")
-            val_acc["val_binary_acc"] = Accuracy(task="binary")
-        else:
-            for topk in self.model_config.head.topk:
-                train_acc[f"train_acc_{topk}"] = Accuracy(
-                    task="multiclass", num_classes=self.n_class, top_k=topk
-                )
-                val_acc[f"val_acc_{topk}"] = Accuracy(
-                    task="multiclass", num_classes=self.n_class, top_k=topk
-                )
+        for topk in self.model_config.head.topk:
+            train_acc[f"train_acc_{topk}"] = Accuracy(
+                task="multiclass", num_classes=self.num_classes, top_k=topk
+            )
+            val_acc[f"val_acc_{topk}"] = Accuracy(
+                task="multiclass", num_classes=self.num_classes, top_k=topk
+            )
         self.train_acc = MetricCollection(train_acc)
         self.valid_acc = MetricCollection(val_acc)
         self.batch_size = self.dataset_config.batch_size
@@ -180,16 +173,9 @@ class ClassifierPlModel(TAOLightningModule):
 
     def _build_criterion(self):
         """Internal function to build the loss function."""
-        assert self.model_config.head.loss.type in [
-            "CrossEntropyLoss"
-        ], "Only CrossEntropyLoss is supported."
-        if self.model_config.head.loss.type == "CrossEntropyLoss":
-            self.criterion = Cross_Entropy(
-                binary=self.binary,
-                label_smoothing=self.model_config.head.loss.label_smooth_val,
-            )
-        else:
-            raise NotImplementedError(self.train_config["loss"])
+        self.criterion = Cross_Entropy(
+            label_smoothing=self.model_config.head.loss.label_smooth_val,
+        )
 
     @staticmethod
     def _get_parameter_groups(model, weight_decay, skip_names=()):
@@ -336,8 +322,6 @@ class ClassifierPlModel(TAOLightningModule):
         """
         Save the predictions and ground truth in csv format. With the csv keys as ["img_name", "pred_label", "pred_score", "gt_label"] and also each class's score.
         """
-        if self.binary:
-            out = torch.stack([1 - out, out], dim=1)
         out = torch.nn.functional.softmax(
             out, dim=1
         )  # Apply softmax to get probabilities
@@ -404,8 +388,6 @@ class ClassifierPlModel(TAOLightningModule):
     def _forward_pass(self, batch, split="train"):
         """Forward pass for training, validation and testing."""
         out = self.model(batch["img"])
-        if self.binary:
-            out = self.sigmoid(out.squeeze(1))
         if split == "predict":
             self.loss = None
         else:
@@ -441,7 +423,7 @@ class ClassifierPlModel(TAOLightningModule):
 
         out, loss = self._forward_pass(batch, "train")
         acc = self.train_acc(out, batch["class"].long())
-        self.log_dict(acc)
+        self.log_dict(acc, sync_dist=True, on_step=False, on_epoch=True, prog_bar=False)
         self.log(
             "train_loss",
             loss,
@@ -498,7 +480,7 @@ class ClassifierPlModel(TAOLightningModule):
         # scores, mean_scores = self._collect_epoch_states()  # logs all evaluation metrics
         # self.log("val_acc", scores['acc'], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         acc = self.valid_acc.compute()
-        self.log_dict(acc, sync_dist=True)
+        self.log_dict(acc, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True)
         self.valid_acc.reset()
         # self._clear_cache()
 
@@ -531,7 +513,7 @@ class ClassifierPlModel(TAOLightningModule):
         """Test epoch end."""
         # scores, mean_scores = self._collect_epoch_states()  # needed for update metrics
         acc = self.valid_acc.compute()
-        self.log_dict(acc, sync_dist=True)
+        self.log_dict(acc, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True)
         self.valid_acc.reset()
         self.status_logging_dict = {}
         for acc_key in acc.keys():
@@ -549,3 +531,7 @@ class ClassifierPlModel(TAOLightningModule):
         self._visualize_predictions(out, batch, batch_idx, with_gt_label=False)
 
         return out
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "classification"

@@ -844,7 +844,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
     def forward_ffn(self, tgt):
         """FFN forward pass."""
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(enabled=False, device_type='cuda'):
             tgt2 = self.linear2(self.dropout3(self.activation(self.linear1(tgt))))
         tgt = tgt + self.dropout4(tgt2)
         tgt = self.norm3(tgt)

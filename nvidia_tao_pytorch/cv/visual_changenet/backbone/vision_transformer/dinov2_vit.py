@@ -14,9 +14,11 @@
 
 """ DINOv2 ViT Model Module """
 
-from nvidia_tao_pytorch.cv.classification_pyt.model.backbones.dinov2_vit import VitLargePatch14Dinov2Swiglu
+from functools import partial
+
+from nvidia_tao_pytorch.cv.backbone_v2.dino_v2 import vit_large_patch14_dinov2_swiglu
 
 
 vit_model_dict = {
-    'vit_large_nvdinov2': VitLargePatch14Dinov2Swiglu
+    'vit_large_nvdinov2': partial(vit_large_patch14_dinov2_swiglu, num_classes=0)
 }

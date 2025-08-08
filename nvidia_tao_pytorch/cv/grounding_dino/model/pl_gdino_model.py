@@ -438,3 +438,7 @@ class GDINOPlModel(TAOLightningModule):
         """Forward of the groudning dino model."""
         outputs = self.model(x)
         return outputs
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "grounding_dino"

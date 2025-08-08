@@ -276,7 +276,7 @@ class AMPTrainer(SimpleTrainer):
             data["runner_meta"] = dict()
             data["runner_meta"]["iter"] = self.iter
             data["runner_meta"]["max_iter"] = self.max_iter
-        with autocast():
+        with autocast(device_type="cuda", enabled=False):
             loss_dict = self.model(data)
             if isinstance(loss_dict, torch.Tensor):
                 losses = loss_dict

@@ -1,24 +1,28 @@
 """Backbone modules for Metric Learning Recognition model."""
 
+from functools import partial
 from typing import Optional
 
 import torch
 from torch import nn
-import torchvision.models as torch_model
 
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.ml_recog.model.dinov2_legacy import vit_large_patch14_dinov2_swiglu_legacy
-from nvidia_tao_pytorch.cv.classification_pyt.model.backbones.fan import FanBase16P4Hybrid, FanLarge16P4Hybrid, FanSmall12P4Hybrid, FanTiny8P4Hybrid
-
+from nvidia_tao_pytorch.cv.backbone_v2.dino_v2 import vit_large_patch14_dinov2_swiglu_legacy
+from nvidia_tao_pytorch.cv.backbone_v2.fan import (
+    fan_tiny_8_p4_hybrid, fan_small_12_p4_hybrid, fan_base_16_p4_hybrid, fan_large_16_p4_hybrid
+)
+from nvidia_tao_pytorch.cv.backbone_v2.resnet import (
+    resnet_50, resnet_101
+)
 
 mlrecog_backbone_dict = {
-    "nvdinov2_vit_large_legacy": vit_large_patch14_dinov2_swiglu_legacy,
-    "fan_tiny": FanTiny8P4Hybrid,
-    "fan_small": FanSmall12P4Hybrid,
-    "fan_base": FanBase16P4Hybrid,  # input size does not matter
-    "fan_large": FanLarge16P4Hybrid,
-    "resnet_50": torch_model.resnet50,
-    "resnet_101": torch_model.resnet101,
+    "nvdinov2_vit_large_legacy": partial(vit_large_patch14_dinov2_swiglu_legacy, num_classes=0),
+    "fan_tiny": fan_tiny_8_p4_hybrid,
+    "fan_small": fan_small_12_p4_hybrid,
+    "fan_base": fan_base_16_p4_hybrid,  # input size does not matter
+    "fan_large": fan_large_16_p4_hybrid,
+    "resnet_50": resnet_50,
+    "resnet_101": resnet_101,
 }
 
 

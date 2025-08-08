@@ -15,7 +15,6 @@
 """ Main PTL model file for Mask Grounding DINO. """
 
 import copy
-import datetime
 import os
 
 import pytorch_lightning as pl
@@ -24,7 +23,7 @@ from torch.optim.lr_scheduler import MultiStepLR, StepLR
 
 from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.pointcloud.pointpillars.pcdet.utils import common_utils
+from nvidia_tao_pytorch.core.tlt_logging import logger
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import rgetattr, match_name_keywords
 from nvidia_tao_pytorch.cv.deformable_detr.model.post_process import save_inference_prediction, threshold_predictions
@@ -78,11 +77,13 @@ class MaskGDINOPlModel(TAOLightningModule):
                 except AttributeError:
                     skipped_modules.append(module)
             if freezed_modules:
+                logger.info(f"Freezed module {freezed_modules}")
                 status_logging.get_status_logger().write(
                     message=f"Freezed module {freezed_modules}",
                     status_level=status_logging.Status.RUNNING,
                     verbosity_level=status_logging.Verbosity.INFO)
             if skipped_modules:
+                logger.info(f"module {skipped_modules} not found. Skipped freezing")
                 status_logging.get_status_logger().write(
                     message=f"module {skipped_modules} not found. Skipped freezing",
                     status_level=status_logging.Status.SKIPPED,
@@ -411,8 +412,6 @@ class MaskGDINOPlModel(TAOLightningModule):
         self.test_coco_evaluator.overall_accumulate()
         self.test_coco_evaluator.overall_summarize(is_print=bool(self.trainer.is_global_zero))
 
-        log_file = os.path.join(self.experiment_spec.results_dir, 'log_eval_{}.txt'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
-        logger = common_utils.create_logger(log_file, rank=0)
         self.status_logging_dict = {}
         for iou_type in self.iou_types:
             mAP = self.test_coco_evaluator.coco_eval[iou_type].stats[0]
@@ -479,3 +478,7 @@ class MaskGDINOPlModel(TAOLightningModule):
         """Forward of the groudning dino model."""
         outputs = self.model(x)
         return outputs
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "mask_grounding_dino"

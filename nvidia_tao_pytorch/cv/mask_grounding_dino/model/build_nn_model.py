@@ -138,7 +138,6 @@ class MaskGDINOModel(nn.Module):
                                  pretrained_backbone_path,
                                  train_backbone,
                                  return_interm_indices,
-                                 dilation,
                                  export,
                                  activation_checkpoint)
 

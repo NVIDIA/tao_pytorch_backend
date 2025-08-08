@@ -226,7 +226,7 @@ pip install nvidia-tao-pytorch
 ```
 
 ## <a name='ContributionGuidelines'></a>Contribution Guidelines
-TAO Toolkit PyTorch backend is not accepting contributions as part of the TAO 5.0 release, but will be open in the future.
+TAO Toolkit PyTorch backend is not accepting contributions as part of the TAO 6.25.7 release, but will be open in the future.
 
 ## <a name='License'></a>License
 This project is licensed under the [Apache-2.0](./LICENSE) License.

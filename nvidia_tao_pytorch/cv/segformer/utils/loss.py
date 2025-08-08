@@ -49,10 +49,15 @@ def cross_entropy(input, target, weight=None, reduction='mean', ignore_index=255
     if input.shape[-1] != target.shape[-1]:
         input = F.interpolate(input, size=target.shape[1:], mode='bilinear', align_corners=False)
 
-    return F.cross_entropy(
+    loss = F.cross_entropy(
         input=input, target=target, weight=weight,
-        ignore_index=ignore_index, reduction=reduction,
+        ignore_index=ignore_index, reduction="none",
     )
+    if reduction == 'mean':
+        loss = loss.mean()
+    elif reduction == 'sum':
+        loss = loss.sum()
+    return loss
 
 
 # Focal Loss

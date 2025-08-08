@@ -217,7 +217,7 @@ class BEVFusion(Base3DDetector):
             from backbone or neck.
         """
         points = batch_inputs_dict['points']
-        with torch.autocast('cuda', enabled=False):
+        with torch.autocast(device_type="cuda", enabled=False):
             points = [point.float() for point in points]
             feats, coords, _ = self.voxelize(points)
             batch_size = coords[-1, 0] + 1

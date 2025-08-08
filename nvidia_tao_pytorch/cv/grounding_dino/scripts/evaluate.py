@@ -51,7 +51,8 @@ def run_experiment(experiment_config):
         model = GDINOPlModel.load_from_checkpoint(model_path,
                                                   map_location="cpu",
                                                   experiment_spec=experiment_config,
-                                                  cap_lists=cap_lists)
+                                                  cap_lists=cap_lists,
+                                                  strict=False)
 
         trainer = Trainer(**trainer_kwargs)
 

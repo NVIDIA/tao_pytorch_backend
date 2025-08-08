@@ -47,8 +47,6 @@ model:
     # pretrained_backbone_path: null
     freeze_backbone: True
   head:
-    type: "TAOLinearClsHead"
-    binary: False
     topk: [1, 5]
     loss:
       type: CrossEntropyLoss

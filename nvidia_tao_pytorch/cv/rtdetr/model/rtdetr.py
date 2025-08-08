@@ -17,7 +17,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
+
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
+from nvidia_tao_pytorch.core.tlt_logging import logger
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 from nvidia_tao_pytorch.cv.rtdetr.model.backbone.radio import radio_model_dict
+from nvidia_tao_pytorch.cv.rtdetr.model.utils import rtdetr_parser, ptm_adapter
 
 
 class RTDETR(nn.Module):
@@ -36,13 +41,24 @@ class RTDETR(nn.Module):
             if "radio" in frozen_fm_cfg.backbone:
                 model_name = frozen_fm_cfg.backbone
 
-                self.frozen_radio = radio_model_dict[model_name][0](
-                    resolution=self.encoder.eval_spatial_size,
-                    freeze=True,
-                    init_cfg={"checkpoint": frozen_fm_cfg.checkpoint}
+                self.frozen_radio = radio_model_dict[model_name][0](resolution=self.encoder.eval_spatial_size)
+                # Freeze the backbone.
+                self.frozen_radio.eval()
+                for p in self.frozen_radio.parameters():
+                    p.requires_grad = False
+                # Load the pretrained weights.
+                msg = self.frozen_radio.load_state_dict(
+                    load_pretrained_weights(
+                        frozen_fm_cfg.checkpoint,
+                        parser=rtdetr_parser,
+                        ptm_adapter=ptm_adapter
+                    ),
+                    strict=False,
                 )
+                if get_global_rank() == 0:
+                    logger.info(f"Loaded frozen FM model from {frozen_fm_cfg.checkpoint} with message: {msg}")
                 self.frozen_radio.float()
-                self.frozen_radio.eval().cuda()
+                self.frozen_radio.cuda()
                 self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
                 for _, param in self.frozen_radio.named_parameters():
                     param.requires_grad = False
@@ -58,11 +74,11 @@ class RTDETR(nn.Module):
             h_down, w_down = h // 2, w // 2
             x_down = F.interpolate(x_norm, size=[h_down, w_down])
             with torch.no_grad():
-                summary, spatial_features = self.frozen_radio(x_down)
+                summary, spatial_features = self.frozen_radio.forward_pre_logits(x_down)
             spatial_features = spatial_features.view(b, int(h_down // 16), int(w_down // 16), -1).permute(0, 3, 1, 2)
             spatial_features = self.maxpool(spatial_features)
 
-        feats = self.backbone(x)
+        feats = self.backbone.forward_feature_pyramid(x)
         if self.frozen_fm_cfg and self.frozen_fm_cfg.enabled:
             feats.append(spatial_features)
             x, proj_feats = self.encoder(feats)

@@ -17,7 +17,7 @@ from addict import Dict
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nvidia_tao_pytorch.cv.grounding_dino.model.swin_transformer import SwinTransformer
+from nvidia_tao_pytorch.cv.backbone_v2.swin import SwinTransformer
 
 
 class D2SwinTransformer(SwinTransformer):
@@ -44,24 +44,25 @@ class D2SwinTransformer(SwinTransformer):
         use_checkpoint = cfg.model.backbone.swin.use_checkpoint
 
         super().__init__(
-            pretrain_img_size,
-            patch_size,
-            in_chans,
-            embed_dim,
-            depths,
-            num_heads,
-            window_size,
-            mlp_ratio,
-            qkv_bias,
-            qk_scale,
-            drop_rate,
-            attn_drop_rate,
-            drop_path_rate,
-            norm_layer,
-            ape,
-            patch_norm,
+            img_size=pretrain_img_size,
+            patch_size=patch_size,
+            in_chans=in_chans,
+            embed_dim=embed_dim,
+            depths=depths,
+            num_heads=num_heads,
+            window_size=window_size,
+            mlp_ratio=mlp_ratio,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            drop_rate=drop_rate,
+            attn_drop_rate=attn_drop_rate,
+            drop_path_rate=drop_path_rate,
+            norm_layer=norm_layer,
+            ape=ape,
+            patch_norm=patch_norm,
             activation_checkpoint=use_checkpoint,
             dilation=False,
+            num_classes=0,
         )
 
         self._out_features = cfg.model.backbone.swin.out_features
@@ -73,10 +74,10 @@ class D2SwinTransformer(SwinTransformer):
             "res5": 32,
         }
         self._out_feature_channels = {
-            "res2": self.num_features[0],
-            "res3": self.num_features[1],
-            "res4": self.num_features[2],
-            "res5": self.num_features[3],
+            "res2": self.num_inter_features[0],
+            "res3": self.num_inter_features[1],
+            "res4": self.num_inter_features[2],
+            "res5": self.num_inter_features[3],
         }
 
     def forward(self, x):
@@ -107,7 +108,7 @@ class D2SwinTransformer(SwinTransformer):
                 norm_layer = getattr(self, f"norm{i}")
                 x_out = norm_layer(x_out)
 
-                out = x_out.view(-1, H, W, self.num_features[i]).permute(0, 3, 1, 2).contiguous()
+                out = x_out.view(-1, H, W, self.num_inter_features[i]).permute(0, 3, 1, 2).contiguous()
                 outs["res{}".format(i + 2)] = out
 
         for k in outs.keys():

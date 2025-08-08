@@ -32,23 +32,21 @@ def run_experiment(experiment_config, key, lightning_module=ClassifierPlModel):
 
     num_nodes = experiment_config.train.num_nodes
     clip_grad_norm = experiment_config.train.clip_grad_norm
-    # Load pretrained model as starting point if pretrained path is provided
-    pretrained_path = experiment_config.train.pretrained_model_path
 
-    precision = '32-true'
-    sync_batchnorm = False
+    if experiment_config.train.precision.lower() == 'fp16':
+        precision = '16-mixed'
+    elif experiment_config.train.precision.lower() == 'bf16':
+        precision = 'bf16-mixed'
+    elif experiment_config.train.precision.lower() == 'fp32':
+        precision = '32-true'
+    else:
+        raise NotImplementedError(
+            f"{experiment_config.train.precision} is not supported. Only bf16, fp16, and fp32 are supported")
 
     dm = CLDataModule(experiment_config.dataset)
     dm.setup(stage="fit")
 
-    if pretrained_path:
-        model = lightning_module.load_from_checkpoint(
-            pretrained_path,
-            map_location="cpu",
-            experiment_spec=experiment_config
-        )
-    else:
-        model = lightning_module(experiment_config)
+    model = lightning_module(experiment_config)
 
     strategy = 'auto'
     if len(trainer_kwargs['devices']) > 1:
@@ -61,7 +59,7 @@ def run_experiment(experiment_config, key, lightning_module=ClassifierPlModel):
         strategy=strategy,
         precision=precision,
         use_distributed_sampler=False,
-        sync_batchnorm=sync_batchnorm,
+        sync_batchnorm=True,
     )
 
     trainer.fit(model, dm, ckpt_path=resume_ckpt)

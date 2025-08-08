@@ -30,7 +30,7 @@ import math
 import torch
 import torch.nn as nn
 
-from nvidia_tao_pytorch.ssl.mae.model.hiera import Hiera, HieraBlock
+from timm.models.hiera import Hiera, HieraBlock
 from nvidia_tao_pytorch.ssl.mae.model.hiera_utils import undo_windowing, conv_nd
 
 
@@ -73,7 +73,7 @@ class MaskedAutoencoderHiera(Hiera):
             **kwargs,
         )
 
-        del self.norm, self.head
+        del self.head
         self.export = export
         encoder_dim_out = self.blocks[-1].dim_out
         self.encoder_norm = norm_layer(encoder_dim_out)
@@ -209,7 +209,7 @@ class MaskedAutoencoderHiera(Hiera):
             mask = self.get_random_mask(x, mask_ratio)  # [B, #MUs_all]
 
         # Get multi-scale representations from encoder
-        _, intermediates = super().forward(x, mask, return_intermediates=True)
+        _, intermediates = super().forward_features(x, mask, return_intermediates=True)
         # Resolution unchanged after q_pool stages, so skip those features
         intermediates = intermediates[: self.q_pool] + intermediates[-1:]
 

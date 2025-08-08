@@ -20,11 +20,9 @@ from typing import Dict, Optional
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torchvision.models._utils import IntermediateLayerGetter
 
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
-from nvidia_tao_pytorch.cv.deformable_detr.model.backbone import FrozenBatchNorm2d
-from nvidia_tao_pytorch.cv.deformable_detr.model.resnet import resnet50
+from nvidia_tao_pytorch.cv.backbone_v2.resnet import resnet_50
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
 
 from nvidia_tao_pytorch.cv.grounding_dino.model.swin_transformer import swin_model_dict
@@ -59,12 +57,7 @@ class BackboneBase(nn.Module):
                 if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
                     parameter.requires_grad_(False)
 
-            return_layers = {}
-            # 4 scale: {'layer2': '1', 'layer3': '2', 'layer4': '3'}
-            # 5 scale: {'layer1': '0', 'layer2': '1', 'layer3': '2', 'layer4': '3'}
-            for layer_index in return_interm_indices:
-                return_layers.update({"layer{}".format(layer_index + 1): "{}".format(layer_index)})
-            self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
+            self.body = backbone
         elif model_name.startswith(('swin')):
             for name, parameter in backbone.named_parameters():
                 if not train_backbone:
@@ -94,7 +87,7 @@ class BackboneBase(nn.Module):
             masks = input_tensors[:, 3:4]
             input_tensor = input_tensors[:, :3]
 
-        xs = self.body(input_tensor)
+        xs = self.body.forward_feature_pyramid(input_tensor)
 
         out: Dict[str, torch.Tensor] = {}
         for name, x in xs.items():
@@ -111,7 +104,6 @@ class Backbone(BackboneBase):
                  pretrained_backbone_path: Optional[str],
                  train_backbone: bool,
                  return_interm_indices: list,
-                 dilation: bool,
                  export: bool,
                  activation_checkpoint: bool):
         """Initialize the Backbone Class.
@@ -120,7 +112,6 @@ class Backbone(BackboneBase):
             pretrained_backbone_path (str): optional path to the pretrained backbone.
             train_backbone (bool): flag whether we want to train the backbone or not.
             return_interm_indices (list): list of layer indices to reutrn as backbone features.
-            dilation (bool): flag whether we can to use dilation or not.
             export (bool): flag to indicate whehter exporting to onnx or not.
             activation_checkpoint (bool): flag to indicate whether to run activation checkpointing during training.
 
@@ -135,24 +126,31 @@ class Backbone(BackboneBase):
         if len(np.unique(return_interm_indices)) != len(return_interm_indices):
             raise ValueError(f"Duplicate index in the provided return_interm_indices: {return_interm_indices}")
 
-        supported_arch = list(swin_model_dict.keys())
+        supported_arch = list(swin_model_dict.keys()) + ['resnet_50']
+
+        freeze_at = None
+        freeze_norm = False
+        if not train_backbone:
+            freeze_at = "all"
+        elif train_backbone:
+            freeze_at = [0]
 
         if name == 'resnet_50':
-            if export:
-                _norm_layer = nn.BatchNorm2d
-            else:
-                _norm_layer = FrozenBatchNorm2d
-
-            backbone = resnet50(norm_layer=_norm_layer,
-                                replace_stride_with_dilation=[False, False, dilation])
+            backbone = resnet_50(
+                freeze_at=freeze_at, freeze_norm=freeze_norm,
+                out_indices=return_interm_indices
+            )
             num_channels_all = np.array([256, 512, 1024, 2048])
             num_channels = num_channels_all[return_interm_indices]
         elif 'swin' in name:
             if name not in swin_model_dict:
                 raise NotImplementedError(f"{name} is not supported Swin backbone. "
                                           f"Supported architecutres: {swin_model_dict.keys()}")
-            backbone = swin_model_dict[name](out_indices=return_interm_indices,
-                                             activation_checkpoint=activation_checkpoint)
+            backbone = swin_model_dict[name](
+                freeze_at=freeze_at, freeze_norm=freeze_norm,
+                out_indices=return_interm_indices,
+                activation_checkpoint=activation_checkpoint
+            )
             num_channels_all = np.array(backbone.num_features)
             num_channels = num_channels_all[return_interm_indices]
         else:

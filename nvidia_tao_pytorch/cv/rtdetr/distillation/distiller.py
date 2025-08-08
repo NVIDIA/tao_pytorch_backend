@@ -25,30 +25,28 @@ from torch.optim.lr_scheduler import MultiStepLR, StepLR
 from fairscale.optim import OSS
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 
+from nvidia_tao_pytorch.core.distillation.distiller import Distiller
+from nvidia_tao_pytorch.core.distillation.utils import Binding, CaptureModule
+from nvidia_tao_pytorch.core.distillation.losses import WeightedCriterion, LPCriterion, KLDivCriterion, FeatureMapCriterion
+
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.core.callbacks.loggers import TAOStatusLogger
 from nvidia_tao_pytorch.core.callbacks.ema import EMA, EMAModelCheckpoint
 from nvidia_tao_pytorch.core.utilities import get_latest_checkpoint
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 
+from nvidia_tao_pytorch.cv.deformable_detr.model.matcher import HungarianMatcher
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco_eval import CocoEvaluator
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import rgetattr
 from nvidia_tao_pytorch.cv.deformable_detr.utils.box_ops import box_cxcywh_to_xyxy
 
 from nvidia_tao_pytorch.cv.rtdetr.model.build_nn_model import build_model
 # from nvidia_tao_pytorch.cv.rtdetr.model.matcher import HungarianMatcher
-from nvidia_tao_pytorch.cv.deformable_detr.model.matcher import HungarianMatcher
 from nvidia_tao_pytorch.cv.rtdetr.model.postprocess import RTDETRPostProcess
 from nvidia_tao_pytorch.cv.rtdetr.model.criterion import SetCriterion
-
-from nvidia_tao_pytorch.core.distillation.distiller import Distiller
-from nvidia_tao_pytorch.core.distillation.utils import Binding, CaptureModule
-from nvidia_tao_pytorch.core.distillation.losses import WeightedCriterion, LPCriterion, KLDivCriterion, FeatureMapCriterion
-
-from nvidia_tao_pytorch.cv.rtdetr.model.backbone.resnet import resnet_model_dict
-from nvidia_tao_pytorch.cv.rtdetr.model.backbone.convnext import convnext_model_dict
-# from nvidia_tao_pytorch.cv.rtdetr.model.backbone.efficientvit import efficientvit_model_dict
-from nvidia_tao_pytorch.cv.rtdetr.utils.misc import bbox_overlaps, load_pretrained_weights
+from nvidia_tao_pytorch.cv.rtdetr.model.utils import rtdetr_parser, ptm_adapter
+from nvidia_tao_pytorch.cv.rtdetr.utils.misc import bbox_overlaps
 
 
 class RtdetrDistiller(Distiller):
@@ -56,16 +54,7 @@ class RtdetrDistiller(Distiller):
 
     def __init__(self, experiment_spec, export=False):
         """Initializes the distiller from given experiment_spec."""
-        self.supported_teacher_arch = list(resnet_model_dict.keys()) + list(convnext_model_dict.keys())
-
-        # Restricting students to only some
-        self.supported_student_arch = ['resnet_34', 'resnet_50',
-                                       'efficientvit_b0', 'efficientvit_b1',
-                                       'convnext_large', 'convnext_small', 'convnext_tiny'
-                                       ]
-        # init the model
         super().__init__(experiment_spec, export)
-
         self.checkpoint_filename = 'rtdetr_model'
 
     def configure_callbacks(self) -> Sequence[Callback] | pl.Callback:
@@ -128,14 +117,6 @@ class RtdetrDistiller(Distiller):
         teacher_cfg = copy.deepcopy(self.experiment_spec)
         teacher_cfg.model = self.experiment_spec.distill.teacher
 
-        # Check if supported teacher arch
-        assert teacher_cfg.model.backbone in self.supported_teacher_arch, f"Teacher arch {teacher_cfg.model.backbone} not supported.\
-            Supported archs: {self.supported_teacher_arch}"
-
-        # Check if supported student arch
-        assert self.experiment_spec.model.backbone in self.supported_student_arch, f"Student arch {self.experiment_spec.model.backbone} not supported.\
-            Supported archs: {self.supported_student_arch}"
-
         # Build the teacher model
         self.teacher = build_model(experiment_config=teacher_cfg, export=export)
         # Build the student model
@@ -144,7 +125,11 @@ class RtdetrDistiller(Distiller):
         if self.experiment_spec.distill.pretrained_teacher_model_path:
             teacher_model_dict = self.teacher.model.state_dict()
             student_model_dict = self.model.model.state_dict()
-            checkpoint = load_pretrained_weights(self.experiment_spec.distill.pretrained_teacher_model_path)
+            checkpoint = load_pretrained_weights(
+                self.experiment_spec.distill.pretrained_teacher_model_path,
+                ptm_adapter=ptm_adapter,
+                parser=rtdetr_parser
+            )
             new_checkpoint = {}
             kv_for_student = {}
 
@@ -506,7 +491,7 @@ class RtdetrDistiller(Distiller):
         pl.utilities.memory.garbage_collection_cuda()
 
     def forward(self, x):
-        """Forward of the dino model."""
+        """Forward of the rtdetr model."""
         outputs = self.model(x)
         return outputs
 
@@ -515,3 +500,4 @@ class RtdetrDistiller(Distiller):
         keys_to_pop = [key for key in checkpoint['state_dict'].keys() if key.startswith('teacher')]
         for key in keys_to_pop:
             checkpoint['state_dict'].pop(key)
+        checkpoint["tao_model"] = "rtdetr"

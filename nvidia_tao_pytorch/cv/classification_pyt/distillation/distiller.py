@@ -31,7 +31,6 @@ from torchmetrics import MetricCollection
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 from transformers.optimization import get_cosine_schedule_with_warmup
 
-from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.callbacks.loggers import TAOStatusLogger
 from nvidia_tao_pytorch.core.callbacks.ema import EMA, EMAModelCheckpoint
@@ -40,16 +39,7 @@ from nvidia_tao_pytorch.core.utilities import get_latest_checkpoint
 from nvidia_tao_pytorch.core.distillation.distiller import Distiller
 from nvidia_tao_pytorch.core.distillation.losses import LPCriterion, KLDivCriterion
 
-from nvidia_tao_pytorch.cv.classification_pyt.model.classifier import build_model, channels_map
-from nvidia_tao_pytorch.cv.classification_pyt.model.backbones import (
-    fan_model_dict,
-    nvdino_model_dict,
-    cradio_model_dict,
-    faster_vit_model_dict,
-    gc_vit_model_dict,
-    clip_model_dict,
-    convnextv2_model_dict
-)
+from nvidia_tao_pytorch.cv.classification_pyt.model.classifier import build_model
 from nvidia_tao_pytorch.cv.classification_pyt.utils.loss import Cross_Entropy
 from nvidia_tao_pytorch.cv.classification_pyt.dataloader.dataset import NOCLASS_IDX
 logger = logging.getLogger(__name__)
@@ -60,26 +50,6 @@ class ClassDistiller(Distiller):
 
     def __init__(self, experiment_spec, export=False):
         """Initializes the distiller from given experiment_spec."""
-        self.supported_teacher_arch = (
-            list(fan_model_dict.keys()) +
-            list(nvdino_model_dict.keys()) +
-            list(cradio_model_dict.keys()) +
-            list(faster_vit_model_dict.keys()) +
-            list(gc_vit_model_dict.keys()) +
-            list(clip_model_dict.keys()) +
-            list(convnextv2_model_dict.keys())
-        )
-
-        # Restricting students to only some
-        self.supported_student_arch = (
-            list(fan_model_dict.keys()) +
-            list(nvdino_model_dict.keys()) +
-            list(cradio_model_dict.keys()) +
-            list(faster_vit_model_dict.keys()) +
-            list(gc_vit_model_dict.keys()) +
-            list(clip_model_dict.keys()) +
-            list(convnextv2_model_dict.keys())
-        )
         # Init local params
         self.experiment_spec = experiment_spec
         self.checkpoint_filename = "classifier_model"
@@ -99,7 +69,6 @@ class ClassDistiller(Distiller):
         self.monitor_name = self.train_config.optim.monitor_name
 
         self.num_classes = self.dataset_config.num_classes
-        self.binary = self.model_config.head.binary
         self.distill_weight = self.distill_config.loss_lambda
         self.distill_loss = self.distill_config.loss_type
         if self.distill_loss == "FD" or self.distill_loss == "CS":
@@ -128,27 +97,19 @@ class ClassDistiller(Distiller):
         train_acc = {}
         val_acc = {}
         if self.num_classes > 0:
-            if self.binary:
-                train_acc["train_binary_acc"] = Accuracy(
-                    task="binary", ignore_index=NOCLASS_IDX
+            for topk in self.model_config.head.topk:
+                train_acc[f"train_acc_{topk}"] = Accuracy(
+                    task="multiclass",
+                    num_classes=self.num_classes,
+                    top_k=topk,
+                    ignore_index=NOCLASS_IDX,
                 )
-                val_acc["val_binary_acc"] = Accuracy(
-                    task="binary", ignore_index=NOCLASS_IDX
+                val_acc[f"val_acc_{topk}"] = Accuracy(
+                    task="multiclass",
+                    num_classes=self.num_classes,
+                    top_k=topk,
+                    ignore_index=NOCLASS_IDX,
                 )
-            else:
-                for topk in self.model_config.head.topk:
-                    train_acc[f"train_acc_{topk}"] = Accuracy(
-                        task="multiclass",
-                        num_classes=self.num_classes,
-                        top_k=topk,
-                        ignore_index=NOCLASS_IDX,
-                    )
-                    val_acc[f"val_acc_{topk}"] = Accuracy(
-                        task="multiclass",
-                        num_classes=self.num_classes,
-                        top_k=topk,
-                        ignore_index=NOCLASS_IDX,
-                    )
         self.train_acc = MetricCollection(train_acc)
         self.valid_acc = MetricCollection(val_acc)
         self.batch_size = self.dataset_config.batch_size
@@ -220,56 +181,20 @@ class ClassDistiller(Distiller):
         # Build the teacher config
         teacher_cfg = copy.deepcopy(self.experiment_spec)
         teacher_cfg.model = self.experiment_spec.distill.teacher
+        teacher_cfg.model.backbone.pretrained_backbone_path = self.experiment_spec.distill.pretrained_teacher_model_path
+
         if 'radio' in teacher_cfg.model.backbone.type:
             assert self.num_classes == 0, "Number of classes must be 0 when using radio as the teacher"
         if self.num_classes == 0:
             assert self.distill_loss == "FD" or self.distill_loss == "CS", \
                 "Only FD (`smooth L1`), CS (`cosine similarity`) are supported when the number of classes is 0"
-        # Check if supported teacher arch
-        assert (
-            teacher_cfg.model.backbone.type in self.supported_teacher_arch
-        ), f"Teacher arch {teacher_cfg.model.backbone.type} not supported.\
-            Supported archs: {self.supported_teacher_arch}"
 
-        # Check if supported student arch
-        assert (
-            self.experiment_spec.model.backbone.type in self.supported_student_arch
-        ), f"Student arch {self.experiment_spec.model.backbone.type} not supported.\
-            Supported archs: {self.supported_student_arch}"
-
-        # build the projection layer
-        t_feat_dim = channels_map[teacher_cfg.model.backbone.type]
-        s_feat_dim = channels_map[self.experiment_spec.model.backbone.type]
-        self.projection_layer = nn.Linear(s_feat_dim, t_feat_dim)
         # Build the teacher model
         self.teacher = build_model(experiment_config=teacher_cfg, export=export)
         # Build the student model
         self.model = build_model(experiment_config=self.experiment_spec, export=export)
-        if self.experiment_spec.distill.pretrained_teacher_model_path:
-            state_dict = torch.load(self.experiment_spec.distill.pretrained_teacher_model_path, weights_only=False)
-            state_dict = state_dict.get('state_dict', state_dict)
-
-            updated_state_dict = {}
-            for k, v in state_dict.items():
-                if k == "head.fc.weight":
-                    updated_state_dict["decoder.fc.weight"] = v
-                elif k == "head.fc.bias":
-                    updated_state_dict["decoder.fc.bias"] = v
-                elif k.startswith("radio_model."):
-                    updated_state_dict[k.replace("radio_model.", "backbone.radio.radio.")] = v
-                elif k.startswith("model.backbone."):
-                    updated_state_dict[k.replace("model.backbone.", "backbone.")] = v
-                elif k.startswith("model."):
-                    updated_state_dict[k.replace("model.", "backbone.")] = v
-                else:
-                    updated_state_dict[k] = v
-            msg = self.teacher.load_state_dict(
-                updated_state_dict,
-                strict=False,
-            )
-            if get_global_rank() == 0:
-                logger.info(f"Loaded pretrained weights from {self.experiment_spec.distill.pretrained_teacher_model_path}")
-                logger.info(f"{msg}")
+        # build the projection layer
+        self.projection_layer = nn.Linear(self.model.num_features, self.teacher.num_features)
         self.teacher.eval()
         self.model.train()
 
@@ -292,7 +217,6 @@ class ClassDistiller(Distiller):
         ], "Only CrossEntropyLoss is supported."
         if self.model_config.head.loss.type == "CrossEntropyLoss":
             self.criterion = Cross_Entropy(
-                binary=self.binary,
                 label_smoothing=self.model_config.head.loss.label_smooth_val,
             )
         else:
@@ -302,7 +226,7 @@ class ClassDistiller(Distiller):
             "L1": LPCriterion(p=1),
             "L2": LPCriterion(p=2),
             "KL": KLDivCriterion(),
-            "CE": Cross_Entropy(soft=True, binary=False, label_smoothing=False),
+            "CE": Cross_Entropy(soft=True, label_smoothing=False),
             "FD": nn.SmoothL1Loss(beta=2.0),
             "CS": nn.CosineSimilarity(dim=-1, eps=1e-8),
         }
@@ -417,9 +341,7 @@ class ClassDistiller(Distiller):
         teacher_outputs = self.teacher(batch["img"])
         if self.num_classes > 0:
             acc = self.train_acc(out, batch["class"].long())
-            self.log_dict(acc)
-            if self.binary:
-                out = torch.nn.Sigmoid()(out.squeeze(1))
+            self.log_dict(acc, sync_dist=False, on_step=True, on_epoch=False, prog_bar=True)
             loss = self.criterion(out, batch["class"].long())
         else:
             loss = torch.tensor(0.0)
@@ -510,8 +432,6 @@ class ClassDistiller(Distiller):
     def validation_step(self, batch, batch_idx):
         """Validation step."""
         out = self.model(batch["img"])
-        if self.binary:
-            out = torch.nn.Sigmoid()(out.squeeze(1))
         loss = self.criterion(out, batch["class"].long())
         self.valid_acc.update(out, batch["class"].long())
         self.log(
@@ -534,7 +454,7 @@ class ClassDistiller(Distiller):
         # scores, mean_scores = self._collect_epoch_states()  # logs all evaluation metrics
         # self.log("val_acc", scores['acc'], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         acc = self.valid_acc.compute()
-        self.log_dict(acc, sync_dist=True)
+        self.log_dict(acc, sync_dist=True, on_step=False, on_epoch=True, prog_bar=False)
         self.valid_acc.reset()
         # self._clear_cache()
 
@@ -559,3 +479,4 @@ class ClassDistiller(Distiller):
         ]
         for key in keys_to_pop:
             checkpoint["state_dict"].pop(key)
+        checkpoint["tao_model"] = "classification"

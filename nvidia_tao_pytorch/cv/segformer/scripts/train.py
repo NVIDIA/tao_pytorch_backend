@@ -44,7 +44,6 @@ def run_experiment(experiment_config, key):
     pretrained_path = experiment_config.train.pretrained_model_path
 
     precision = '32-true'
-    sync_batchnorm = False
 
     assert enable_tensorboard is False, "Currently tensorboard visualization is not supported for Segmentation"
 
@@ -71,7 +70,7 @@ def run_experiment(experiment_config, key):
         strategy=strategy,
         precision=precision,
         use_distributed_sampler=False,
-        sync_batchnorm=sync_batchnorm,
+        sync_batchnorm=True,  # SegFormer head has BatchNorm.
         callbacks=[lr_monitor],
     )
 

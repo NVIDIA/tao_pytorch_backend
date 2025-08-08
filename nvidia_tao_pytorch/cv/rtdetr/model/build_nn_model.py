@@ -17,17 +17,14 @@
 import torch.nn as nn
 
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
-from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_pytorch.core.tlt_logging import logger
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 
-from nvidia_tao_pytorch.cv.rtdetr.model.backbone.resnet import resnet_model_dict
-from nvidia_tao_pytorch.cv.rtdetr.model.backbone.convnext import convnext_model_dict
-from nvidia_tao_pytorch.cv.rtdetr.model.backbone.fan import fan_model_dict
-from nvidia_tao_pytorch.cv.rtdetr.model.backbone.efficientvit import efficientvit_model_dict
-
+from nvidia_tao_pytorch.cv.rtdetr.model.backbone.registry import RTDETR_BACKBONE_REGISTRY
 from nvidia_tao_pytorch.cv.rtdetr.model.hybrid_encoder import HybridEncoder
 from nvidia_tao_pytorch.cv.rtdetr.model.rtdetr_decoder import RTDETRTransformer
 from nvidia_tao_pytorch.cv.rtdetr.model.rtdetr import RTDETR
-from nvidia_tao_pytorch.cv.rtdetr.utils.misc import load_pretrained_weights
+from nvidia_tao_pytorch.cv.rtdetr.model.utils import rtdetr_parser, ptm_adapter
 
 
 class RTDETRModel(nn.Module):
@@ -67,55 +64,48 @@ class RTDETRModel(nn.Module):
                  ):
         """Initialize RT-DETR Model."""
         super().__init__()
-        parser = None
-        if backbone_name.startswith('resnet'):
-            backbone = resnet_model_dict[backbone_name](
-                out_indices,
+        freeze_at = None
+        freeze_norm = False
+        if not train_backbone:
+            freeze_at = "all"
+        elif pretrained_backbone and train_backbone and "resnet" in backbone_name:
+            freeze_at = [0]
+            freeze_norm = True
+        backbone = RTDETR_BACKBONE_REGISTRY.get(backbone_name)(
+            out_indices,
+            freeze_at=freeze_at,
+            freeze_norm=freeze_norm,
+            activation_checkpoint=activation_checkpoint,
+        )
+        in_channels = backbone.out_channels
+        if pretrained_backbone:
+            state_dict = load_pretrained_weights(
+                pretrained_backbone,
+                parser=rtdetr_parser,
+                ptm_adapter=ptm_adapter
             )
-            for name, parameter in backbone.named_parameters():
-                if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
-                    parameter.requires_grad_(False)
-            in_channels = backbone.out_channels
-        elif backbone_name.startswith('convnext'):
-            backbone = convnext_model_dict[backbone_name](
-                out_indices
-            )
-            for name, parameter in backbone.named_parameters():
-                if not train_backbone:
-                    parameter.requires_grad_(False)
-            in_channels = backbone.out_channels
-
-            def parse_convnext_ptm(m):
-                """Parse official checkpoint from Meta"""
-                if "model" in m:
-                    return m["model"]
-                return m
-            parser = parse_convnext_ptm
-        elif backbone_name.startswith('fan'):
-            backbone = fan_model_dict[backbone_name](
-                out_indices, activation_checkpoint=activation_checkpoint,
-            )
-            for name, parameter in backbone.named_parameters():
-                if not train_backbone:
-                    parameter.requires_grad_(False)
-            in_channels = [o for i, o in enumerate(backbone.out_channels) if i in out_indices]
-        elif backbone_name.startswith('efficientvit'):
-            backbone = efficientvit_model_dict[backbone_name](
-                out_indices
-            )
-            for name, parameter in backbone.named_parameters():
-                if not train_backbone:
-                    parameter.requires_grad_(False)
-            in_channels = backbone.out_channels
-        else:
-            raise NotImplementedError(f"{backbone_name} is not supported")
-
-        pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone, parser=parser) if pretrained_backbone else None
-        if pretrained_backbone_ckp:
-            _tmp_st_output = backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
+            new_checkpoint = {}
+            teacher_model_dict = backbone.state_dict()
+            for k in sorted(teacher_model_dict.keys()):
+                # k_ckpt = "model." + k
+                k_ckpt = k
+                v = state_dict.get(k_ckpt, None)
+                if v is None:
+                    logger.info(f"skip layer: {k}, {k_ckpt} doesn't exist in the pretrained model.")
+                    continue
+                # Handle PTL format
+                # k = k.replace("model.model.", "model.")
+                if v.size() == teacher_model_dict[k].size():
+                    new_checkpoint[k] = v
+                else:
+                    # Skip layers that mismatch
+                    logger.info(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
+                                f"current model layer size: {list(teacher_model_dict[k].size())}")
+                    new_checkpoint[k] = teacher_model_dict[k]
+            msg = backbone.load_state_dict(new_checkpoint, strict=False)
             if get_global_rank() == 0:
-                logging.info(f"Loaded pretrained weights from {pretrained_backbone}")
-                logging.info(f"{_tmp_st_output}")
+                logger.info(f"Loaded pretrained weights from {pretrained_backbone}")
+                logger.info(f"incompatible keys: {msg}")
 
         encoder = HybridEncoder(
             in_channels=in_channels,
