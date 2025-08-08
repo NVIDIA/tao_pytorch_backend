@@ -37,9 +37,9 @@ def update_config(cfg, task):
     assert len(cfg.train.mask_thres) == 3, "Length of mask thresholds must be 1 or 3."
 
     # frozen_stages
-    if len(cfg.model.frozen_stages) == 1:
-        cfg.model.frozen_stages = [0, cfg.model.frozen_stages[0]]
-    assert len(cfg.model.frozen_stages) == 2, "Length of frozen stages must be 1 or 2."
+    # if len(cfg.model.frozen_stages) == 1:
+    #     cfg.model.frozen_stages = [0, cfg.model.frozen_stages[0]]
+    # assert len(cfg.model.frozen_stages) == 2, "Length of frozen stages must be 1 or 2."
     assert len(cfg.train.margin_rate) == 2, "Length of margin rate must be 2."
 
     return cfg

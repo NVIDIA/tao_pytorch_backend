@@ -118,7 +118,7 @@ class Model(nn.Module):
         """Forward."""
         backbone_out = self.backbone(x)
         neck_out = self.neck(backbone_out)
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(enabled=False, device_type="cuda"):
             y = self.head(neck_out)
 
         return y

@@ -1,5 +1,5 @@
 {
     "registry": "nvcr.io",
     "repository": "nvstaging/tao/tao_pytorch_base_image",
-    "digest": "sha256:e5ea17c876b692e92cde067097f256bdedbe8bf096066a82c60a976ec0780645"
+    "digest": "sha256:acbcb8bbba7123bd73e608ddc6ecaec998d179881d7260ac5eb5c0efd2b17288"
 }

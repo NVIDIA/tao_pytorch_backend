@@ -109,7 +109,7 @@ class UpSampleLayer(nn.Module):
         self.factor = None if self.size is not None else factor
         self.align_corners = align_corners
 
-    @autocast(enabled=False)
+    @autocast(enabled=False, device_type="cuda")
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward."""
         if (self.size is not None and tuple(x.shape[-2:]) == self.size) or self.factor == 1:
@@ -432,7 +432,7 @@ class LiteMLA(nn.Module):
             act_func=act_func[1],
         )
 
-    @autocast(enabled=False)
+    @autocast(enabled=False, device_type="cuda")
     def relu_linear_att(self, qkv: torch.Tensor) -> torch.Tensor:
         """ReLU Linear attention."""
         B, _, H, W = list(qkv.size())
@@ -472,7 +472,7 @@ class LiteMLA(nn.Module):
         out = torch.reshape(out, (B, -1, H, W))
         return out
 
-    @autocast(enabled=False)
+    @autocast(enabled=False, device_type="cuda")
     def relu_quadratic_att(self, qkv: torch.Tensor) -> torch.Tensor:
         """ReLU Quadratic attention."""
         B, _, H, W = list(qkv.size())

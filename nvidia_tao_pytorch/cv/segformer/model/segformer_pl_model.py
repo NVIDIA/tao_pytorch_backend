@@ -26,11 +26,12 @@ from torch.optim import lr_scheduler
 from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 from nvidia_tao_pytorch.core.path_utils import expand_path
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
-from nvidia_tao_pytorch.cv.segformer.utils.metric_tool import ConfuseMatrixMeter, resize
 from nvidia_tao_pytorch.cv.segformer.model.segformer import build_model
 from nvidia_tao_pytorch.cv.segformer.dataloader.utils import build_target_class_list, build_palette
 from nvidia_tao_pytorch.cv.segformer.utils.loss import cross_entropy, mmIoULoss
 from nvidia_tao_pytorch.cv.segformer.utils import utils_vis
+from nvidia_tao_pytorch.cv.segformer.utils.iou_metric import MeanIoUMeter
+from nvidia_tao_pytorch.cv.segformer.model.segformer_utils import resize
 
 
 class SegFormerPlModel(TAOLightningModule):
@@ -64,7 +65,7 @@ class SegFormerPlModel(TAOLightningModule):
         self.monitor_name = self.train_config.optim.monitor_name
 
         self.n_class = self.dataset_config.num_classes
-        self.running_metric = ConfuseMatrixMeter(n_class=self.n_class)
+        self.running_metric = MeanIoUMeter(n_class=self.n_class)
         self.batch_size = self.dataset_config.batch_size
 
         # #  training log
@@ -92,7 +93,6 @@ class SegFormerPlModel(TAOLightningModule):
     def _build_model(self, export):
         """Internal function to build the model."""
         self.model = build_model(experiment_config=self.experiment_spec, export=export)
-        print(self.model)
 
     def _build_criterion(self):
         """Internal function to build the loss function."""
@@ -106,36 +106,86 @@ class SegFormerPlModel(TAOLightningModule):
 
         self.criterion = self._pxl_loss
 
+    def _get_parameter_groups(self, lr, weight_decay):
+        """Get parameter groups for the optimizer."""
+        backbone_decay = []
+        backbone_no_decay = []
+        decoder_decay = []
+        decoder_no_decay = []
+        skip_names = [
+            # Common
+            "bias",
+            "norm",
+            "gamma",
+            "bn",
+            "temperature",
+            "token",
+            # RADIOAdapter
+            "level_embed",
+            "spm",
+            "ls",
+            # SegFormer decoder
+            "linear_fuse.1"  # nn.BatchNorm
+        ]
+        for name, param in self.model.backbone.named_parameters():
+            if not param.requires_grad:
+                continue
+            if any(s in name for s in skip_names):
+                backbone_no_decay.append(param)
+            else:
+                backbone_decay.append(param)
+        for name, param in self.model.decoder.named_parameters():
+            if not param.requires_grad:
+                continue
+            if any(s in name for s in skip_names):
+                decoder_no_decay.append(param)
+            else:
+                decoder_decay.append(param)
+        return [
+            {"params": backbone_decay, "lr": lr, "weight_decay": weight_decay},
+            {"params": backbone_no_decay, "lr": lr, "weight_decay": 0.0},
+            {"params": decoder_decay, "lr": lr * 10.0, "weight_decay": weight_decay},
+            {"params": decoder_no_decay, "lr": lr * 10.0, "weight_decay": 0.0},
+        ]
+
     def configure_optimizers(self):
         """Configure optimizers for training"""
+        params = self._get_parameter_groups(self.lr, self.optimizer.weight_decay)
         # define optimizers
         if self.optimizer.optim == "sgd":
-            self.optimizer_G = optim.SGD(self.model.parameters(), lr=self.lr,
-                                         momentum=self.optimizer.momentum,  # 0.9
-                                         weight_decay=self.optimizer.weight_decay)  # 5e-4
+            self.optimizer_G = optim.SGD(
+                params,
+                lr=self.lr,
+                momentum=self.optimizer.momentum,
+                weight_decay=self.optimizer.weight_decay,
+            )
         elif self.optimizer.optim == "adam":
-            self.optimizer_G = optim.Adam(self.model.parameters(), lr=self.lr,
-                                          weight_decay=self.optimizer.weight_decay)  # 0
+            self.optimizer_G = optim.Adam(params, lr=self.lr, weight_decay=self.optimizer.weight_decay)
         elif self.optimizer.optim == "adamw":
-            self.optimizer_G = optim.AdamW(self.model.parameters(), lr=self.lr,
-                                           betas=[0.0, 0.9], weight_decay=self.optimizer.weight_decay)
+            self.optimizer_G = optim.AdamW(
+                params, lr=self.lr, betas=[0.9, 0.999], weight_decay=self.optimizer.weight_decay
+            )
         else:
             raise NotImplementedError("Optimizer {} is not implemented".format(self.optimizer.optim))
 
         # define lr schedulers
+        interval = "epoch"
         if self.lr_policy == 'linear':
-            def lambda_rule(epoch):
+            interval = "step"
+
+            def lambda_rule(step):
                 warmup_ratio = 1e-6
-                warmup_epochs = (self.max_epochs // 5)
-                warmup_epochs = 3
+                warmup_steps = self.trainer.estimated_stepping_batches // 100
+                max_steps = self.trainer.estimated_stepping_batches
                 # k = (1 - epoch / (self.max_epochs + 1)) * (1 - warmup_ratio)
                 # lr_l = (1 - k)
                 # lr_l = 1.0 - epoch / float(self.max_epochs + 1)
-                if epoch < warmup_epochs:
-                    lr_l = 1 - (1 - warmup_ratio) * (warmup_epochs - epoch) / warmup_epochs
+                if step < warmup_steps:
+                    lr_l = 1 - (1 - warmup_ratio) * (warmup_steps - step) / warmup_steps
                 else:
-                    lr_l = 1 - (epoch - warmup_epochs) / float(self.max_epochs - warmup_epochs + 1)
+                    lr_l = 1 - (step - warmup_steps) / float(max_steps - warmup_steps + 1)
                 return lr_l
+
             scheduler = lr_scheduler.LambdaLR(self.optimizer_G, lr_lambda=lambda_rule)
         elif self.lr_policy == 'step':
             step_size = self.max_epochs // 3
@@ -148,7 +198,11 @@ class SegFormerPlModel(TAOLightningModule):
 
         optim_dict = {}
         optim_dict["optimizer"] = self.optimizer_G
-        optim_dict["lr_scheduler"] = self.lr_scheduler
+        optim_dict["lr_scheduler"] = {
+            "scheduler": self.lr_scheduler,
+            "interval": interval,
+            "frequency": 1
+        }
         optim_dict['monitor'] = self.monitor_name
         return optim_dict
 
@@ -167,7 +221,7 @@ class SegFormerPlModel(TAOLightningModule):
         )
         pr = torch.argmax(pr, dim=1)
 
-        _ = self.running_metric.update_cm(pr=pr.cpu().numpy(), gt=target.cpu().numpy())  # current_score
+        self.running_metric.update_cm(pr=pr.cpu(), gt=target.cpu())  # current_score
 
     def _visualize_pred(self, i):
         """Helper function to visualize predictions"""
@@ -191,7 +245,13 @@ class SegFormerPlModel(TAOLightningModule):
         """
         if np.mod(batch_idx, vis_afer_n_batches) == 0:
             for i in range(len(self.batch['img'])):
-                vis_input = utils_vis.make_numpy_grid(utils_vis.de_norm(self.batch['img'][i].unsqueeze(0), mean=self.dataset_config["augmentation"]["mean"], std=self.dataset_config["augmentation"]["std"]))
+                vis_input = resize(
+                    self.batch['img'][i].unsqueeze(0),
+                    size=self.batch['mask'].shape[-2:],
+                    mode='bilinear',
+                    align_corners=False
+                )
+                vis_input = utils_vis.make_numpy_grid(utils_vis.de_norm(vis_input, mean=self.dataset_config["augmentation"]["mean"], std=self.dataset_config["augmentation"]["std"]))
 
                 if self.n_class > 2:
                     # print("Visualising multiple classes")
@@ -309,7 +369,12 @@ class SegFormerPlModel(TAOLightningModule):
         """Training step."""
         _, loss = self._forward_pass(batch, "train")
         self._update_metric()
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log(
+            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=self.batch_size
+        )
+        self.log(
+            "lr", self.lr_schedulers().get_last_lr()[0], on_step=True, on_epoch=False, prog_bar=True, sync_dist=True
+        )
         return loss
 
     def on_train_epoch_end(self):
@@ -379,7 +444,7 @@ class SegFormerPlModel(TAOLightningModule):
         self._update_metric()
         self.final_pred = resize(
             self.final_pred,
-            size=batch["img"].shape[-2:],
+            size=batch["mask"].shape[-2:],
             mode='bilinear',
             align_corners=False
         )

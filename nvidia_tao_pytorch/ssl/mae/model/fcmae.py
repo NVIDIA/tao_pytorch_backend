@@ -24,8 +24,8 @@ import torch.nn as nn
 
 from timm.models.layers import trunc_normal_
 
-from nvidia_tao_pytorch.ssl.mae.model.convnextv2 import Block
-from nvidia_tao_pytorch.ssl.mae.model.utils import LayerNorm
+from nvidia_tao_pytorch.cv.backbone_v2.convnext_v2 import Block
+from nvidia_tao_pytorch.cv.backbone_v2.nn.norm import LayerNorm2d
 
 
 class MAEConvNeXtV2(nn.Module):
@@ -52,12 +52,12 @@ class MAEConvNeXtV2(nn.Module):
         self.downsample_layers = nn.ModuleList()  # stem and 3 intermediate downsampling conv layers
         stem = nn.Sequential(
             nn.Conv2d(in_chans, dims[0], kernel_size=4, stride=4),
-            LayerNorm(dims[0], eps=1e-6, data_format="channels_first")
+            LayerNorm2d(dims[0], eps=1e-6, data_format="channels_first")
         )
         self.downsample_layers.append(stem)
         for i in range(3):
             downsample_layer = nn.Sequential(
-                LayerNorm(dims[i], eps=1e-6, data_format="channels_first"),
+                LayerNorm2d(dims[i], eps=1e-6, data_format="channels_first"),
                 nn.Conv2d(dims[i], dims[i + 1], kernel_size=2, stride=2),
             )
             self.downsample_layers.append(downsample_layer)

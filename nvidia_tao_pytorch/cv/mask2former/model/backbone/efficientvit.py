@@ -16,26 +16,26 @@ from addict import Dict
 from torch import nn
 
 from nvidia_tao_pytorch.core.decorators import experimental
-from nvidia_tao_pytorch.cv.backbone.efficientvit import (
-    efficientvit_backbone_b0,
-    efficientvit_backbone_b1,
-    efficientvit_backbone_b2,
-    efficientvit_backbone_b3,
-    efficientvit_backbone_l0,
-    efficientvit_backbone_l1,
-    efficientvit_backbone_l2,
-    efficientvit_backbone_l3,
+from nvidia_tao_pytorch.cv.backbone_v2.efficientvit import (
+    efficientvit_b0,
+    efficientvit_b1,
+    efficientvit_b2,
+    efficientvit_b3,
+    efficientvit_l0,
+    efficientvit_l1,
+    efficientvit_l2,
+    efficientvit_l3,
 )
 
 arch = {
-    'b0': (efficientvit_backbone_b0, [8, 16, 32, 64, 128]),
-    'b1': (efficientvit_backbone_b1, [16, 32, 64, 128, 256]),
-    'b2': (efficientvit_backbone_b2, [24, 48, 96, 192, 384]),
-    'b3': (efficientvit_backbone_b3, [32, 64, 128, 256, 512]),
-    'l0': (efficientvit_backbone_l0, [32, 64, 128, 256, 512]),
-    'l1': (efficientvit_backbone_l1, [32, 64, 128, 256, 512]),
-    'l2': (efficientvit_backbone_l2, [32, 64, 128, 256, 512]),
-    'l3': (efficientvit_backbone_l3, [64, 128, 256, 512, 1024]),
+    'b0': (efficientvit_b0, [8, 16, 32, 64, 128]),
+    'b1': (efficientvit_b1, [16, 32, 64, 128, 256]),
+    'b2': (efficientvit_b2, [24, 48, 96, 192, 384]),
+    'b3': (efficientvit_b3, [32, 64, 128, 256, 512]),
+    'l0': (efficientvit_l0, [32, 64, 128, 256, 512]),
+    'l1': (efficientvit_l1, [32, 64, 128, 256, 512]),
+    'l2': (efficientvit_l2, [32, 64, 128, 256, 512]),
+    'l3': (efficientvit_l3, [64, 128, 256, 512, 1024]),
 }
 
 

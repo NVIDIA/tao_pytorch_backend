@@ -76,6 +76,7 @@ class RTDETRPlModel(TAOLightningModule):
         )
 
         resume_ckpt = self.experiment_spec["train"]["resume_training_checkpoint_path"] or get_latest_checkpoint(results_dir)
+        resumed_epoch = 0
         if resume_ckpt:
             resumed_epoch = re.search('epoch_(\\d+)', resume_ckpt)
             if resumed_epoch:
@@ -312,8 +313,8 @@ class RTDETRPlModel(TAOLightningModule):
         mAP = self.val_coco_evaluator.coco_eval['bbox'].stats[0]
         mAP50 = self.val_coco_evaluator.coco_eval['bbox'].stats[1]
         if self.trainer.is_global_zero:
-            logging.info("\n Validation mAP : {}\n".format(mAP))
-            logging.info("\n Validation mAP50 : {}\n".format(mAP50))
+            logging.info("Validation mAP : {}".format(mAP))
+            logging.info("Validation mAP50 : {}".format(mAP50))
 
         self.log("current_epoch", self.current_epoch, sync_dist=True)
         self.log("val_mAP", mAP, sync_dist=True)
@@ -403,3 +404,7 @@ class RTDETRPlModel(TAOLightningModule):
         """Forward of the deformable detr model."""
         outputs = self.model(x)
         return outputs
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "rtdetr"

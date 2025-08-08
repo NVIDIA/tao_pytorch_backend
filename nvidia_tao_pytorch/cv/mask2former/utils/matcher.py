@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 from nvidia_tao_pytorch.cv.mask2former.utils.point_features import point_sample
 
@@ -170,7 +170,7 @@ class HungarianMatcher(nn.Module):
                 out_mask = out_mask.flatten(1)  # [num_queries, H*W]
                 tgt_mask = tgt_mask.flatten(1)  # [num_total_targets, H*W]
 
-            with autocast(enabled=False):
+            with autocast(enabled=False, device_type="cuda"):
                 out_mask = out_mask.float()
                 tgt_mask = tgt_mask.float()
                 # Compute the focal loss between masks

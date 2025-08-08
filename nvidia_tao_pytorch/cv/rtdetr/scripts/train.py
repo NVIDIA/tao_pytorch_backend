@@ -17,16 +17,18 @@ import os
 
 from pytorch_lightning import Trainer
 
+from nvidia_tao_core.config.rtdetr.default_config import ExperimentConfig
+
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
+from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
-from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
-
-from nvidia_tao_core.config.rtdetr.default_config import ExperimentConfig
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 
 from nvidia_tao_pytorch.cv.rtdetr.dataloader.pl_od_data_module import ODDataModule
 from nvidia_tao_pytorch.cv.rtdetr.model.pl_rtdetr_model import RTDETRPlModel
-from nvidia_tao_pytorch.cv.rtdetr.utils.misc import load_pretrained_weights
+from nvidia_tao_pytorch.cv.rtdetr.model.utils import rtdetr_parser, ptm_adapter
 
 
 def run_experiment(experiment_config, lightning_module=RTDETRPlModel):
@@ -55,12 +57,17 @@ def run_experiment(experiment_config, lightning_module=RTDETRPlModel):
         experiment_config.model.pretrained_backbone_path = None
         pt_model = lightning_module(experiment_config)
         current_model_dict = pt_model.model.state_dict()
-        checkpoint = load_pretrained_weights(pretrained_path)
+        checkpoint = load_pretrained_weights(
+            pretrained_path,
+            parser=rtdetr_parser,
+            ptm_adapter=ptm_adapter
+        )
         new_checkpoint = {}
-        for k, k_ckpt in zip(sorted(current_model_dict.keys()), sorted(checkpoint.keys())):
-            v = checkpoint[k_ckpt]
+        for k in sorted(checkpoint.keys()):
+            v = checkpoint[k]
             # Handle PTL format
-            k = k.replace("model.model.", "model.")
+            if current_model_dict.get(k, None) is None:
+                continue
             if v.size() == current_model_dict[k].size():
                 new_checkpoint[k] = v
             else:
@@ -69,7 +76,10 @@ def run_experiment(experiment_config, lightning_module=RTDETRPlModel):
                              f"current model layer size: {list(current_model_dict[k].size())}")
                 new_checkpoint[k] = current_model_dict[k]
         # Load pretrained weights
-        pt_model.model.load_state_dict(new_checkpoint, strict=False)
+        msg = pt_model.model.load_state_dict(new_checkpoint, strict=False)
+        if get_global_rank() == 0:
+            logging.info(f"Loaded pretrained weights from {pretrained_path}")
+            logging.info(f"{msg}")
     else:
         pt_model = lightning_module(experiment_config)
 

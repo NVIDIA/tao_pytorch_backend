@@ -23,8 +23,8 @@ from torchvision.ops.boxes import box_area
 def box_cxcywh_to_xyxy(x):
     """Convert cxcywh format to xyxy."""
     x_c, y_c, w, h = x.unbind(-1)
-    b = [(x_c - 0.5 * w), (y_c - 0.5 * h),
-         (x_c + 0.5 * w), (y_c + 0.5 * h)]
+    b = [(x_c - 0.5 * w.clamp(min=0.0)), (y_c - 0.5 * h.clamp(min=0.0)),
+         (x_c + 0.5 * w.clamp(min=0.0)), (y_c + 0.5 * h.clamp(min=0.0))]
     return torch.stack(b, dim=-1)
 
 

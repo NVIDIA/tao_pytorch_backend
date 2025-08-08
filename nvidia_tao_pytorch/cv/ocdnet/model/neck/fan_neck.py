@@ -111,7 +111,7 @@ class FANNeck(nn.Module):
         _c1 = self.linear_c1(c1).permute(0, 2, 1).reshape(n, -1, c1.shape[2], c1.shape[3])
 
         # disable autocast to address "nan" error when AMP training
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(enabled=False, device_type="cuda"):
             _c3 = self.linear_c3(c3).permute(0, 2, 1).reshape(n, -1, c3.shape[2], c3.shape[3])
             _c3 = resize(_c3, size=neck_out_size, mode='bilinear', align_corners=False)
             _c = self.linear_fuse(torch.cat([_c4, _c3, _c2, _c1], dim=1))

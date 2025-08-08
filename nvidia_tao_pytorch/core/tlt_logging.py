@@ -20,11 +20,39 @@ import os
 from random import randint
 from omegaconf import OmegaConf
 
-_logging.basicConfig(
-    format='%(asctime)s [TAO Toolkit] [%(levelname)s] %(name)s %(lineno)d: %(message)s',
-    level='INFO'
-)
-logging = _logging
+
+class MessageFormatter(_logging.Formatter):
+    """Formatter that supports colored logs."""
+
+    grey = "\x1b[38;20m"
+    yellow = "\x1b[33;20m"
+    red = "\x1b[31;20m"
+    bold_red = "\x1b[31;1m"
+    reset = "\x1b[0m"
+    fmt = "%(asctime)s - [%(name)s] - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
+
+    FORMATS = {
+        _logging.DEBUG: grey + fmt + reset,
+        _logging.INFO: grey + fmt + reset,
+        _logging.WARNING: yellow + fmt + reset,
+        _logging.ERROR: red + fmt + reset,
+        _logging.CRITICAL: bold_red + fmt + reset
+    }
+
+    def format(self, record):
+        """Format the log message."""
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = _logging.Formatter(log_fmt)
+        return formatter.format(record)
+
+
+logger = _logging.getLogger('TAO Toolkit')
+logger.setLevel(_logging.DEBUG)
+ch = _logging.StreamHandler()
+ch.setLevel(_logging.DEBUG)
+ch.setFormatter(MessageFormatter())
+logger.addHandler(ch)
+logging = logger
 
 
 def obfuscate_logs(cfg):

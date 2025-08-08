@@ -27,6 +27,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.core.lightning.tao_lightning_module import TAOLightningModule
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank, is_dist_avail_and_initialized
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
@@ -279,7 +280,8 @@ class MALStudentNetwork(pl.LightningModule):
             has_roi = any('roi_head' in k for k in state_dict.keys())
             has_mask = any('mask_head' in k for k in state_dict.keys())
             prefix = 'backbone.' if 'fan' in cfg.model.arch else ''
-            self.backbone.load_state_dict(state_dict, strict=False, prefix='student.backbone.' if is_pretrained else prefix)
+            msg = self.backbone.load_state_dict(state_dict, strict=False, prefix='student.backbone.' if is_pretrained else prefix)
+            logging.info(f"incompatible keys: {msg.missing_keys}")
 
         # K head
         self.roi_head = RoIHead(in_channels, cfg=cfg)
@@ -302,7 +304,7 @@ class MALStudentNetwork(pl.LightningModule):
         """Forward pass."""
         if self.cfg.train.use_amp:
             x = x.half()
-        feat = self.backbone.base_forward(x)
+        feat = self.backbone.forward_features(x)
         spatial_feat_ori = self.backbone.get_spatial_feat(feat)
         h, w = spatial_feat_ori.shape[2:]
         mask_scale_ratio_pre = int(self.cfg.model.mask_scale_ratio_pre)
@@ -841,6 +843,10 @@ class MAL(TAOLightningModule):
             message="Test metrics generated.",
             status_level=status_logging.Status.RUNNING
         )
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "mal"
 
 
 class MALPseudoLabels(MAL):

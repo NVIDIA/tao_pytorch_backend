@@ -137,11 +137,15 @@ class Mask2formerPlModule(TAOLightningModule):
             state_dict = torch.load(pm, map_location='cpu')
             updated_state_dict = {}
             if 'model' in state_dict:
-                for key, value in list(state_dict['model'].items()):
+                for key, value in state_dict['model'].items():
+                    if "head" in key:
+                        continue
                     new_key = ".".join(['backbone', key])
                     updated_state_dict[new_key] = value
             else:
-                for key, value in list(state_dict['state_dict'].items()):
+                for key, value in state_dict['state_dict'].items():
+                    if "head" in key:
+                        continue
                     new_key = key.replace('backbone', 'backbone.model')
                     updated_state_dict[new_key] = value
             self.model.load_state_dict(updated_state_dict, strict=False)
@@ -654,3 +658,7 @@ class Mask2formerPlModule(TAOLightningModule):
         mask_pred = mask_pred.sigmoid()
         semseg = torch.einsum("bqc,bqhw->bchw", mask_cls, mask_pred)
         return semseg
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "mask2former"

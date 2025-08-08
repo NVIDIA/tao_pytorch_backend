@@ -15,16 +15,19 @@
 """SegFormer model builder"""
 
 import numpy as np
-import logging
-
 import torch.nn as nn
-from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
-from nvidia_tao_pytorch.cv.segformer.model.backbones import vit_adapter_model_dict, fan_model_dict, mit_model_dict, cradio_vit_adapter_model_dict
-from nvidia_tao_pytorch.cv.segformer.model.decode_heads.segformer_head import TAOSegFormerHead
-from nvidia_tao_pytorch.cv.segformer.model.segformer_utils import count_params
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
 
-logger = logging.getLogger(__name__)
+from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
+from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
+
+from nvidia_tao_pytorch.cv.segformer.model.backbones import (
+    cradio_vit_adapter_model_dict,
+    fan_model_dict,
+    mit_model_dict,
+    vit_adapter_model_dict,
+)
+from nvidia_tao_pytorch.cv.segformer.model.decode_heads.segformer_head import TAOSegFormerHead
 
 
 class SegFormer(nn.Module):
@@ -74,71 +77,49 @@ class SegFormer(nn.Module):
         self.model_name = model
         self.in_channels = in_channels
 
-        logger.info(f"Number of output classes: {output_nc}")
-        assert img_size % feature_strides[-1] == 0, f"Input image size must be a multiple of {feature_strides[-1]}"
+        if get_global_rank() == 0:
+            logging.info(f"Number of output classes: {output_nc}")
 
         # for fan backbone we load pretrained weights here, while for vit we load in the backbone
         if 'fan' in self.model_name:
+            freeze_at = "all" if freeze_backbone else None
             self.backbone = fan_model_dict[self.model_name](
-                pretrained=False,
-                num_classes=output_nc,
-                checkpoint_path='',
-                img_size=img_size,
-                feat_downsample=feat_downsample
+                num_classes=0, img_size=img_size, feat_downsample=feat_downsample, freeze_at=freeze_at
             )
-            pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone_path) if pretrained_backbone_path else None
-            if pretrained_backbone_ckp is not None:
-                _tmp_st_output = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
-
-                if get_global_rank() == 0:
-                    logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                    logger.info(f"{_tmp_st_output}")
-
         elif 'mit' in self.model_name:
-            self.backbone = mit_model_dict[self.model_name]()
-            pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone_path) if pretrained_backbone_path else None
-            if pretrained_backbone_ckp is not None:
-                _tmp_st_output = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
-
-                if get_global_rank() == 0:
-                    logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                    logger.info(f"{_tmp_st_output}")
-
+            freeze_at = "all" if freeze_backbone else None
+            self.backbone = mit_model_dict[self.model_name](num_classes=0, img_size=img_size, freeze_at=freeze_at)
         elif 'radio' in self.model_name:
             assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
+            freeze_at = "all" if freeze_backbone else None
             self.backbone = cradio_vit_adapter_model_dict[self.model_name](
-                out_indices=return_interm_indices,
-                resolution=img_size,
+                return_idx=return_interm_indices,
+                resolution=(img_size, img_size),
                 activation_checkpoint=activation_checkpoint,
-                use_summary_token=True)
-            pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone_path) if pretrained_backbone_path else None
-            if pretrained_backbone_ckp is not None:
-                _tmp_st_output = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
-
-                if get_global_rank() == 0:
-                    logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                    logger.info(f"{_tmp_st_output}")
-
+            )
         elif 'vit' in self.model_name:
             assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
+            freeze_at = "all" if freeze_backbone else None
             self.backbone = vit_adapter_model_dict[self.model_name](
-                out_indices=return_interm_indices,
-                resolution=img_size,
-                init_cfg={
-                    "checkpoint": pretrained_backbone_path
-                },
-                activation_checkpoint=activation_checkpoint)
-
+                return_idx=return_interm_indices, resolution=img_size, activation_checkpoint=activation_checkpoint
+            )
         else:
             raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)
 
-        # Freeze backbone
-        if freeze_backbone:
-            assert pretrained_backbone_path is not None, "You shouldn't freeze a model without specifying pretrained_backbone_path"
-            for _, parameter in self.backbone.named_parameters():
-                parameter.requires_grad_(False)
-            # self.backbone.eval()  # TODO: Check if needed??
-            logger.info("Frozen backbone training")
+        # TODO: @hong-yu, add parser and ptm_adapter for segformer
+        segformer_parser = None
+        ptm_adapter = None
+        # Load pretrained weights
+        if pretrained_backbone_path:
+            state_dict = load_pretrained_weights(
+                pretrained_backbone_path,
+                parser=segformer_parser,
+                ptm_adapter=ptm_adapter
+            )
+            msg = self.backbone.load_state_dict(state_dict, strict=False)
+            if get_global_rank() == 0:
+                logging.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
+                logging.warning(f"{msg}")
 
         # Transformer Decoder
         self.decoder = TAOSegFormerHead(
@@ -158,7 +139,7 @@ class SegFormer(nn.Module):
         Returns:
             torch.Tensor: Output tensor representing the segmentation map.
         """
-        f = self.backbone(x)
+        f = self.backbone.forward_feature_pyramid(x)
         out_decoder = self.decoder(f)
         return out_decoder
 
@@ -201,7 +182,8 @@ def build_model(experiment_config,
         "vit_huge_nvclip_14_siglip": [1280, 1280, 1280, 1280],
         "c_radio_v2_vit_base_patch16_224": [768, 768, 768, 768],
         "c_radio_v2_vit_large_patch16_224": [1024, 1024, 1024, 1024],
-        "c_radio_v2_vit_huge_patch16_224": [1280, 1280, 1280, 1280]
+        "c_radio_v2_vit_huge_patch16_224": [1280, 1280, 1280, 1280],
+        "c_radio_v3_vit_large_patch16_reg4_dinov2": [1024, 1024, 1024, 1024],
     }
 
     if backbone in channels_map:
@@ -231,6 +213,5 @@ def build_model(experiment_config,
         pretrained_backbone_path=pretrained_backbone_path,
         freeze_backbone=freeze_backbone
     )
-    count_params(model)
 
     return model

@@ -91,7 +91,7 @@ def inference_on_dataset(
                 total_eval_time = 0
 
             start_compute_time = time.perf_counter()
-            with autocast():
+            with autocast(device_type="cuda", enabled=False):
                 outputs = model(inputs)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()

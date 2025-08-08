@@ -277,7 +277,7 @@ class BEVFusionHead(nn.Module):
         #################################
         # query initialization
         #################################
-        with torch.autocast('cuda', enabled=False):
+        with torch.autocast(device_type="cuda", enabled=False):
             dense_heatmap = self.heatmap_head(fusion_feat.float())
         heatmap = dense_heatmap.detach().sigmoid()
         padding = self.nms_kernel_size // 2
