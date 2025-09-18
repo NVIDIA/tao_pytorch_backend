@@ -12,7 +12,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mix Transformer backbone."""
+"""Mix Transformer (MiT) backbone module.
+
+This module provides Mix Transformer (MiT) implementations for the TAO PyTorch framework.
+MiT is a hierarchically structured Transformer encoder that outputs multiscale features
+without requiring positional encoding, avoiding interpolation issues when testing resolution
+differs from training.
+
+The MiT architecture was introduced in "SegFormer: Simple and Efficient Design for
+Semantic Segmentation with Transformers" and is designed for semantic segmentation tasks.
+It uses a hierarchical structure with overlapping patch embeddings and efficient attention
+mechanisms.
+
+Key Features:
+- Hierarchical architecture with multiple stages
+- Overlapping patch embeddings for better feature extraction
+- No positional encoding required
+- Support for multiple model sizes (B0-B5)
+- Integration with TAO backbone framework
+- Support for activation checkpointing and layer freezing
+- Efficient design for semantic segmentation
+
+Classes:
+    OverlapPatchEmbed: Overlapping patch embedding layer
+    DWConv: Depthwise convolution layer
+    Mlp: MLP layer with depthwise convolution
+    Attention: Attention layer with spatial reduction
+    Block: MiT transformer block
+    MixTransformer: Main MiT model
+
+Functions:
+    mit_b0: MiT B0 model
+    mit_b1: MiT B1 model
+    mit_b2: MiT B2 model
+    mit_b3: MiT B3 model
+    mit_b4: MiT B4 model
+    mit_b5: MiT B5 model
+
+Example:
+    >>> from nvidia_tao_pytorch.cv.backbone_v2 import mit_b0
+    >>> model = mit_b0(num_classes=1000)
+    >>> x = torch.randn(1, 3, 224, 224)
+    >>> output = model(x)
+
+References:
+    - [SegFormer: Simple and Efficient Design for Semantic Segmentation with Transformers](
+      https://arxiv.org/abs/2105.15203)
+    - [https://github.com/NVlabs/SegFormer](https://github.com/NVlabs/SegFormer)
+"""
 
 import math
 from functools import partial
@@ -495,7 +542,36 @@ class MixTransformer(BackboneBase):
 
 @BACKBONE_REGISTRY.register()
 def mit_b0(**kwargs):
-    """Constructs a MiT B0 model."""
+    """Create a MiT B0 model.
+
+    This function creates a MiT B0 model with the following specifications:
+    - Depths: [2, 2, 2, 2] (number of blocks in each stage)
+    - Embed dimensions: [32, 64, 160, 256] (feature dimensions)
+    - Number of heads: [1, 2, 5, 8] (attention heads in each stage)
+    - MLP ratios: [4, 4, 4, 4] (MLP expansion ratios)
+    - SR ratios: [8, 4, 2, 1] (spatial reduction ratios)
+
+    Args:
+        **kwargs: Additional arguments passed to MixTransformer constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - img_size (int): Input image size. Default: `224`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        MixTransformer: Configured MiT B0 model.
+
+    Example:
+        >>> model = mit_b0(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This is the smallest MiT model variant with approximately 3.7M parameters.
+    """
     return MixTransformer(
         depths=[2, 2, 2, 2],
         embed_dims=[32, 64, 160, 256],
@@ -511,7 +587,37 @@ def mit_b0(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def mit_b1(**kwargs):
-    """Constructs a MiT B1 model."""
+    """Create a MiT B1 model.
+
+    This function creates a MiT B1 model with the following specifications:
+    - Depths: [2, 2, 2, 2] (number of blocks in each stage)
+    - Embed dimensions: [64, 128, 320, 512] (feature dimensions)
+    - Number of heads: [1, 2, 5, 8] (attention heads in each stage)
+    - MLP ratios: [4, 4, 4, 4] (MLP expansion ratios)
+    - SR ratios: [8, 4, 2, 1] (spatial reduction ratios)
+
+    Args:
+        **kwargs: Additional arguments passed to MixTransformer constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - img_size (int): Input image size. Default: `224`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        MixTransformer: Configured MiT B1 model.
+
+    Example:
+        >>> model = mit_b1(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 14M parameters and provides a good balance
+        between accuracy and computational efficiency.
+    """
     return MixTransformer(
         depths=[2, 2, 2, 2],
         embed_dims=[64, 128, 320, 512],
@@ -527,7 +633,37 @@ def mit_b1(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def mit_b2(**kwargs):
-    """Constructs a MiT B2 model."""
+    """Create a MiT B2 model.
+
+    This function creates a MiT B2 model with the following specifications:
+    - Depths: [3, 4, 6, 3] (number of blocks in each stage)
+    - Embed dimensions: [64, 128, 320, 512] (feature dimensions)
+    - Number of heads: [1, 2, 5, 8] (attention heads in each stage)
+    - MLP ratios: [4, 4, 4, 4] (MLP expansion ratios)
+    - SR ratios: [8, 4, 2, 1] (spatial reduction ratios)
+
+    Args:
+        **kwargs: Additional arguments passed to MixTransformer constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - img_size (int): Input image size. Default: `224`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        MixTransformer: Configured MiT B2 model.
+
+    Example:
+        >>> model = mit_b2(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 25M parameters and provides better accuracy
+        than B1 with increased computational cost.
+    """
     return MixTransformer(
         depths=[3, 4, 6, 3],
         embed_dims=[64, 128, 320, 512],
@@ -543,7 +679,37 @@ def mit_b2(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def mit_b3(**kwargs):
-    """Constructs a MiT B3 model."""
+    """Create a MiT B3 model.
+
+    This function creates a MiT B3 model with the following specifications:
+    - Depths: [3, 4, 18, 3] (number of blocks in each stage)
+    - Embed dimensions: [64, 128, 320, 512] (feature dimensions)
+    - Number of heads: [1, 2, 5, 8] (attention heads in each stage)
+    - MLP ratios: [4, 4, 4, 4] (MLP expansion ratios)
+    - SR ratios: [8, 4, 2, 1] (spatial reduction ratios)
+
+    Args:
+        **kwargs: Additional arguments passed to MixTransformer constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - img_size (int): Input image size. Default: `224`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        MixTransformer: Configured MiT B3 model.
+
+    Example:
+        >>> model = mit_b3(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 45M parameters and provides significantly
+        better accuracy than B2 with deeper architecture.
+    """
     return MixTransformer(
         depths=[3, 4, 18, 3],
         embed_dims=[64, 128, 320, 512],
@@ -559,7 +725,37 @@ def mit_b3(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def mit_b4(**kwargs):
-    """Constructs a MiT B4 model."""
+    """Create a MiT B4 model.
+
+    This function creates a MiT B4 model with the following specifications:
+    - Depths: [3, 8, 27, 3] (number of blocks in each stage)
+    - Embed dimensions: [64, 128, 320, 512] (feature dimensions)
+    - Number of heads: [1, 2, 5, 8] (attention heads in each stage)
+    - MLP ratios: [4, 4, 4, 4] (MLP expansion ratios)
+    - SR ratios: [8, 4, 2, 1] (spatial reduction ratios)
+
+    Args:
+        **kwargs: Additional arguments passed to MixTransformer constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - img_size (int): Input image size. Default: `224`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        MixTransformer: Configured MiT B4 model.
+
+    Example:
+        >>> model = mit_b4(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 62M parameters and provides excellent
+        accuracy for semantic segmentation tasks.
+    """
     return MixTransformer(
         depths=[3, 8, 27, 3],
         embed_dims=[64, 128, 320, 512],
@@ -575,7 +771,37 @@ def mit_b4(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def mit_b5(**kwargs):
-    """Constructs a MiT B5 model."""
+    """Create a MiT B5 model.
+
+    This function creates a MiT B5 model with the following specifications:
+    - Depths: [3, 6, 40, 3] (number of blocks in each stage)
+    - Embed dimensions: [64, 128, 320, 512] (feature dimensions)
+    - Number of heads: [1, 2, 5, 8] (attention heads in each stage)
+    - MLP ratios: [4, 4, 4, 4] (MLP expansion ratios)
+    - SR ratios: [8, 4, 2, 1] (spatial reduction ratios)
+
+    Args:
+        **kwargs: Additional arguments passed to MixTransformer constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - img_size (int): Input image size. Default: `224`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        MixTransformer: Configured MiT B5 model.
+
+    Example:
+        >>> model = mit_b5(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This is the largest MiT model variant with approximately 82M parameters.
+        It provides the best accuracy but requires the most computational resources.
+    """
     return MixTransformer(
         depths=[3, 6, 40, 3],
         embed_dims=[64, 128, 320, 512],

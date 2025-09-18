@@ -84,11 +84,17 @@ class SegFormer(nn.Module):
         if 'fan' in self.model_name:
             freeze_at = "all" if freeze_backbone else None
             self.backbone = fan_model_dict[self.model_name](
-                num_classes=0, img_size=img_size, feat_downsample=feat_downsample, freeze_at=freeze_at
+                num_classes=0,
+                img_size=img_size,
+                feat_downsample=feat_downsample,
+                freeze_at=freeze_at,
+                activation_checkpoint=activation_checkpoint,
             )
         elif 'mit' in self.model_name:
             freeze_at = "all" if freeze_backbone else None
-            self.backbone = mit_model_dict[self.model_name](num_classes=0, img_size=img_size, freeze_at=freeze_at)
+            self.backbone = mit_model_dict[self.model_name](
+                num_classes=0, img_size=img_size, freeze_at=freeze_at, activation_checkpoint=activation_checkpoint
+            )
         elif 'radio' in self.model_name:
             assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
             freeze_at = "all" if freeze_backbone else None

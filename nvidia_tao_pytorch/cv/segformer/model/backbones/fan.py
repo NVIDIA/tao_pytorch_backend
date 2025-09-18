@@ -103,7 +103,7 @@ class FANFPN(FAN):
         return outs
 
 
-def fan_tiny_8_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=True, **kwargs):
+def fan_tiny_8_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=False, **kwargs):
     """FAN Hybrid Tiny
 
     Args:
@@ -140,7 +140,7 @@ def fan_tiny_8_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=True, *
     )
 
 
-def fan_small_12_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=True, **kwargs):
+def fan_small_12_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=False, **kwargs):
     """FAN Hybrid Small
 
     Args:
@@ -177,7 +177,7 @@ def fan_small_12_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=True,
     )
 
 
-def fan_base_16_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=True, **kwargs):
+def fan_base_16_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=False, **kwargs):
     """FAN Hybrid Base
 
     Args:
@@ -214,7 +214,7 @@ def fan_base_16_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=True, 
     )
 
 
-def fan_large_16_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=True, **kwargs):
+def fan_large_16_p4_hybrid(out_indices=[0, 1, 2, 3], activation_checkpoint=False, **kwargs):
     """FAN Hybrid Large
 
     Args:

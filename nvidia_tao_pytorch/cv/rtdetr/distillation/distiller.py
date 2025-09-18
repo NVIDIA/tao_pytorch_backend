@@ -146,8 +146,10 @@ class RtdetrDistiller(Distiller):
                     new_checkpoint[k] = v
                 else:
                     # Skip layers that mismatch
-                    logging.info(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
-                                 f"current model layer size: {list(teacher_model_dict[k].size())}")
+                    logging.info(
+                        "skip layer: %s, checkpoint layer size: %s, current model layer size: %s",
+                        k, list(v.size()), list(teacher_model_dict[k].size())
+                    )
                     new_checkpoint[k] = teacher_model_dict[k]
 
                 if 'backbone' not in k:
@@ -158,8 +160,10 @@ class RtdetrDistiller(Distiller):
                             logging.info(f"skip layer in the backbone: {k}")
                     else:
                         # Skip layers that mismatch
-                        logging.info(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
-                                     f"current model layer size: {list(teacher_model_dict[k].size())}")
+                        logging.info(
+                            "skip layer: %s, checkpoint layer size: %s, current model layer size: %s",
+                            k, list(v.size()), list(teacher_model_dict[k].size())
+                        )
                         kv_for_student[k] = student_model_dict[k]
             # Load pretrained weights
             self.teacher.model.load_state_dict(new_checkpoint, strict=False)
@@ -467,8 +471,8 @@ class RtdetrDistiller(Distiller):
         mAP = self.val_coco_evaluator.coco_eval['bbox'].stats[0]
         mAP50 = self.val_coco_evaluator.coco_eval['bbox'].stats[1]
         if self.trainer.is_global_zero:
-            logging.info("\n Validation mAP : {}\n".format(mAP))
-            logging.info("\n Validation mAP50 : {}\n".format(mAP50))
+            logging.info("\n Validation mAP : %s\n" % mAP)
+            logging.info("\n Validation mAP50 : %s\n" % mAP50)
 
         self.log("current_epoch", self.current_epoch, sync_dist=True)
         self.log("val_mAP", mAP, sync_dist=True)

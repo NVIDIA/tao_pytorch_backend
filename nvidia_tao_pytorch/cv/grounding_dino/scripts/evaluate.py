@@ -23,9 +23,10 @@ from nvidia_tao_core.config.grounding_dino.default_config import ExperimentConfi
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
+
 from nvidia_tao_pytorch.cv.grounding_dino.dataloader.pl_odvg_data_module import ODVGDataModule
 from nvidia_tao_pytorch.cv.grounding_dino.model.pl_gdino_model import GDINOPlModel
-from nvidia_tao_pytorch.cv.grounding_dino.utils.misc import parse_checkpoint
+from nvidia_tao_pytorch.cv.grounding_dino.model.utils import grounding_dino_parser
 
 
 def run_experiment(experiment_config):
@@ -42,7 +43,7 @@ def run_experiment(experiment_config):
         original = torch.load(model_path, map_location="cpu")
         if "pytorch-lightning_version" not in original:
             # parse public checkpoint
-            final = parse_checkpoint(original)
+            final = grounding_dino_parser(original["model"])
             tmp = tempfile.NamedTemporaryFile()
             model_path = tmp.name
             torch.save({"state_dict": final, 'pytorch-lightning_version': pl.__version__}, model_path)

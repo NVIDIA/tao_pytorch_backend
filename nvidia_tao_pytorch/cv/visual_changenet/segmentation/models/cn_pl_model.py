@@ -106,7 +106,6 @@ class ChangeNetPlModel(TAOLightningModule):
     def _build_model(self, export):
         """Internal function to build the model."""
         self.model = build_model(experiment_config=self.experiment_spec, export=export)
-        print(self.model)
 
     def _build_criterion(self):
         """Internal function to build the loss function."""
@@ -453,3 +452,7 @@ class ChangeNetPlModel(TAOLightningModule):
         self._visualize_infer_output(batch_idx, vis_afer_n_batches=self.vis_after_n_batches_infer)
 
         return outputs
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "visual_changenet_segment"

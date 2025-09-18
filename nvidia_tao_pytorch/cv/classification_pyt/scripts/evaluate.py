@@ -24,7 +24,7 @@ from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
 from nvidia_tao_core.config.classification_pyt.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.classification_pyt.dataloader.pl_classification_data_module import CLDataModule
-from nvidia_tao_pytorch.cv.classification_pyt.model.classifier_pl_model import ClassifierPlModel
+from nvidia_tao_pytorch.cv.classification_pyt.utils.model import create_model_from_config
 
 
 def run_experiment(experiment_config, key):
@@ -37,11 +37,7 @@ def run_experiment(experiment_config, key):
         dm.setup(stage="test")
 
         # build model and load from the given checkpoint
-        model = ClassifierPlModel.load_from_checkpoint(
-            model_path,
-            map_location="cpu",
-            experiment_spec=experiment_config
-        )
+        model = create_model_from_config(experiment_config, model_path, task="evaluate")
 
     elif model_path.endswith('.engine'):
         raise NotImplementedError("TensorRT evaluation is supported through tao-deploy. Please use tao-deploy to generate TensorRT engine and run evaluation.")

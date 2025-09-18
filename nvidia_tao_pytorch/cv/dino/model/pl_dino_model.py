@@ -27,6 +27,9 @@ import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.tlt_logging import logging
 
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.od_dataset import CoCoDataMerge
+from nvidia_tao_pytorch.cv.deformable_detr.model.post_process import (
+    PostProcess, save_inference_prediction, threshold_predictions
+)
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco import COCO
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco_eval import CocoEvaluator
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import rgetattr
@@ -35,7 +38,6 @@ from nvidia_tao_pytorch.cv.dino.model.build_nn_model import build_model
 from nvidia_tao_pytorch.cv.dino.model.matcher import HungarianMatcher
 from nvidia_tao_pytorch.cv.dino.model.criterion import SetCriterion
 from nvidia_tao_pytorch.cv.dino.model.vision_transformer.transformer_modules import get_vit_lr_decay_rate
-from nvidia_tao_pytorch.cv.deformable_detr.model.post_process import PostProcess, save_inference_prediction, threshold_predictions
 
 
 # pylint:disable=too-many-ancestors
@@ -369,3 +371,7 @@ class DINOPlModel(TAOLightningModule):
         """Forward of the dino model."""
         outputs = self.model(x)
         return outputs
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "dino"

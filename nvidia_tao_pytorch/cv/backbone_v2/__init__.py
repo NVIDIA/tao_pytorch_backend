@@ -139,12 +139,22 @@ from nvidia_tao_pytorch.cv.backbone_v2.radio import (
     c_radio_v2_vit_base_patch16,
     c_radio_v2_vit_large_patch16,
     c_radio_v2_vit_huge_patch16,
+    c_radio_v3_vit_base_patch16_reg4_dinov2,
     c_radio_v3_vit_large_patch16_reg4_dinov2,
+    c_radio_v3_vit_huge_patch16_reg4_dinov2,
 )
 from nvidia_tao_pytorch.cv.backbone_v2.open_clip import (
     vit_l_14_siglip_clipa_224,
     vit_l_14_siglip_clipa_336,
     vit_h_14_siglip_clipa_224,
+)
+from nvidia_tao_pytorch.cv.backbone_v2.mit import (
+    mit_b0,
+    mit_b1,
+    mit_b2,
+    mit_b3,
+    mit_b4,
+    mit_b5,
 )
 
 __all__ = [
@@ -245,7 +255,15 @@ __all__ = [
     "c_radio_v2_vit_large_patch16",
     "c_radio_v2_vit_huge_patch16",
     "c_radio_v3_vit_large_patch16_reg4_dinov2",
+    "c_radio_v3_vit_base_patch16_reg4_dinov2",
+    "c_radio_v3_vit_huge_patch16_reg4_dinov2",
     "vit_l_14_siglip_clipa_224",
     "vit_l_14_siglip_clipa_336",
     "vit_h_14_siglip_clipa_224",
+    "mit_b0",
+    "mit_b1",
+    "mit_b2",
+    "mit_b3",
+    "mit_b4",
+    "mit_b5",
 ]

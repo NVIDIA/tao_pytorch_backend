@@ -12,7 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DINOv2 backbone."""
+"""DINOv2 backbone module.
+
+This module provides DINOv2 implementations for the TAO PyTorch framework.
+DINOv2 is a self-supervised learning method that learns robust visual features
+without supervision. It extends the Vision Transformer architecture with additional
+components for improved feature learning.
+
+The DINOv2 architecture was introduced in "DINOv2: Learning Robust Visual Features
+without Supervision" by Oquab et al. This implementation extends the Vision Transformer
+to provide additional functionality for backbone integration and feature extraction.
+
+Key Features:
+- Self-supervised learning without labels
+- Robust visual feature learning
+- Support for register tokens for enhanced representation
+- SwiGLU activation functions for improved performance
+- Multiple model sizes (Large, Giant)
+- Integration with TAO backbone framework
+- Support for activation checkpointing and layer freezing
+- Flexible image size handling
+
+Classes:
+    DINOV2: DINOv2 Vision Transformer with enhanced TAO integration
+
+Functions:
+    vit_large_patch14_dinov2_swiglu: DINOv2 ViT Large model with SwiGLU activation
+    vit_large_patch14_dinov2_swiglu_legacy: DINOv2 ViT Large model (legacy version)
+    vit_giant_patch14_reg4_dinov2_swiglu: DINOv2 ViT Giant model with register tokens
+
+Example:
+    >>> from nvidia_tao_pytorch.cv.backbone_v2 import vit_large_patch14_dinov2_swiglu
+    >>> model = vit_large_patch14_dinov2_swiglu(num_classes=1000)
+    >>> x = torch.randn(1, 3, 518, 518)
+    >>> output = model(x)
+"""
 
 import math
 from functools import partial
@@ -26,52 +60,107 @@ from nvidia_tao_pytorch.cv.backbone_v2.vit import VisionTransformer
 
 
 class DINOV2(VisionTransformer):
-    """DINOV2 model.
+    """DINOv2 model with enhanced TAO integration.
 
     This class extends the VisionTransformer by adding register tokens and
-    handling different image sizes.
+    handling different image sizes. DINOv2 is designed for self-supervised
+    learning of robust visual features without requiring labeled data.
+
+    The DINOv2 architecture introduces several key innovations:
+    1. Register tokens for enhanced representation learning
+    2. SwiGLU activation functions for improved performance
+    3. Flexible image size handling
+    4. Self-supervised learning objectives
+
+    Architecture Overview:
+    1. Patch embedding layer that divides images into patches
+    2. Positional embeddings with interpolation support
+    3. Class token and optional register tokens
+    4. Transformer blocks with SwiGLU activation
+    5. Global pooling and classification head
+
+    Key Features:
+    - Self-supervised learning capabilities
+    - Register tokens for enhanced representation
+    - SwiGLU activation functions
+    - Flexible image size handling
+    - Integration with TAO backbone framework
+    - Support for activation checkpointing and layer freezing
+
+    Attributes:
+        patch_embed: Patch embedding layer
+        cls_token: Classification token
+        register_tokens: Register tokens for enhanced representation
+        pos_embed: Positional embeddings
+        blocks: Transformer blocks
+        norm: Final normalization layer
+        head: Classification head
+        num_register_tokens: Number of register tokens
 
     References:
     - [DINOv2: Learning Robust Visual Features without Supervision](https://arxiv.org/abs/2304.07193)
+
+    Example:
+        >>> model = DINOV2(
+        ...     patch_size=14,
+        ...     embed_dim=1024,
+        ...     depth=24,
+        ...     num_heads=16,
+        ...     register_tokens=4,
+        ...     num_classes=1000
+        ... )
+        >>> x = torch.randn(1, 3, 518, 518)
+        >>> output = model(x)  # Shape: (1, 1000)
     """
 
     def __init__(self, *args, **kwargs):
-        """Initialize the DINOV2 model.
+        """Initialize the DINOV2 model with enhanced configuration options.
+
+        This constructor initializes a DINOv2 model with the specified architecture
+        and provides additional functionality for backbone integration and feature extraction.
 
         Args:
-            img_size (list): Input image size.
-            patch_size (int): Patch size.
-            in_chans (int): Number of input channels.
-            num_classes (int): Number of classes for classification head.
-            global_pool: Type of global pooling for final sequence (default: 'token').
-            embed_dim (int): Transformer embedding dimension.
-            depth (int): Depth of transformer.
-            num_heads (int): Number of attention heads.
-            mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
-            qkv_bias (bool): Enable bias for qkv projections if True.
-            init_values (float): Layer-scale init values (layer-scale enabled if not None).
-            class_token (bool): Use class token.
-            no_embed_class (bool): Don't include position embeddings for class (or reg) tokens.
-            reg_tokens (int): Number of register tokens.
-            pre_norm (bool): Enable norm after embeddings, before transformer blocks (standard in CLIP ViT).
-            final_norm (bool): Enable norm after transformer blocks, before head (standard in most ViT).
-            fc_norm (bool): Move final norm after pool (instead of before), if None, enabled when global_pool == 'avg'.
-            drop_rate (float): Head dropout rate.
-            pos_drop_rate (float): Position embedding dropout rate.
-            attn_drop_rate (float): Attention dropout rate.
-            drop_path_rate (float): Stochastic depth rate.
-            weight_init (str): Weight initialization scheme.
-            fix_init (bool): Apply weight initialization fix (scaling w/ layer index).
-            embed_layer (Callable): Patch embedding layer.
-            embed_norm_layer: Normalization layer to use / override in patch embed module.
-            norm_layer: Normalization layer.
-            act_layer: MLP activation layer.
-            block_fn: Transformer block layer.
-            register_tokens (int): Number of register tokens to be added.
-            activation_checkpoint (bool): Whether to use activation checkpointing. Default: `False`.
-            freeze_at (list): List of keys corresponding to the stages or layers to freeze. If `None`, no specific
-                layers are frozen. If `"all"`, the entire model is frozen and set to eval mode. Default: `None`.
-            freeze_norm (bool): If `True`, all normalization layers in the backbone will be frozen. Default: `False`.
+            img_size (list, optional): Input image size. Defaults to [224, 224].
+            patch_size (int, optional): Patch size for image division. Defaults to 16.
+            in_chans (int, optional): Number of input channels. Defaults to 3.
+            num_classes (int, optional): Number of classes for classification head. Defaults to 1000.
+            global_pool (str, optional): Type of global pooling for final sequence. Defaults to 'token'.
+            embed_dim (int, optional): Transformer embedding dimension. Defaults to 768.
+            depth (int, optional): Depth of transformer. Defaults to 12.
+            num_heads (int, optional): Number of attention heads. Defaults to 12.
+            mlp_ratio (float, optional): Ratio of mlp hidden dim to embedding dim. Defaults to 4.0.
+            qkv_bias (bool, optional): Enable bias for qkv projections if True. Defaults to True.
+            init_values (float, optional): Layer-scale init values. Defaults to None.
+            class_token (bool, optional): Use class token. Defaults to True.
+            no_embed_class (bool, optional): Don't include position embeddings for class tokens. Defaults to False.
+            reg_tokens (int, optional): Number of register tokens. Defaults to 0.
+            pre_norm (bool, optional): Enable norm after embeddings. Defaults to False.
+            final_norm (bool, optional): Enable norm after transformer blocks. Defaults to True.
+            fc_norm (bool, optional): Move final norm after pool. Defaults to None.
+            drop_rate (float, optional): Head dropout rate. Defaults to 0.0.
+            pos_drop_rate (float, optional): Position embedding dropout rate. Defaults to 0.0.
+            attn_drop_rate (float, optional): Attention dropout rate. Defaults to 0.0.
+            drop_path_rate (float, optional): Stochastic depth rate. Defaults to 0.0.
+            weight_init (str, optional): Weight initialization scheme. Defaults to ''.
+            fix_init (bool, optional): Apply weight initialization fix. Defaults to False.
+            embed_layer (callable, optional): Patch embedding layer. Defaults to PatchEmbed.
+            embed_norm_layer (callable, optional): Normalization layer for patch embed. Defaults to None.
+            norm_layer (callable, optional): Normalization layer. Defaults to nn.LayerNorm.
+            act_layer (callable, optional): MLP activation layer. Defaults to nn.GELU.
+            block_fn (callable, optional): Transformer block layer. Defaults to None.
+            register_tokens (int, optional): Number of register tokens to be added. Defaults to 0.
+            activation_checkpoint (bool, optional): Whether to use activation checkpointing. Defaults to False.
+            freeze_at (list, optional): List of keys corresponding to the stages or layers to freeze.
+                If None, no specific layers are frozen. If "all", the entire model is frozen.
+                Defaults to None.
+            freeze_norm (bool, optional): If True, all normalization layers in the backbone will be frozen.
+                Defaults to False.
+            **kwargs: Additional arguments passed to VisionTransformer constructor.
+
+        Note:
+            The DINOv2 model extends the standard Vision Transformer with register tokens
+            and self-supervised learning capabilities. Register tokens provide additional
+            representation capacity for improved feature learning.
         """
         register_tokens = kwargs.pop("register_tokens", 0)
 
@@ -83,6 +172,20 @@ class DINOV2(VisionTransformer):
             self.register_tokens = nn.Parameter(torch.randn(1, register_tokens, self.embed_dim))
 
     def _pos_embed(self, x):
+        """Add positional embeddings to the input tokens.
+
+        This method adds positional embeddings to the input tokens, including
+        class tokens and register tokens if present. It handles different image
+        sizes through interpolation.
+
+        Args:
+            x (torch.Tensor): Input tokens of shape (B, S, D) where B is batch size,
+                S is sequence length, and D is embedding dimension.
+
+        Returns:
+            torch.Tensor: Tokens with positional embeddings added, shape (B, S', D)
+                where S' includes class and register tokens.
+        """
         B, S, _ = x.shape
         w = h = int(math.sqrt(S)) * self.patch_embed.patch_size[0]
         # add the [CLS] token to the embed patch tokens
@@ -96,7 +199,26 @@ class DINOV2(VisionTransformer):
         return self.pos_drop(x)
 
     def forward_pre_logits(self, x):
-        """Forward pass through the backbone, excluding the head."""
+        """Forward pass through the backbone, excluding the classification head.
+
+        This method processes the input through all DINOv2 layers including
+        patch embedding, positional embeddings, transformer blocks, and pooling,
+        but stops before the final classification head. This is useful for
+        feature extraction and transfer learning.
+
+        Args:
+            x (torch.Tensor): Input images of shape (B, C, H, W) where B is batch
+                size, C is number of channels, and H, W are height and width.
+
+        Returns:
+            torch.Tensor: Pre-logits features of shape (B, D) where D is the
+                feature dimension.
+
+        Example:
+            >>> model = DINOV2()
+            >>> x = torch.randn(1, 3, 518, 518)
+            >>> features = model.forward_pre_logits(x)  # Shape: (1, 1024)
+        """
         x = super().forward_features(x)
         x = self.pool(x)
         x = self.fc_norm(x)
@@ -104,7 +226,25 @@ class DINOV2(VisionTransformer):
         return x.flatten(1)
 
     def forward(self, x):
-        """Forward."""
+        """Complete forward pass through the DINOv2 model.
+
+        This method performs the full forward pass including patch embedding,
+        positional embeddings, transformer blocks, pooling, and the classification head.
+
+        Args:
+            x (torch.Tensor): Input images of shape (B, C, H, W) where B is batch
+                size, C is number of channels (typically 3), and H, W are height
+                and width (typically 518x518 for DINOv2).
+
+        Returns:
+            torch.Tensor: Classification logits of shape (B, num_classes) where
+                num_classes is the number of output classes.
+
+        Example:
+            >>> model = DINOV2(num_classes=1000)
+            >>> x = torch.randn(1, 3, 518, 518)
+            >>> logits = model(x)  # Shape: (1, 1000)
+        """
         x = self.forward_pre_logits(x)
         x = self.head(x)
         return x
@@ -112,7 +252,39 @@ class DINOV2(VisionTransformer):
 
 @BACKBONE_REGISTRY.register()
 def vit_large_patch14_dinov2_swiglu(**kwargs):
-    """DINOV2 ViT Large model with SwiGLU activation."""
+    """Create a DINOv2 ViT Large model with SwiGLU activation.
+
+    This function creates a DINOv2 ViT Large model with the following specifications:
+    - Patch size: 14x14 pixels
+    - Embedding dimension: 1024
+    - Depth: 24 transformer blocks
+    - Number of heads: 16
+    - Image size: 518x518
+    - MLP ratio: 5472/1024 (approximately 5.34)
+    - SwiGLU activation functions
+    - Global pooling: token
+
+    Args:
+        **kwargs: Additional arguments passed to DINOV2 constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        DINOV2: Configured DINOv2 ViT Large model.
+
+    Example:
+        >>> model = vit_large_patch14_dinov2_swiglu(num_classes=1000)
+        >>> x = torch.randn(1, 3, 518, 518)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 304M parameters and is designed for
+        self-supervised learning of robust visual features.
+    """
     return DINOV2(
         patch_size=14,
         embed_dim=1024,
@@ -131,7 +303,38 @@ def vit_large_patch14_dinov2_swiglu(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def vit_large_patch14_dinov2_swiglu_legacy(**kwargs):
-    """DINOV2 ViT Large model with SwiGLU activation. Legacy version."""
+    """Create a DINOv2 ViT Large model with SwiGLU activation (legacy version).
+
+    This function creates a DINOv2 ViT Large model (legacy version) with the following specifications:
+    - Patch size: 14x14 pixels
+    - Embedding dimension: 1024
+    - Depth: 24 transformer blocks
+    - Number of heads: 16
+    - MLP ratio: 5472/1024 (approximately 5.34)
+    - SwiGLU activation functions
+    - Legacy configuration without fixed image size
+
+    Args:
+        **kwargs: Additional arguments passed to DINOV2 constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        DINOV2: Configured DINOv2 ViT Large model (legacy version).
+
+    Example:
+        >>> model = vit_large_patch14_dinov2_swiglu_legacy(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 304M parameters and is the legacy version
+        without fixed image size constraints.
+    """
     return DINOV2(
         patch_size=14,
         embed_dim=1024,
@@ -148,7 +351,40 @@ def vit_large_patch14_dinov2_swiglu_legacy(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def vit_giant_patch14_reg4_dinov2_swiglu(**kwargs):
-    """DINOV2 ViT Giant model with SwiGLU activation."""
+    """Create a DINOv2 ViT Giant model with SwiGLU activation and register tokens.
+
+    This function creates a DINOv2 ViT Giant model with the following specifications:
+    - Patch size: 14x14 pixels
+    - Embedding dimension: 1536
+    - Depth: 40 transformer blocks
+    - Number of heads: 24
+    - Image size: 518x518
+    - MLP ratio: 8192/1536 (approximately 5.33)
+    - SwiGLU activation functions
+    - Global pooling: token
+    - Register tokens: 4
+
+    Args:
+        **kwargs: Additional arguments passed to DINOV2 constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        DINOV2: Configured DINOv2 ViT Giant model.
+
+    Example:
+        >>> model = vit_giant_patch14_reg4_dinov2_swiglu(num_classes=1000)
+        >>> x = torch.randn(1, 3, 518, 518)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 1.1B parameters and is the largest DINOv2
+        model with register tokens for enhanced representation learning.
+    """
     return DINOV2(
         patch_size=14,
         embed_dim=1536,

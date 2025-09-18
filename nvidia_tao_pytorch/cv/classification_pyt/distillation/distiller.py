@@ -22,7 +22,6 @@ from typing import Sequence
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 import torch.optim as optim
 from torch.optim import lr_scheduler
@@ -37,8 +36,8 @@ from nvidia_tao_pytorch.core.callbacks.ema import EMA, EMAModelCheckpoint
 from nvidia_tao_pytorch.core.utilities import get_latest_checkpoint
 
 from nvidia_tao_pytorch.core.distillation.distiller import Distiller
-from nvidia_tao_pytorch.core.distillation.losses import LPCriterion, KLDivCriterion
 
+from nvidia_tao_pytorch.cv.classification_pyt.distillation.loss import DistillationLoss
 from nvidia_tao_pytorch.cv.classification_pyt.model.classifier import build_model
 from nvidia_tao_pytorch.cv.classification_pyt.utils.loss import Cross_Entropy
 from nvidia_tao_pytorch.cv.classification_pyt.dataloader.dataset import NOCLASS_IDX
@@ -186,15 +185,13 @@ class ClassDistiller(Distiller):
         if 'radio' in teacher_cfg.model.backbone.type:
             assert self.num_classes == 0, "Number of classes must be 0 when using radio as the teacher"
         if self.num_classes == 0:
-            assert self.distill_loss == "FD" or self.distill_loss == "CS", \
-                "Only FD (`smooth L1`), CS (`cosine similarity`) are supported when the number of classes is 0"
+            assert self.distill_loss in ["FD", "CS", "balanced", "MSE"], \
+                "Only FD (`smooth L1`), CS (`cosine similarity`), balanced (`cosine similarity` + `smooth L1`, MSE) are supported when the number of classes is 0"
 
         # Build the teacher model
         self.teacher = build_model(experiment_config=teacher_cfg, export=export)
         # Build the student model
         self.model = build_model(experiment_config=self.experiment_spec, export=export)
-        # build the projection layer
-        self.projection_layer = nn.Linear(self.model.num_features, self.teacher.num_features)
         self.teacher.eval()
         self.model.train()
 
@@ -222,14 +219,18 @@ class ClassDistiller(Distiller):
         else:
             raise NotImplementedError(self.train_config["loss"])
 
-        self.criterions = {
-            "L1": LPCriterion(p=1),
-            "L2": LPCriterion(p=2),
-            "KL": KLDivCriterion(),
-            "CE": Cross_Entropy(soft=True, label_smoothing=False),
-            "FD": nn.SmoothL1Loss(beta=2.0),
-            "CS": nn.CosineSimilarity(dim=-1, eps=1e-8),
-        }
+        # Create the distillation loss module
+        self.distillation_loss_fn = DistillationLoss(
+            loss_type=self.distill_loss,
+            student_model=self.model,
+            teacher_model=self.teacher,
+            distillation_mode=self.distill_config.mode or "auto",  # Auto-detect based on loss type
+            num_classes=self.num_classes,
+            temperature=getattr(self.distill_config, 'temperature', 1.0),
+            use_mlp=getattr(self.distill_config, 'use_mlp', True),
+            mlp_hidden_size=getattr(self.distill_config, 'mlp_hidden_size', 1024),
+            mlp_num_inner=getattr(self.distill_config, 'mlp_num_inner', 0),
+        )
 
     @staticmethod
     def _get_parameter_groups(model, weight_decay, skip_names=()):
@@ -338,33 +339,14 @@ class ClassDistiller(Distiller):
     def training_step(self, batch, batch_idx):
         """Training step"""
         out = self.model(batch["img"])
-        teacher_outputs = self.teacher(batch["img"])
         if self.num_classes > 0:
             acc = self.train_acc(out, batch["class"].long())
             self.log_dict(acc, sync_dist=False, on_step=True, on_epoch=False, prog_bar=True)
             loss = self.criterion(out, batch["class"].long())
         else:
             loss = torch.tensor(0.0)
-
-        # TODO(@yuw): potentially enable BCE/sigmoid for multi-category
-        if self.distill_loss == "CE":
-            distillation_loss = self.criterions["CE"](
-                out, F.softmax(teacher_outputs, dim=-1)
-            )
-        elif self.distill_loss == "FD" or self.distill_loss == "CS":
-            assert self.num_classes == 0, "Number of classes must be 0 when using `FD` or `CS` as the distillation loss type"
-            # here we assume the teacher and student have the same number of tokens
-            s_feat_dim = out.shape[-1]
-            t_feat_dim = teacher_outputs.shape[-1]
-            if s_feat_dim != t_feat_dim:
-                out = self.projection_layer(out)
-            distillation_loss = self.criterions[self.distill_loss](
-                out, nn.LayerNorm(t_feat_dim, elementwise_affine=False)(teacher_outputs)
-            )
-        else:
-            distillation_loss = self.criterions[self.distill_loss](
-                out, teacher_outputs
-            )
+        # compute distillation loss
+        distillation_loss = self.distillation_loss_fn(batch["img"])
 
         supervised_loss = (1 - self.distill_weight) * loss
         distill_loss = self.distill_weight * distillation_loss * 100
@@ -432,18 +414,35 @@ class ClassDistiller(Distiller):
     def validation_step(self, batch, batch_idx):
         """Validation step."""
         out = self.model(batch["img"])
-        loss = self.criterion(out, batch["class"].long())
-        self.valid_acc.update(out, batch["class"].long())
+        if self.num_classes > 0:
+            loss = self.criterion(out, batch["class"].long())
+            self.valid_acc.update(out, batch["class"].long())
+            self.log(
+                "val_loss",
+                loss,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=True,
+                sync_dist=True,
+                batch_size=self.batch_size,
+                rank_zero_only=True
+            )
+        else:
+            loss = torch.tensor(0.0).to(out.device)
+
+        # compute distillation loss
+        distillation_loss = self.distillation_loss_fn(batch["img"])
         self.log(
-            "val_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
+            "distillation_loss",
+            distillation_loss,
+            on_step=True,
+            on_epoch=False,
             prog_bar=True,
             sync_dist=True,
             batch_size=self.batch_size,
             rank_zero_only=True
         )
+        loss += distillation_loss
         return loss
 
     def on_validation_epoch_end(self):
@@ -453,22 +452,23 @@ class ClassDistiller(Distiller):
         # FLUSHING VALIDATION EPOCH METRICS
         # scores, mean_scores = self._collect_epoch_states()  # logs all evaluation metrics
         # self.log("val_acc", scores['acc'], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        acc = self.valid_acc.compute()
-        self.log_dict(acc, sync_dist=True, on_step=False, on_epoch=True, prog_bar=False)
-        self.valid_acc.reset()
-        # self._clear_cache()
+        if self.num_classes > 0:
+            acc = self.valid_acc.compute()
+            self.log_dict(acc, sync_dist=True, on_step=False, on_epoch=True, prog_bar=False)
+            self.valid_acc.reset()
+            # self._clear_cache()
 
-        average_val_loss = self.trainer.logged_metrics["val_loss"].item()
-        if not self.trainer.sanity_checking:
-            self.status_logging_dict = {}
-            self.status_logging_dict["val_loss"] = average_val_loss
-            for acc_key in acc.keys():
-                self.status_logging_dict[acc_key] = acc[acc_key].item()
-            status_logging.get_status_logger().kpi = self.status_logging_dict
-            status_logging.get_status_logger().write(
-                message="Eval metrics generated.",
-                status_level=status_logging.Status.RUNNING,
-            )
+            average_val_loss = self.trainer.logged_metrics["val_loss"].item()
+            if not self.trainer.sanity_checking:
+                self.status_logging_dict = {}
+                self.status_logging_dict["val_loss"] = average_val_loss
+                for acc_key in acc.keys():
+                    self.status_logging_dict[acc_key] = acc[acc_key].item()
+                status_logging.get_status_logger().kpi = self.status_logging_dict
+                status_logging.get_status_logger().write(
+                    message="Eval metrics generated.",
+                    status_level=status_logging.Status.RUNNING,
+                )
 
         pl.utilities.memory.garbage_collection_cuda()
 

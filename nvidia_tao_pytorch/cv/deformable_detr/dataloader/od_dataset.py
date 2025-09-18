@@ -25,7 +25,7 @@ from PIL import Image, ImageOps
 from typing import Any, Tuple, List
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils.coco import COCO
-
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import read_h5_image_from_path
 
 # List of valid image extensions
 VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".JPEG", ".JPG", ".PNG")
@@ -63,13 +63,18 @@ class ODDataset(Dataset):
             Loaded PIL Image.
         """
         path = self.coco.loadImgs(img_id)[0]["file_name"]
-        if not self.dataset_dir == "":
-            img_path = os.path.join(self.dataset_dir, path)
+
+        if path.startswith("h5://"):
+            # Handle h5 file format: h5://[h5_file_base_path]:image_file_name
+            img, _ = read_h5_image_from_path(path, self.dataset_dir)  # no need to return full h5 file name
+            return_output = (img, path)
+        else:
+            if not self.dataset_dir == "":
+                img_path = os.path.join(self.dataset_dir, path)
+            else:
+                img_path = path
             img = Image.open(img_path).convert("RGB")
             return_output = (ImageOps.exif_transpose(img), img_path)
-        else:
-            img = Image.open(path).convert("RGB")
-            return_output = (ImageOps.exif_transpose(img), path)
 
         return return_output
 

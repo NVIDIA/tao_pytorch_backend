@@ -384,3 +384,7 @@ class ChangeNetPlModel(TAOLightningModule):
         # Make sure the scalars are logged in TensorBoard always.
         if self.logger:
             self.logger.log_metrics(metrics_dict, step=self.current_epoch)
+
+    def on_save_checkpoint(self, checkpoint):
+        """Save the checkpoint with model identifier."""
+        checkpoint["tao_model"] = "visual_changenet_classify"

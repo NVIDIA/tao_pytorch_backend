@@ -23,6 +23,7 @@ ptm_adapter.add("mask2former", "model.backbone.")
 ptm_adapter.add("mal", "student.backbone.")
 ptm_adapter.add("mask_grounding_dino", "model.model.backbone.0.body.")
 ptm_adapter.add("grounding_dino", "model.model.backbone.0.body.")
+ptm_adapter.add("dino", "model.model.backbone.0.body.")
 
 
 def cls_parser(original):

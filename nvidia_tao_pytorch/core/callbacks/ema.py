@@ -16,19 +16,18 @@
 
 import contextlib
 import copy
+import math
 import os
 import threading
 from typing import Any, Dict, Iterable, Optional
-import math
-
-import torch
-from torch import Tensor
 
 import pytorch_lightning as pl
+import torch
 from pytorch_lightning import Callback
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.utilities.exceptions import MisconfigurationException
 from pytorch_lightning.utilities.rank_zero import rank_zero_info
+from torch import Tensor
 
 
 class EMA(Callback):
@@ -47,6 +46,8 @@ class EMA(Callback):
         warmup_steps: Number of steps used to calculate the exponential ramp of `decay` which can be useful in the early epochs.
             Default is set to 0 which will consistently apply `decay` at every step.
     """
+
+    ema_suffix = "-EMA"
 
     def __init__(
         self,
@@ -144,17 +145,22 @@ class EMA(Callback):
 
         if trainer.ckpt_path and checkpoint_callback is not None:
             ext = checkpoint_callback.FILE_EXTENSION
-            if trainer.ckpt_path.endswith(f"-EMA{ext}"):
+            if trainer.ckpt_path.endswith(f"{self.ema_suffix}{ext}"):
                 rank_zero_info(
                     "loading EMA based weights. "
                     "The callback will treat the loaded EMA weights as the main weights"
                     " and create a new EMA copy when training."
                 )
                 return
-            ema_path = trainer.ckpt_path.replace(ext, f"-EMA{ext}")
+            resolved_path = os.path.realpath(trainer.ckpt_path)
+            if self.ema_suffix not in resolved_path:
+                ema_path = resolved_path.replace(ext, f"{self.ema_suffix}{ext}")
+            else:
+                ema_path = resolved_path
             if os.path.exists(ema_path):
-                ema_state_dict = torch.load(ema_path, map_location=torch.device('cpu'))
-
+                ema_state_dict = torch.load(
+                    ema_path, map_location=torch.device('cpu'), weights_only=False
+                )
                 checkpoint['optimizer_states'] = ema_state_dict['optimizer_states']
                 del ema_state_dict
                 rank_zero_info("EMA state has been restored.")
@@ -419,15 +425,14 @@ class EMAModelCheckpoint(ModelCheckpoint):
 
             # save EMA copy of the model as well
             with ema_callback.save_ema_model(trainer):
-                filepath = self._ema_format_filepath(filepath)
+                filepath = filepath.replace(
+                    self.FILE_EXTENSION, f"{ema_callback.ema_suffix}{self.FILE_EXTENSION}"
+                )
                 if self.verbose:
                     rank_zero_info(f"Saving EMA weights to separate checkpoint {filepath}")
                 super()._save_checkpoint(trainer, filepath)
         else:
             super()._save_checkpoint(trainer, filepath)
-
-    def _ema_format_filepath(self, filepath: str) -> str:
-        return filepath.replace(self.FILE_EXTENSION, f"-EMA{self.FILE_EXTENSION}")
 
     # only change the last line
     def _update_best_and_save(
@@ -470,5 +475,9 @@ class EMAModelCheckpoint(ModelCheckpoint):
         self._save_checkpoint(trainer, filepath)
 
         if del_filepath is not None and filepath != del_filepath:
+            ema_callback = self._ema_callback(trainer)
             self._remove_checkpoint(trainer, del_filepath)
-            self._remove_checkpoint(trainer, del_filepath.replace(self.FILE_EXTENSION, f"-EMA{self.FILE_EXTENSION}"))
+            self._remove_checkpoint(
+                trainer,
+                del_filepath.replace(self.FILE_EXTENSION, f"{ema_callback.ema_suffix}{self.FILE_EXTENSION}"),
+            )

@@ -106,10 +106,10 @@ class MAEPlModule(TAOLightningModule):
 
     def _build_model(self):
         """Internal function to build the model."""
-        # TODO(@yuw): enable cfg
         model_arch = self.cfg.model.arch
-        assert "hiera" in model_arch or "vit" in model_arch or "convnextv2" in model_arch, \
-            "Only hiera, vit and convnextv2 models are supported."
+        supported_archs = [m[len("mae_"):] for m in self.model_mapper.keys()]
+        if model_arch not in supported_archs:
+            raise NotImplementedError(f"Only {", ".join(supported_archs)} are supported, but {model_arch} is specified.")
         self.checkpoint_filename = model_arch
         # Enable the MAE mask for the pretrain stage and if not exporting the model.
         if self.cfg.train.stage == "pretrain" and not self.export:
@@ -127,12 +127,22 @@ class MAEPlModule(TAOLightningModule):
                     freeze_at='all',
                     freeze_norm=True
                 )
+            elif self.cfg.train.stage == "finetune":
+                logging.warning("[ATTENTION!!!] Finetune stage in MAE will be deprecated in the next release. "
+                                "Please use `classification` pipeline to finetune your pretrained model.")
+                logging.warning("If you wish to use the finetuned model in any TAO downstream task, "
+                                "you must use `classification_pyt` endpoint to finetune your pre-trained model.")
+                if model_arch.startswith("vit"):
+                    model_arch = model_arch + "_mae"
+                self.model = BACKBONE_REGISTRY.get(model_arch)(
+                    num_classes=self.cfg.model.num_classes,
+                )
             else:
                 raise NotImplementedError(
-                    f"Stage `{self.cfg.train.stage}` is not supported. Use classification pipeline for finetuning instead.")
+                    f"Stage `{self.cfg.train.stage}` is not supported.")
 
-            logging.info(f"Loading pretrained model from {self.cfg.train.pretrained_model_path}")
             if self.cfg.train.pretrained_model_path:
+                logging.info(f"Loading pretrained model from {self.cfg.train.pretrained_model_path}")
                 # TODO(@yuw): load pretrained weights
                 checkpoint = torch.load(self.cfg.train.pretrained_model_path, map_location='cpu')
                 model_state = checkpoint.get('model', None) or checkpoint.get('model_state', None) or checkpoint.get('state_dict', None)
@@ -181,7 +191,7 @@ class MAEPlModule(TAOLightningModule):
                 logging.info(msg)
             # manually initialize fc layer
             if 'hiera' in model_arch:
-                trunc_normal_(self.model.head.projection.weight, std=2e-5)
+                trunc_normal_(self.model.head.fc.weight, std=2e-5)
             else:
                 trunc_normal_(self.model.head.weight, std=2e-5)
         # freeze modules

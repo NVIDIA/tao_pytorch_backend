@@ -1,0 +1,50 @@
+results_dir: /results/relative_depth_anything/
+dataset:
+  dataset_name: MonoDataset
+  train_dataset:
+    data_sources:
+      - dataset_name: Middlebury
+        data_file: /data/Middlebury/test_clean.txt
+    batch_size: 4
+  val_dataset:
+    data_sources:
+      - dataset_name: Middlebury
+        data_file: /data/Middlebury/test_clean.txt
+    batch_size: 1
+  test_dataset:
+    data_sources:
+      - dataset_name: Middlebury
+        data_file: /data/Middlebury/test_clean.txt
+    batch_size: 10
+  infer_dataset:
+    data_sources:
+      - dataset_name: Middlebury
+        data_file: /data/Middlebury/test_clean.txt
+    batch_size: 10
+train:
+  vis_step_interval: 1000
+  dataloader_visualize: True
+  pretrained_backbone_path: /models/dinov2_vitl14_pretrain.pth
+  num_gpus: 4
+  num_nodes: 1
+  num_epochs: 10
+  activation_checkpoint: False
+  optim:
+    lr: 0.000006
+    lr_scheduler: LambdaLR
+model:
+  model_type: RelativeDepthAnything
+  encoder: vitl
+evaluate:
+  num_gpus: 1
+  checkpoint: /results/relative_depth_anything/train/dn_model_latest.pth
+inference:
+  num_gpus: 1
+  checkpoint: /results/relative_depth_anything/train/dn_model_latest.pth
+export:
+  gpu_id: 0
+  checkpoint: /results/relative_depth_anything/train/dn_model_latest.pth
+  onnx_file: /results/relative_depth_anything/export/dn_model_latest.onnx
+  input_channel: 3
+  input_width: 924
+  input_height: 518

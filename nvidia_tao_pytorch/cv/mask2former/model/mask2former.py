@@ -206,7 +206,7 @@ class MaskFormerModel(nn.Module):
             backbone = D2SwinTransformer(cfg)
             self.backbone_feature_shape = backbone.output_shape()
         elif model_type == 'efficientvit':
-            backbone = EfficientViT(cfg)
+            backbone = EfficientViT(cfg, export=cfg.model.export)
             self.backbone_feature_shape = backbone.output_shape()
         else:
             raise NotImplementedError('Do not support model type!')

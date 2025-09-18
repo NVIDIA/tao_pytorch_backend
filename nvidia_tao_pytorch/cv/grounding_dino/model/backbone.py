@@ -22,11 +22,11 @@ import torch.nn.functional as F
 from torch import nn
 
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
-from nvidia_tao_pytorch.cv.backbone_v2.resnet import resnet_50
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
-
-from nvidia_tao_pytorch.cv.grounding_dino.model.swin_transformer import swin_model_dict
 from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
+from nvidia_tao_pytorch.cv.backbone_v2.resnet import resnet_50
+from nvidia_tao_pytorch.cv.grounding_dino.model.swin_transformer import swin_model_dict
+from nvidia_tao_pytorch.cv.grounding_dino.model.utils import grounding_dino_parser, ptm_adapter
 
 
 class BackboneBase(nn.Module):
@@ -52,18 +52,7 @@ class BackboneBase(nn.Module):
         super().__init__()
         self.export = export
         self.model_name = model_name
-        if model_name.startswith('resnet'):
-            for name, parameter in backbone.named_parameters():
-                if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
-                    parameter.requires_grad_(False)
-
-            self.body = backbone
-        elif model_name.startswith(('swin')):
-            for name, parameter in backbone.named_parameters():
-                if not train_backbone:
-                    parameter.requires_grad_(False)
-
-            self.body = backbone
+        self.body = backbone
         self.num_channels = num_channels
         self.return_interm_indices = return_interm_indices
 
@@ -132,13 +121,14 @@ class Backbone(BackboneBase):
         freeze_norm = False
         if not train_backbone:
             freeze_at = "all"
-        elif train_backbone:
+        elif train_backbone and name.startswith('resnet'):
             freeze_at = [0]
 
         if name == 'resnet_50':
             backbone = resnet_50(
                 freeze_at=freeze_at, freeze_norm=freeze_norm,
-                out_indices=return_interm_indices
+                out_indices=return_interm_indices,
+                export=export,
             )
             num_channels_all = np.array([256, 512, 1024, 2048])
             num_channels = num_channels_all[return_interm_indices]
@@ -157,10 +147,13 @@ class Backbone(BackboneBase):
             raise NotImplementedError(f"Backbone {name} is not implemented. Supported architectures {supported_arch}")
 
         if pretrained_backbone_path:
-            checkpoint = load_pretrained_weights(pretrained_backbone_path)
+            checkpoint = load_pretrained_weights(
+                pretrained_backbone_path,
+                parser=grounding_dino_parser,
+                ptm_adapter=ptm_adapter
+            )
             _tmp_st_output = backbone.load_state_dict(checkpoint, strict=False)
             if get_global_rank() == 0:
-                logging.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                logging.info(f"{_tmp_st_output}")
+                logging.info("Loaded pretrained weights from %s \n %s", pretrained_backbone_path, _tmp_st_output)
 
         super().__init__(name, backbone, train_backbone, num_channels, return_interm_indices, export)

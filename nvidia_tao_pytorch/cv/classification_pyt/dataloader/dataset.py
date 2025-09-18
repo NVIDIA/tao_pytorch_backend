@@ -71,13 +71,14 @@ class CLDataset(Dataset):
                 for idx, line in enumerate(f):
                     self.class_names[line.strip()] = idx
         else:
-            class_names = sorted(os.listdir(self.data_path))
-            for idx, class_name in enumerate(class_names):
-                self.class_names[class_name] = idx
-            # write the class.txt
-            with open(os.path.join(self.root_dir, "classes.txt"), "w") as f:
-                for class_name in class_names:
-                    f.write(f"{class_name}\n")
+            if self.data_path:
+                class_names = sorted(os.listdir(self.data_path))
+                for idx, class_name in enumerate(class_names):
+                    self.class_names[class_name] = idx
+                # write the class.txt
+                with open(os.path.join(self.root_dir, "classes.txt"), "w") as f:
+                    for class_name in class_names:
+                        f.write(f"{class_name}\n")
 
         if split == "train" or split == "val":
             self.img_name_list = self.get_image_file_names(inference=False)
@@ -180,8 +181,8 @@ class CLDataset(Dataset):
                     )
                 )
         else:
-            for class_name in self.class_names:
-                for s in suffix:
+            for s in suffix:
+                for class_name in self.class_names:
                     img_name_list.extend(
                         glob.glob(
                             os.path.join(
@@ -190,13 +191,13 @@ class CLDataset(Dataset):
                         )
                     )
 
-            if self.nolabel_folder:
-                img_name_list.extend(
-                    glob.glob(
-                        os.path.join(self.nolabel_folder, f"**/*.{s}"),
-                        recursive=True,
+                if self.nolabel_folder:
+                    img_name_list.extend(
+                        glob.glob(
+                            os.path.join(self.nolabel_folder, f"**/*.{s}"),
+                            recursive=True,
+                        )
                     )
-                )
 
         return img_name_list
 

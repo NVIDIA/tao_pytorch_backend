@@ -12,16 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" Misc functions. """
+"""Grounding DINO model utils. """
+from nvidia_tao_pytorch.core.utils.ptm_utils import StateDictAdapter
+
+ptm_adapter = StateDictAdapter()
+ptm_adapter.add("mae", "model.encoder.")
+ptm_adapter.add("classification", "model.")
+ptm_adapter.add("grounding_dino", "model.")
 
 
-def parse_checkpoint(original):
+def grounding_dino_parser(original):
     """Parse public Grounding DINO checkpoints.
 
     Download checkpoints from https://github.com/IDEA-Research/GroundingDINO/releases.
     """
     final = {}
-    for k, v in original['model'].items():
+    for k, v in original.items():
         if k.startswith('module.'):
             k = k.replace('module.', '')
         if k.startswith('backbone.0'):

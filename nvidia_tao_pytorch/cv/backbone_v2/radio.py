@@ -48,11 +48,31 @@ radio_model_cfg = {
     "vit_large_patch16_224": {"img_size": 224, "patch_size": 16, "embed_dim": 1024, "depth": 24, "num_heads": 16},
     "vit_huge_patch16_224": {"img_size": 224, "patch_size": 16, "embed_dim": 1280, "depth": 32, "num_heads": 16},
     # CRADIOV3.
+    "vit_base_patch16_reg4_dinov2": {
+        "img_size": 518 * 16 // 14,
+        "patch_size": 16,
+        "embed_dim": 768,
+        "depth": 12,
+        "num_heads": 12,
+        "init_values": 1e-5,
+        "reg_tokens": 4,
+        "no_embed_class": True,
+    },
     "vit_large_patch16_reg4_dinov2": {
         "img_size": 518 * 16 // 14,
         "patch_size": 16,
         "embed_dim": 1024,
         "depth": 24,
+        "num_heads": 16,
+        "init_values": 1e-5,
+        "reg_tokens": 4,
+        "no_embed_class": True,
+    },
+    "vit_huge_patch16_reg4_dinov2": {
+        "img_size": 518 * 16 // 14,
+        "patch_size": 16,
+        "embed_dim": 1280,
+        "depth": 32,
         "num_heads": 16,
         "init_values": 1e-5,
         "reg_tokens": 4,
@@ -75,6 +95,27 @@ def remove_state_dict_prefix(state_dict: Dict[str, Any], prefix: str):
     for k, v in state_dict.items():
         if k.startswith(prefix):
             new_k = k.replace(prefix, "", 1)
+            mod_state_dict[new_k] = v
+        else:
+            mod_state_dict[k] = v
+    return mod_state_dict
+
+
+def replace_state_dict_key(state_dict: Dict[str, Any], old_key: str, new_key: str):
+    """Replace an old key with a new key in a state dict.
+
+    Args:
+        state_dict (dict): The pretrained model weights.
+        old_key (str): The old key to be replaced.
+        new_key (str): The new key.
+
+    Returns:
+        Dict[str, Any]: A new state dictionary with the old key replaced with the new key.
+    """
+    mod_state_dict = {}
+    for k, v in state_dict.items():
+        if old_key in k:
+            new_k = k.replace(old_key, new_key, 1)
             mod_state_dict[new_k] = v
         else:
             mod_state_dict[k] = v
@@ -706,6 +747,7 @@ class RADIO(BackboneBase):
             register_multiple=self.register_multiple,
         )
         self.num_features = backbone.num_features
+        self.patch_size = backbone.patch_size
         # Add an extra wrapper to the backbone.
         # TODO(@hongyuc): This is actually a redundant wrapper for the RADIO models. We can remove it in the future.
         self.radio = RADIOWrapper(backbone, resolution=self.resolution)
@@ -728,13 +770,16 @@ class RADIO(BackboneBase):
             state_dict (dict): a dict containing parameters and persistent buffers.
             **kwargs: Additional arguments passed to `nn.Module.load_state_dict`.
         """
+        state_dict = remove_state_dict_prefix(
+            remove_state_dict_prefix(remove_state_dict_prefix(state_dict, "radio_model.model."), "base_model."),
+            "radio.radio.model.",
+        )
         if self.radio_version == "CRADIOV1":
-            return self.radio.radio.model.load_state_dict(
-                remove_state_dict_prefix(state_dict, "base_model."), **kwargs
-            )
+            return self.radio.radio.model.load_state_dict(state_dict, **kwargs)
         elif self.radio_version == "CRADIOV2":
             return self.radio.radio.model.load_state_dict(
-                remove_state_dict_prefix(remove_state_dict_prefix(state_dict, "radio_model.model."), "base_model."),
+                # Typo in the V3 safetensors checkpoint from HF.
+                replace_state_dict_key(state_dict, old_key="grandma", new_key="gamma"),
                 **kwargs,
             )
         else:
@@ -781,9 +826,16 @@ class RADIO(BackboneBase):
         """
         return self.radio(x)
 
-    def forward_feature_pyramid(self, *args, **kwargs):
+    def forward_feature_pyramid(self, x):
         """Forward pass through the backbone to extract intermediate feature maps."""
-        raise NotImplementedError("forward_feature_pyramid is not implemented.")
+        _, spatial_features = self.radio(x)
+        B, _, C = spatial_features.shape
+        assert C == self.num_features // len(self.summary_idxs), \
+            f"Number of features mismatch: {C} != {self.num_features // len(self.summary_idxs)}"
+        # [B, L, C] -> [B, C, H, W]
+        H, W = self.resolution[0] // self.patch_size, self.resolution[1] // self.patch_size
+        spatial_features = spatial_features.permute(0, 2, 1).view(B, C, H, W)
+        return spatial_features
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward.
@@ -884,10 +936,38 @@ def c_radio_v2_vit_huge_patch16(**kwargs):
 
 
 @BACKBONE_REGISTRY.register()
+def c_radio_v3_vit_base_patch16_reg4_dinov2(**kwargs):
+    """CRADIOV3 ViT Base Patch16 Reg4."""
+    return RADIO(
+        backbone="vit_base_patch16_reg4_dinov2",
+        summary_idxs=[0, 1, 2],
+        window_size=None,
+        num_teacher=4,
+        cpe_max_size=2048,
+        register_multiple=8,
+        **kwargs,
+    )
+
+
+@BACKBONE_REGISTRY.register()
 def c_radio_v3_vit_large_patch16_reg4_dinov2(**kwargs):
     """CRADIOV3 ViT Large Patch16 Reg4."""
     return RADIO(
         backbone="vit_large_patch16_reg4_dinov2",
+        summary_idxs=[0, 1, 2],
+        window_size=None,
+        num_teacher=4,
+        cpe_max_size=2048,
+        register_multiple=8,
+        **kwargs,
+    )
+
+
+@BACKBONE_REGISTRY.register()
+def c_radio_v3_vit_huge_patch16_reg4_dinov2(**kwargs):
+    """CRADIOV3 ViT Huge Patch16 Reg4."""
+    return RADIO(
+        backbone="vit_huge_patch16_reg4_dinov2",
         summary_idxs=[0, 1, 2],
         window_size=None,
         num_teacher=4,

@@ -191,12 +191,3 @@ def make_prediction(in_channels, out_channels):
         nn.BatchNorm2d(out_channels),
         nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
     )
-
-
-def count_params(net):
-    """Utility function to count model parameters."""
-    total_params = sum(p.numel() for p in net.parameters())
-    trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-
-    print("Total Parameters: ", total_params)
-    print("Trainable Parameters: ", trainable_params)

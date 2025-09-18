@@ -371,29 +371,29 @@ class SpatialPriorModule(nn.Module):
 
         self.stem = nn.Sequential(*[
             nn.Conv2d(in_channel, inplanes, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.SyncBatchNorm(inplanes),
+            nn.BatchNorm2d(inplanes),
             nn.ReLU(inplace=True),
             nn.Conv2d(inplanes, inplanes, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.SyncBatchNorm(inplanes),
+            nn.BatchNorm2d(inplanes),
             nn.ReLU(inplace=True),
             nn.Conv2d(inplanes, inplanes, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.SyncBatchNorm(inplanes),
+            nn.BatchNorm2d(inplanes),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         ])
         self.conv2 = nn.Sequential(*[
             nn.Conv2d(inplanes, 2 * inplanes, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.SyncBatchNorm(2 * inplanes),
+            nn.BatchNorm2d(2 * inplanes),
             nn.ReLU(inplace=True)
         ])
         self.conv3 = nn.Sequential(*[
             nn.Conv2d(2 * inplanes, 4 * inplanes, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.SyncBatchNorm(4 * inplanes),
+            nn.BatchNorm2d(4 * inplanes),
             nn.ReLU(inplace=True)
         ])
         self.conv4 = nn.Sequential(*[
             nn.Conv2d(4 * inplanes, 4 * inplanes, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.SyncBatchNorm(4 * inplanes),
+            nn.BatchNorm2d(4 * inplanes),
             nn.ReLU(inplace=True)
         ])
         if len(out_indices) == 4:

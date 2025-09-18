@@ -33,7 +33,7 @@ meshcat==0.3.2
 mypy==1.15.0
 natsort==8.4.0
 nltk==3.9.1
---extra-index-url https://urm.nvidia.com/artifactory/api/pypi/sw-metropolis-pypi/simple
+--extra-index-url https://edge.urm.nvidia.com/artifactory/api/pypi/sw-metropolis-pypi/simple
 spatialai_data_utils==1.0.0
 --extra-index-url https://pypi.nvidia.com
 nvidia-eff==0.6.6
@@ -76,5 +76,6 @@ wandb==0.19.6
 webdataset==0.2.111
 wget==3.2
 yapf==0.43.0
+memoizer==0.0.1
 git+https://github.com/lilohuang/PyTurboJPEG.git
 git+https://github.com/facebookresearch/pytorch3d.git

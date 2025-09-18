@@ -214,7 +214,7 @@ class CenterPose_FAN(nn.Module):
             z (Dict): the heatmaps indicate the keypoints location.
 
         """
-        x = self.base(x)
+        x = self.base.forward_feature_pyramid(x)
         out = list(x.values())
 
         y = []

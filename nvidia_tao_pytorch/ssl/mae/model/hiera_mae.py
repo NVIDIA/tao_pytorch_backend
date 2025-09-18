@@ -30,7 +30,8 @@ import math
 import torch
 import torch.nn as nn
 
-from timm.models.hiera import Hiera, HieraBlock
+from timm.models.hiera import HieraBlock
+from nvidia_tao_pytorch.cv.backbone_v2.hiera import Hiera
 from nvidia_tao_pytorch.ssl.mae.model.hiera_utils import undo_windowing, conv_nd
 
 
@@ -65,6 +66,8 @@ class MaskedAutoencoderHiera(Hiera):
         export: bool = False,
         **kwargs,
     ):
+        kwargs.pop("norm_pix_loss", None)
+        self.mask_ratio = kwargs.pop("mask_ratio", 0.6)
         super().__init__(
             in_chans=in_chans,
             patch_stride=patch_stride,
@@ -296,11 +299,10 @@ class MaskedAutoencoderHiera(Hiera):
     def forward(
         self,
         x: torch.Tensor,
-        mask_ratio: float = 0.6,
         mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass."""
-        latent, mask = self.forward_encoder(x, mask_ratio, mask=mask)
+        latent, mask = self.forward_encoder(x, self.mask_ratio, mask=mask)
         if self.export:
             return latent
         pred, pred_mask = self.forward_decoder(

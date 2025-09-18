@@ -72,8 +72,10 @@ def run_experiment(experiment_config, lightning_module=RTDETRPlModel):
                 new_checkpoint[k] = v
             else:
                 # Skip layers that mismatch
-                logging.info(f"skip layer: {k}, checkpoint layer size: {list(v.size())},"
-                             f"current model layer size: {list(current_model_dict[k].size())}")
+                logging.info(
+                    "skip layer: %s, checkpoint layer size: %s, current model layer size: %s",
+                    k, list(v.size()), list(current_model_dict[k].size())
+                )
                 new_checkpoint[k] = current_model_dict[k]
         # Load pretrained weights
         msg = pt_model.model.load_state_dict(new_checkpoint, strict=False)
@@ -120,6 +122,7 @@ def run_experiment(experiment_config, lightning_module=RTDETRPlModel):
                       precision=precision,
                       gradient_clip_val=clip_grad_norm,
                       use_distributed_sampler=False,
+                      sync_batchnorm=len(trainer_kwargs['devices']) > 1,
                       fast_dev_run=is_dry_run)
 
     trainer.fit(pt_model, dm, ckpt_path=resume_ckpt)

@@ -12,9 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Abstract base class for backbone models."""
-# TODO: add export flag
+"""Abstract base class for backbone models.
 
+This module provides the foundational infrastructure for backbone models in the TAO PyTorch framework.
+It defines the common interface and functionality that all backbone models must implement.
+
+The BackboneBase class serves as the abstract base class that provides:
+- Common initialization parameters for all backbone models
+- Standardized methods for feature extraction and classification
+- Support for activation checkpointing and layer freezing
+- Integration with the TAO backbone registry system
+
+Key Features:
+- Abstract interface for backbone model implementations
+- Support for gradient checkpointing to trade compute for memory
+- Layer freezing capabilities for transfer learning
+- Batch normalization freezing for improved training stability
+- Standardized forward pass methods for different use cases
+
+Classes:
+    BackboneMeta: Metaclass for BackboneBase that handles post-initialization
+    BackboneBase: Abstract base class for all backbone models
+
+Example:
+    ```python
+    class MyBackbone(BackboneBase):
+        def __init__(self, in_chans=3, num_classes=1000, **kwargs):
+            super().__init__(in_chans=in_chans, num_classes=num_classes, **kwargs)
+            # Define your model architecture here
+
+        def get_stage_dict(self):
+            # Return dictionary mapping stage names to modules
+            return {0: self.stage0, 1: self.stage1, ...}
+
+        def forward_pre_logits(self, x):
+            # Forward pass without classification head
+            return features
+
+        def forward(self, x):
+            # Complete forward pass with classification
+            return logits
+    ```
+"""
 import abc
 from typing import Dict, List, Optional, Set, Union
 
@@ -28,10 +67,30 @@ from nvidia_tao_pytorch.cv.backbone_v2.nn.norm import FrozenBatchNorm2d
 
 
 class BackboneMeta(abc.ABCMeta, type):
-    """Metaclass for BackboneBase."""
+    """Metaclass for BackboneBase that handles post-initialization.
+
+    This metaclass ensures that the `_post_init` method is called after object creation,
+    allowing for proper setup of backbone models including freezing layers and setting
+    gradient checkpointing.
+
+    The metaclass combines ABCMeta (for abstract base class functionality) with type
+    to provide both abstract method enforcement and custom initialization behavior.
+    """
 
     def __call__(cls, *args, **kwargs):
-        """Called when you call `BackboneBase()`"""
+        """Called when you call `BackboneBase()` or any subclass constructor.
+
+        This method ensures that the `_post_init` method is automatically called
+        after the object is created, providing a standardized initialization flow
+        for all backbone models.
+
+        Args:
+            *args: Positional arguments passed to the constructor
+            **kwargs: Keyword arguments passed to the constructor
+
+        Returns:
+            BackboneBase: The initialized backbone model instance
+        """
         obj = type.__call__(cls, *args, **kwargs)
         obj._post_init()  # Call `_post_init` after the object is created.
         return obj
@@ -93,6 +152,7 @@ class BackboneBase(nn.Module, metaclass=BackboneMeta):
         activation_checkpoint: bool = False,
         freeze_at: Optional[List[Union[int, str]]] = None,
         freeze_norm: bool = False,
+        export: bool = False,
     ):
         """Initialize the backbone base class.
 
@@ -103,6 +163,7 @@ class BackboneBase(nn.Module, metaclass=BackboneMeta):
             freeze_at (list): List of keys corresponding to the stages or layers to freeze. If `None`, no specific
                 layers are frozen. If `"all"`, the entire model is frozen and set to eval mode. Default: `None`.
             freeze_norm (bool): If `True`, all normalization layers in the backbone will be frozen. Default: `False`.
+            export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN
         """
         if not self._module_is_initialized:
             nn.Module.__init__(self)
@@ -122,10 +183,18 @@ class BackboneBase(nn.Module, metaclass=BackboneMeta):
         self.activation_checkpoint = bool(activation_checkpoint)
         self.freeze_norm = bool(freeze_norm)
         self.freeze_at = freeze_at
+        self.export = export
 
     @property
     def _module_is_initialized(self):
-        """Whether the nn.Module is initialized."""
+        """Whether the nn.Module is initialized.
+
+        This property checks if the nn.Module has been properly initialized by
+        checking for the presence of standard nn.Module attributes.
+
+        Returns:
+            bool: True if the module is initialized, False otherwise
+        """
         if hasattr(self, "_parameters") or hasattr(self, "_buffers") or hasattr(self, "_modules"):
             return True
         return False
@@ -133,13 +202,27 @@ class BackboneBase(nn.Module, metaclass=BackboneMeta):
     def _post_init(self):
         """Post-initialization method.
 
-        This method is called after the module is initialized.
+        This method is called after the module is initialized and handles:
+        - Freezing specified layers of the backbone
+        - Setting up gradient checkpointing for memory efficiency
+
+        This method is automatically called by the BackboneMeta metaclass
+        after object creation.
         """
         self.freeze_backbone()
+        if self.export:
+            self._freeze_bn_norm(self)
         self.set_grad_checkpointing(self.activation_checkpoint)
 
     def _init_weights(self, m):
-        """initialize weights."""
+        """Initialize weights for different layer types.
+
+        Applies truncated normal initialization to Conv2d and Linear layers,
+        and zero initialization to bias terms.
+
+        Args:
+            m (nn.Module): Module to initialize weights for
+        """
         if isinstance(m, (nn.Conv2d, nn.Linear)):
             trunc_normal_(m.weight, std=0.02)
             if m.bias is not None:
@@ -176,6 +259,10 @@ class BackboneBase(nn.Module, metaclass=BackboneMeta):
     def no_weight_decay(self) -> Set[str]:
         """Get the set of parameter names to exclude from weight decay.
 
+        This method returns parameter names that should be excluded from weight decay
+        during training. This is commonly used for bias terms and normalization
+        parameters.
+
         Returns:
             Set[str]: Set of parameter names to exclude from weight decay
         """
@@ -183,6 +270,9 @@ class BackboneBase(nn.Module, metaclass=BackboneMeta):
 
     def no_weight_decay_keywords(self) -> Set[str]:
         """Get the set of parameter keywords to exclude from weight decay.
+
+        This method returns parameter name keywords that should be excluded from
+        weight decay. This is useful for excluding parameters based on naming patterns.
 
         Returns:
             Set[str]: Set of parameter keywords to exclude from weight decay
@@ -215,13 +305,30 @@ class BackboneBase(nn.Module, metaclass=BackboneMeta):
         pass
 
     def _freeze_module(self, m: nn.Module):
-        """Freeze the given module."""
+        """Freeze the given module.
+
+        Sets all parameters in the module to not require gradients and sets
+        the module to evaluation mode.
+
+        Args:
+            m (nn.Module): Module to freeze
+        """
         for p in m.parameters():
             p.requires_grad = False
         m.eval()
 
     def _freeze_bn_norm(self, m: nn.Module):
-        """Recursively freeze the batch normalization layers in the given module."""
+        """Recursively freeze the batch normalization layers in the given module.
+
+        Replaces all BatchNorm2d layers with FrozenBatchNorm2d to prevent
+        their statistics from being updated during training.
+
+        Args:
+            m (nn.Module): Module to process
+
+        Returns:
+            nn.Module: Module with frozen batch normalization layers
+        """
         if isinstance(m, nn.BatchNorm2d):
             m = FrozenBatchNorm2d(m.num_features)
         else:

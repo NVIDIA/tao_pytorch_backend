@@ -143,7 +143,7 @@ def run_export(experiment_config):
     if serialize_nvdsinfer:
         # Write class names to labels file
         labels_file = os.path.join(output_root, "labels.txt")
-        write_classes_file(labels_file, class_names)
+        write_classes_file(labels_file, class_names, delimiter='\n')
 
         # Generate nvdsinfer config
         nvdsinfer_yaml_file = os.path.join(output_root, "nvdsinfer_config.yaml")

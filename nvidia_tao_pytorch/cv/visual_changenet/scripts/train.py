@@ -40,8 +40,11 @@ def run_experiment(experiment_config, key):
     # Load pretrained model as starting point if pretrained path is provided
     pretrained_path = experiment_config.train.pretrained_model_path
     use_distributed_sampler = experiment_config.train.use_distributed_sampler
-    sync_batchnorm = experiment_config.train.sync_batchnorm
     precision = experiment_config.train.precision
+
+    strategy = 'auto'
+    if len(trainer_kwargs['devices']) > 1:
+        strategy = 'ddp_find_unused_parameters_true'
 
     assert task in ['segment', 'classify'], "Visual ChangeNet only supports 'segment' and 'classify' tasks."
     if task == 'classify':
@@ -55,8 +58,6 @@ def run_experiment(experiment_config, key):
                                                                dm=dm)
         else:
             model = ChangeNetPlClassifier(experiment_config, dm)
-
-        strategy = 'auto'
 
         if enable_tensorboard:
             infrequent_logging_frequency = experiment_config.train.tensorboard.infrequent_logging_frequency
@@ -80,10 +81,6 @@ def run_experiment(experiment_config, key):
         else:
             model = ChangeNetPlSegment(experiment_config)
 
-        strategy = 'auto'
-        if len(trainer_kwargs['devices']) > 1:
-            strategy = 'ddp_find_unused_parameters_true'
-
     else:
         raise NotImplementedError('Only tasks supported by Visual ChangeNet are: "segment" and "classify"')
 
@@ -92,7 +89,7 @@ def run_experiment(experiment_config, key):
                       strategy=strategy,
                       precision=precision,
                       use_distributed_sampler=use_distributed_sampler,
-                      sync_batchnorm=sync_batchnorm
+                      sync_batchnorm=len(trainer_kwargs['devices']) > 1,
                       )
 
     trainer.fit(model, dm, ckpt_path=resume_ckpt)

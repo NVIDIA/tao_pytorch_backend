@@ -28,26 +28,28 @@
 
 """Visual ChangeNet Segmentation model builder"""
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import logging
 
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
-from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import (
-    interpolate_pos_embed, interpolate_patch_embed
-)
-
-from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
-    MLP, conv_diff, make_prediction, UpsampleConvLayer,
-    ResidualBlock, ConvLayer, resize, count_params,
-)
+from nvidia_tao_pytorch.core.tlt_logging import logger
+from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import interpolate_patch_embed, interpolate_pos_embed
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
+from nvidia_tao_pytorch.cv.backbone_v2.nn.norm import FrozenBatchNorm2d
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.fan import fan_model_dict
-from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.vit_adapter import vit_adapter_model_dict
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
-
-logger = logging.getLogger(__name__)
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.utils import ptm_adapter, visual_changenet_parser
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.vit_adapter import vit_adapter_model_dict
+from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
+    MLP,
+    ConvLayer,
+    ResidualBlock,
+    UpsampleConvLayer,
+    conv_diff,
+    make_prediction,
+    resize,
+)
 
 
 class DecoderTransformer_v3(nn.Module):
@@ -55,9 +57,19 @@ class DecoderTransformer_v3(nn.Module):
     Transformer Decoder
     """
 
-    def __init__(self, input_transform='multiple_select', in_index=[0, 1, 2, 3], align_corners=True,
-                 in_channels=[32, 64, 128, 256], embedding_dim=64, output_nc=2,
-                 decoder_softmax=False, feature_strides=[2, 4, 8, 16], model_name='FANHybrid'):
+    def __init__(
+        self,
+        input_transform="multiple_select",
+        in_index=[0, 1, 2, 3],
+        align_corners=True,
+        in_channels=[32, 64, 128, 256],
+        embedding_dim=64,
+        output_nc=2,
+        decoder_softmax=False,
+        feature_strides=[2, 4, 8, 16],
+        export=False,
+        model_name="FANHybrid",
+    ):
         """Initialize DecoderTransformer_v3 class
 
         Args:
@@ -67,9 +79,10 @@ class DecoderTransformer_v3(nn.Module):
             in_channels (list): Input channels for each feature level.
             embedding_dim (int): Embedding dimension for decoder.
             output_nc (int): Number of output classes.
+            decoder_softmax (bool): Flag to indicate whether to use softmax for predictions.
             feature_strides (list): Feature stride for each level.
+            export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN.
             model_name (str): Backbone model name.
-            decoder_softmax (bool): Flag to indicate whether to use softmax for predictions
         """
         super(DecoderTransformer_v3, self).__init__()
         # assert
@@ -121,6 +134,30 @@ class DecoderTransformer_v3(nn.Module):
         # Final activation
         self.output_softmax = decoder_softmax
         self.active = nn.Sigmoid()
+
+        if export:
+            self._freeze_bn_norm(self)
+
+    def _freeze_bn_norm(self, m: nn.Module):
+        """Recursively freeze the batch normalization layers in the given module.
+
+        Replaces all BatchNorm2d layers with FrozenBatchNorm2d to prevent
+        their statistics from being updated during training.
+
+        Args:
+            m (nn.Module): Module to process
+
+        Returns:
+            nn.Module: Module with frozen batch normalization layers
+        """
+        if isinstance(m, nn.BatchNorm2d):
+            m = FrozenBatchNorm2d(m.num_features)
+        else:
+            for name, child in m.named_children():
+                _child = self._freeze_bn_norm(child)
+                if _child is not child:
+                    setattr(m, name, _child)
+        return m
 
     def _transform_inputs(self, inputs):
         """Transform inputs for decoder.
@@ -245,11 +282,28 @@ class ChangeNetSegment(nn.Module):
         activation_checkpoint (bool): Enable activation checkpointing
         freeze_backbone: Flag to freeze backbone weights during training.
         return_interm_indices (list): list of layer indices to reutrn as backbone features.
+        export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN.
     """
 
-    def __init__(self, input_nc=3, output_nc=2, decoder_softmax=False, embed_dim=256, model='fan_tiny_8_p4_hybrid_256', img_size=256,
-                 embed_dims=[128, 256, 384, 384], feature_strides=[4, 8, 16, 16], in_index=[0, 1, 2, 3], feat_downsample=False,
-                 pretrained_backbone_path=None, return_interm_indices=[0, 1, 2, 3], activation_checkpoint=False, freeze_backbone=False, use_summary_token=True):
+    def __init__(
+        self,
+        input_nc=3,
+        output_nc=2,
+        decoder_softmax=False,
+        embed_dim=256,
+        model="fan_tiny_8_p4_hybrid_256",
+        img_size=256,
+        embed_dims=[128, 256, 384, 384],
+        feature_strides=[4, 8, 16, 16],
+        in_index=[0, 1, 2, 3],
+        feat_downsample=False,
+        pretrained_backbone_path=None,
+        return_interm_indices=[0, 1, 2, 3],
+        activation_checkpoint=False,
+        freeze_backbone=False,
+        use_summary_token=True,
+        export=False,
+    ):
         """Initialize Visual ChangeNetSegment class"""
         super(ChangeNetSegment, self).__init__()
 
@@ -272,60 +326,74 @@ class ChangeNetSegment(nn.Module):
         self.model_name = model
         self.embed_dims = embed_dims
 
-        logger.info(f"Number of output classes: {output_nc}")
+        freeze_at = None
+        if freeze_backbone:
+            if pretrained_backbone_path is None:
+                raise ValueError("You shouldn't freeze a model without specifying pretrained_backbone_path")
+            freeze_at = "all"
+        if get_global_rank() == 0:
+            logger.info(f"Number of output classes: {output_nc}")
         assert img_size % feature_strides[-1] == 0, f"Input image size must be a multiple of {feature_strides[-1]}"
-
-        pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone_path) if pretrained_backbone_path else None
 
         if 'fan' in self.model_name:
             self.backbone = fan_model_dict[self.model_name](
-                pretrained=False,
-                num_classes=output_nc,
-                checkpoint_path='',
                 img_size=img_size,
-                feat_downsample=feat_downsample)
-
+                feat_downsample=feat_downsample,
+                freeze_at=freeze_at,
+                export=export,
+            )
         elif 'radio' in self.model_name:
             assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
             self.backbone = vit_adapter_model_dict[self.model_name](
                 out_indices=return_interm_indices,
                 resolution=img_size,
                 activation_checkpoint=activation_checkpoint,
-                use_summary_token=use_summary_token)
-
+                use_summary_token=use_summary_token,
+                freeze_at=freeze_at,
+                export=export,
+            )
         elif 'vit' in self.model_name:
             assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
             self.backbone = vit_adapter_model_dict[self.model_name](
                 out_indices=return_interm_indices,
                 resolution=img_size,
-                activation_checkpoint=activation_checkpoint)
-
-            # do interpolation
-            pretrained_backbone_ckp = interpolate_vit_checkpoint(checkpoint=pretrained_backbone_ckp,
-                                                                 target_patch_size=16,
-                                                                 target_resolution=img_size)
+                activation_checkpoint=activation_checkpoint,
+                freeze_at=freeze_at,
+                export=export,
+            )
         else:
             raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)
 
-        if pretrained_backbone_ckp is not None:
-            _tmp_st_output = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
-
+        if pretrained_backbone_path:
+            pretrained_backbone_ckp = load_pretrained_weights(
+                pretrained_backbone_path,
+                parser=visual_changenet_parser,
+                ptm_adapter=ptm_adapter,
+            )
+            if "vit" in self.model_name and "radio" not in self.model_name:
+                pretrained_backbone_ckp = interpolate_vit_checkpoint(
+                    checkpoint=pretrained_backbone_ckp,
+                    target_patch_size=16,
+                    target_resolution=img_size,
+                )
+            msg = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
             if get_global_rank() == 0:
                 logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                logger.info(f"{_tmp_st_output}")
-
-        # Freeze backbone
-        if freeze_backbone:
-            assert pretrained_backbone_path is not None, "You shouldn't freeze a model without specifying pretrained_backbone_path"
-            for _, parameter in self.backbone.named_parameters():
-                parameter.requires_grad_(False)
-            # self.backbone.eval()  # TODO: Check if needed??
-            logger.info("Frozen backbone training")
+                logger.info(f"{msg}")
 
         # Transformer Decoder
-        self.decoder = DecoderTransformer_v3(input_transform='multiple_select', in_index=in_index, align_corners=False,
-                                             in_channels=self.embed_dims, embedding_dim=self.embedding_dim, output_nc=output_nc,
-                                             decoder_softmax=decoder_softmax, feature_strides=feature_strides, model_name=self.model_name)
+        self.decoder = DecoderTransformer_v3(
+            input_transform="multiple_select",
+            in_index=in_index,
+            align_corners=False,
+            in_channels=self.embed_dims,
+            embedding_dim=self.embedding_dim,
+            output_nc=output_nc,
+            decoder_softmax=decoder_softmax,
+            feature_strides=feature_strides,
+            export=export,
+            model_name=self.model_name,
+        )
 
     def forward(self, x1, x2):
         """
@@ -338,7 +406,7 @@ class ChangeNetSegment(nn.Module):
         Returns:
             torch.Tensor: Output tensor representing the segmentation map.
         """
-        [fx1, fx2] = [self.backbone(x1), self.backbone(x2)]
+        [fx1, fx2] = [self.backbone.forward_feature_pyramid(x1), self.backbone.forward_feature_pyramid(x2)]
         out_decoder = self.decoder(fx1, fx2)
         return out_decoder
 
@@ -348,8 +416,8 @@ def build_model(experiment_config,
     """ Build changenet model according to configuration
 
     Args:
-        experiment_config: experiment configuration
-        export: flag to indicate onnx export
+        experiment_config: experiment configuration.
+        export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN.
 
     Returns:
         model
@@ -390,22 +458,22 @@ def build_model(experiment_config,
     num_classes = dataset_config.num_classes
     img_size = dataset_config.img_size
 
-    model = ChangeNetSegment(embed_dim=embed_dim,
-                             model=backbone,
-                             output_nc=num_classes,
-                             img_size=img_size,
-                             input_nc=3,
-                             decoder_softmax=False,
-                             embed_dims=embed_dims,
-                             feature_strides=feature_strides,
-                             in_index=in_index,
-                             feat_downsample=feat_downsample,
-                             pretrained_backbone_path=pretrained_backbone_path,
-                             freeze_backbone=freeze_backbone,
-                             use_summary_token=use_summary_token)
-    count_params(model)
-
-    return model
+    return ChangeNetSegment(
+        embed_dim=embed_dim,
+        model=backbone,
+        output_nc=num_classes,
+        img_size=img_size,
+        input_nc=3,
+        decoder_softmax=False,
+        embed_dims=embed_dims,
+        feature_strides=feature_strides,
+        in_index=in_index,
+        feat_downsample=feat_downsample,
+        pretrained_backbone_path=pretrained_backbone_path,
+        freeze_backbone=freeze_backbone,
+        use_summary_token=use_summary_token,
+        export=export,
+    )
 
 
 def interpolate_vit_checkpoint(checkpoint, target_patch_size, target_resolution):
@@ -423,7 +491,8 @@ def interpolate_vit_checkpoint(checkpoint, target_patch_size, target_resolution)
     if checkpoint is None:
         return checkpoint
 
-    logger.info("Do ViT pretrained backbone interpolation")
+    if get_global_rank() == 0:
+        logger.info("Do ViT pretrained backbone interpolation")
     # interpolate patch embedding
     checkpoint = interpolate_patch_embed(checkpoint=checkpoint, new_patch_size=target_patch_size)
 

@@ -307,7 +307,7 @@ class Sparse4DExporter(nn.Module):
 
             output = torch.cat([
                 output[..., :VX],
-                velocity + anchor[..., VX:]
+                velocity
             ], dim=-1)
 
         if return_cls:

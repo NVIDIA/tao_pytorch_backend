@@ -16,7 +16,10 @@
 """ Misc functions. """
 
 import functools
-
+import h5py
+import numpy as np
+from PIL import Image, ImageOps
+import os
 import torch
 
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
@@ -233,3 +236,74 @@ def rgetattr(obj, attr, *args):
     def _getattr(obj, attr):
         return getattr(obj, attr, *args)
     return functools.reduce(_getattr, [obj] + attr.split('.'))
+
+
+def read_h5_rgb(h5_file, frame_name):
+    """Read rgb image from h5 file.
+    Args:
+        h5_file (str): path to the .h5 file
+        frame_name (str): name of the frame to read
+
+    Returns:
+        pil_input (PIL.Image): PIL image object
+    """
+    if not os.path.exists(h5_file):
+        raise FileNotFoundError(f"H5 file {h5_file} not found")
+
+    with h5py.File(h5_file, 'r') as f:
+        if 'rgb' not in f:
+            raise KeyError(f"'rgb' group not found in {h5_file}")
+        if frame_name not in f['rgb']:
+            raise KeyError(f"Frame {frame_name} not found in {h5_file}")
+
+        image_array = f['rgb'][frame_name][:]
+
+        if len(image_array.shape) == 2:
+            # Grayscale image - convert to RGB
+            image_array = np.stack([image_array, image_array, image_array], axis=-1)
+        elif len(image_array.shape) == 3:
+            if image_array.shape[2] == 3:
+                # Convert BGR to RGB (H5 files from OpenCV typically store in BGR format)
+                image_array = image_array[:, :, ::-1].copy()
+            elif image_array.shape[2] == 1:
+                # Single channel image - convert to RGB
+                image_array = np.repeat(image_array, 3, axis=2)
+            elif image_array.shape[2] == 4:
+                # RGBA image - drop alpha channel and convert BGR to RGB
+                image_array = image_array[:, :, :3]
+                image_array = image_array[:, :, ::-1].copy()
+        else:
+            raise ValueError(f"Unexpected image dimensions: {image_array.shape} for image {frame_name}")
+
+        pil_input = Image.fromarray(image_array)
+
+    return pil_input
+
+
+def read_h5_image_from_path(h5_file_name, h5_dir=None):
+    """
+    h5_file_name (str): named in following format: h5://[h5_file_name]:[frame_name]
+    h5_dir (str): directory of the h5 file
+
+    Returns:
+        img (PIL.Image): PIL image object
+        full_h5_file_name (str): full h5 file name with path
+    """
+    h5_part = h5_file_name[5:]
+    h5_file, frame_name = h5_part.split(':', 1)
+
+    if not h5_file.endswith(".h5"):
+        h5_file = h5_file + ".h5"
+    if not os.path.isabs(h5_file) and h5_dir is not None:
+        h5_file = os.path.join(h5_dir, h5_file)
+
+    if not os.path.exists(h5_file):
+        raise FileNotFoundError(f"h5 file {h5_file} not found")
+
+    img = read_h5_rgb(h5_file, frame_name)
+    img = ImageOps.exif_transpose(img)
+
+    # update h5_file_name to include full h5 file path
+    full_h5_file_name = f"h5://{h5_file}:{frame_name}"
+
+    return img, full_h5_file_name

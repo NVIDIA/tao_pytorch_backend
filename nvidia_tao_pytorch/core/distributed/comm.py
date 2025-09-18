@@ -35,18 +35,18 @@ def is_dist_avail_and_initialized():
     return is_dist
 
 
-def get_world_size():
+def get_world_size(group=None):
     """Get world size."""
     if not is_dist_avail_and_initialized():
         return 1
-    return dist.get_world_size()
+    return dist.get_world_size(group)
 
 
-def get_global_rank():
+def get_global_rank(group=None):
     """Get global rank."""
     if not is_dist_avail_and_initialized():
         return 0
-    return dist.get_rank()
+    return dist.get_rank(group)
 
 
 def all_gather(data):

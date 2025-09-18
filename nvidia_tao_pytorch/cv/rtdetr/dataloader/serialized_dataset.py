@@ -20,10 +20,11 @@ import torch
 from torchvision import tv_tensors
 
 from typing import List, Any
-from PIL import Image
+from PIL import Image, ImageOps
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils.data_source_config import build_data_source_lists
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.serialized_dataset import load_coco_json, SerializedDatasetFromList
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import read_h5_image_from_path
 from nvidia_tao_pytorch.cv.rtdetr.dataloader.od_dataset import mscoco_category2label
 from nvidia_tao_pytorch.core.distributed.comm import get_local_rank
 
@@ -67,6 +68,26 @@ class RTSerializedDatasetFromList(SerializedDatasetFromList):
         """
         super(RTSerializedDatasetFromList, self).__init__(lst, transforms)
         self.remap_mscoco_category = remap_mscoco_category
+
+    def _load_image(self, image_path: str) -> Image.Image:
+        """Load image given image path.
+
+        Args:
+            image_path (str): image path to load. Can be regular file path or
+                             h5 format: h5://[h5_file_path]:image_file_name
+
+        Returns:
+            Loaded PIL.Image.
+        """
+        h5_pattern = "h5://"
+        if h5_pattern in image_path:
+            image_dir, h5_part = image_path.split(h5_pattern, 1)
+            image, _ = read_h5_image_from_path(h5_pattern + h5_part, image_dir)
+        else:
+            image = Image.open(image_path).convert("RGB")
+            image = ImageOps.exif_transpose(image)
+
+        return image
 
     def _process_image_target(self, image: Image.Image, target: List[Any], img_id: int):
         """Process the image and target given image id.
@@ -122,3 +143,25 @@ class RTSerializedDatasetFromList(SerializedDatasetFromList):
         target["size"] = torch.as_tensor([int(height), int(width)])
 
         return target
+
+    def __getitem__(self, idx: int):
+        """Get image, target, image_path given index.
+
+        Args:
+            idx (int): index of the image id to load.
+
+        Returns:
+            (image, target, image_path): pre-processed image, target and image_path for the model.
+        """
+        record = self.metas[idx]
+        image_path = record['file_name']
+        image = self._load_image(image_path)
+        img_id = record["image_id"]
+
+        target = record['annotations']
+        target = self._process_image_target(image, target, img_id)
+
+        if self.transforms is not None:
+            image, target = self.transforms(image, target)
+
+        return image, target, image_path
