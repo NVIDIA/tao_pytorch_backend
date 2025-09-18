@@ -12,7 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FAN backbone."""
+"""FAN (Fully Attentional Network) backbone module.
+
+This module provides FAN implementations for the TAO PyTorch framework.
+FAN is a vision transformer architecture that uses fully attentional networks
+for image classification and other vision tasks.
+
+The FAN architecture introduces a novel attention mechanism that captures both
+local and global information efficiently. It uses class attention for global
+context and token mixing for local feature interaction.
+
+Key Features:
+- Fully attentional network design
+- Class attention for global context modeling
+- Token mixing for local feature interaction
+- Support for multiple model sizes (Tiny, Small, Base, Large, XLarge)
+- Hybrid architectures with Swin backbones
+- Integration with TAO backbone framework
+- Support for activation checkpointing and layer freezing
+- Efficient design with good accuracy/speed balance
+
+Classes:
+    ClassAttn: Class attention mechanism
+    PositionalEncodingFourier: Fourier positional encoding
+    SqueezeExcite: Squeeze and excitation block
+    SEMlp: Squeeze-excitation MLP
+    Mlp: Standard MLP block
+    ConvPatchEmbed: Convolutional patch embedding
+    DWConv: Depthwise convolution
+    ClassAttentionBlock: Class attention block
+    TokenMixing: Token mixing mechanism
+    HybridEmbed: Hybrid embedding layer
+    ChannelProcessing: Channel processing block
+    FANBlock_SE: FAN block with squeeze-excitation
+    FANBlock: Standard FAN block
+    OverlapPatchEmbed: Overlapping patch embedding
+    FAN: Main FAN model
+
+Functions:
+    fan_tiny_12_p16_224: FAN Tiny model
+    fan_small_12_p16_224_se_attn: FAN Small with SE attention
+    fan_small_12_p16_224: FAN Small model
+    fan_base_18_p16_224: FAN Base model
+    fan_large_24_p16_224: FAN Large model
+    fan_tiny_8_p4_hybrid: FAN Tiny hybrid model
+    fan_small_12_p4_hybrid: FAN Small hybrid model
+    fan_base_16_p4_hybrid: FAN Base hybrid model
+    fan_large_16_p4_hybrid: FAN Large hybrid model
+    fan_xlarge_16_p4_hybrid: FAN XLarge hybrid model
+    fan_swin_tiny_patch4_window7_224: FAN with Swin Tiny backbone
+    fan_swin_small_patch4_window7_224: FAN with Swin Small backbone
+    fan_swin_base_patch4_window7_224: FAN with Swin Base backbone
+    fan_swin_large_patch4_window7_224: FAN with Swin Large backbone
+
+Example:
+    >>> from nvidia_tao_pytorch.cv.backbone_v2 import fan_tiny_12_p16_224
+    >>> model = fan_tiny_12_p16_224(num_classes=1000)
+    >>> x = torch.randn(1, 3, 224, 224)
+    >>> output = model(x)
+
+References:
+    - [FAN: Focused Attention Networks](https://arxiv.org/abs/2204.12451)
+    - [https://github.com/NVlabs/FAN](https://github.com/NVlabs/FAN)
+"""
 
 import math
 import warnings
@@ -900,6 +962,7 @@ class FAN(BackboneBase):
         activation_checkpoint=False,
         freeze_at=None,
         freeze_norm=False,
+        export=False,
     ):
         """Initialize the FAN model."""
         super().__init__(
@@ -908,6 +971,7 @@ class FAN(BackboneBase):
             activation_checkpoint=activation_checkpoint,
             freeze_at=freeze_at,
             freeze_norm=freeze_norm,
+            export=export,
         )
 
         img_size = to_2tuple(img_size)
@@ -1057,9 +1121,30 @@ class FAN(BackboneBase):
         """Forward pass through the backbone, excluding the head."""
         return self.forward_features(x)
 
-    def forward_feature_pyramid(self, *args, **kwargs):
+    def forward_feature_pyramid(self, x):
         """Forward pass through the backbone to extract intermediate feature maps."""
-        raise NotImplementedError("forward_feature_pyramid is not implemented.")
+        outs = []
+        B = x.shape[0]
+        x, (Hp, Wp) = self.patch_embed(x)
+
+        if self.use_pos_embed:
+            pos_encoding = self.pos_embed(B, Hp, Wp).reshape(B, -1, x.shape[1]).permute(0, 2, 1)
+            x = x + pos_encoding
+
+        x = self.pos_drop(x)
+        H, W = Hp, Wp
+        for blk in self.blocks:
+            blk.H, blk.W = H, W
+            # Disable activation checkpointing during ONNX export
+            if torch.onnx.is_in_onnx_export() or not self.activation_checkpoint:
+                x = blk(x)
+            else:
+                x = checkpoint.checkpoint(blk, x, use_reentrant=True)
+            H, W = blk.H, blk.W
+            # [B, L, C] -> [B, C, H, W]
+            x_spatial = x.permute(0, 2, 1).view(B, -1, H, W)
+            outs.append(x_spatial)
+        return outs
 
     def forward(self, x):
         """Forward."""

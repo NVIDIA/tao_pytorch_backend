@@ -72,15 +72,16 @@ def run_experiment(experiment_config):
                     new_checkpoint[k] = v
                 else:
                     # Skip layers that mismatch
-                    logger.warning(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
-                                   f"current model layer size: {list(current_model_dict[k].size())}")
+                    logger.warning(
+                        "skip layer: %s, checkpoint layer size: %s, current model layer size: %s",
+                        k, list(v.size()), list(current_model_dict[k].size())
+                    )
                     new_checkpoint[k] = current_model_dict[k]
             else:
                 logger.warning(f"skip layer {k} as it doesn't exist in the checkpoint")
         # Load pretrained weights
         m = pt_model.model.load_state_dict(new_checkpoint, strict=False)
-        logger.info(f"Loading pretrained weights from {pretrained_path} \n"
-                    f"m: {m}")
+        logger.info("Loading pretrained weights from %s \nm: %s", pretrained_path, m)
     else:
         pt_model = MaskGDINOPlModel(experiment_config, cap_lists=cap_lists)
 

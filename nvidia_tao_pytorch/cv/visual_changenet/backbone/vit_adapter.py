@@ -15,29 +15,48 @@
 """ViT Adapter backbone."""
 
 import math
+from functools import partial
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from timm.layers import PatchEmbed, SwiGLUPacked, trunc_normal_
 from torch.nn.init import normal_
 
-from timm.layers import trunc_normal_, SwiGLUPacked
-
+from nvidia_tao_pytorch.cv.backbone_v2.radio import RADIO
+from nvidia_tao_pytorch.cv.backbone_v2.vit import VisionTransformer
 from nvidia_tao_pytorch.cv.deformable_detr.model.ops.modules import MSDeformAttn
-from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.vit import TIMMVisionTransformer
-from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.adapter_modules import SpatialPriorModule, InteractionBlock, deform_inputs
-from nvidia_tao_pytorch.cv.backbone.radio.model_cfg import radio_model_cfg
-from nvidia_tao_pytorch.cv.backbone.radio.c_radio import CRADIO
-from nvidia_tao_pytorch.cv.backbone.radio.utils import get_prefix_state_dict
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.adapter_modules import (
+    InteractionBlock,
+    SpatialPriorModule,
+    deform_inputs,
+)
 
 
-class ViTAdapter(TIMMVisionTransformer):
+class ViTAdapter(VisionTransformer):
     """ViT-Adapter from https://arxiv.org/abs/2205.08534."""
 
-    def __init__(self, *args, pretrain_size=224, num_heads=12, conv_inplane=64, n_points=4,
-                 deform_num_heads=6, init_values=0., interaction_indexes=None, with_cffn=True,
-                 cffn_ratio=0.25, deform_ratio=1.0, add_vit_feature=True,
-                 use_extra_extractor=True, out_indices=[0, 1, 2, 3], activation_checkpoint=False, add_summary=True, **kwargs):
+    def __init__(
+        self,
+        *args,
+        pretrain_size=224,
+        num_heads=12,
+        conv_inplane=64,
+        n_points=4,
+        deform_num_heads=6,
+        init_values=0.0,
+        interaction_indexes=None,
+        with_cffn=True,
+        cffn_ratio=0.25,
+        deform_ratio=1.0,
+        add_vit_feature=True,
+        use_extra_extractor=True,
+        out_indices=[0, 1, 2, 3],
+        activation_checkpoint=False,
+        add_summary=True,
+        export=False,
+        **kwargs,
+    ):
         """ViT-Adapter Constructor.
 
         Args:
@@ -59,8 +78,21 @@ class ViTAdapter(TIMMVisionTransformer):
             out_indices (list): List of block indices to return as feature.
             activation_checkpoint (bool): Use activation checkpoint or not.
             add_summary (bool): Use summary token of backbone or not.
+            export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN.
         """
-        super().__init__(num_heads=num_heads, *args, **kwargs)
+        norm_layer = kwargs.get("norm_layer", None)
+        patch_size = kwargs.get("patch_size", 16)
+        drop_path_rate = kwargs.get("drop_path_rate", 0.0)
+        super().__init__(
+            num_classes=0,
+            num_heads=num_heads,
+            init_values=init_values,
+            export=export,
+            *args,
+            **kwargs,
+        )
+
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
 
         self.num_block = len(self.blocks)
         self.pretrain_size = (pretrain_size, pretrain_size)
@@ -68,6 +100,10 @@ class ViTAdapter(TIMMVisionTransformer):
         self.add_vit_feature = add_vit_feature
         self.add_summary = add_summary
         self.num_summary = 1
+        self.patch_size = int(patch_size)
+        self.norm_layer = norm_layer
+        self.drop_path_rate = float(drop_path_rate)
+
         embed_dim = self.embed_dim
         self.cls_token = nn.Parameter(torch.zeros(1, self.num_summary, embed_dim))
         self.level_embed = nn.Parameter(torch.zeros(3, embed_dim))
@@ -86,10 +122,10 @@ class ViTAdapter(TIMMVisionTransformer):
             for i in range(len(interaction_indexes))
         ])
         self.up = nn.ConvTranspose2d(embed_dim, embed_dim, 2, 2)
-        self.norm1 = nn.SyncBatchNorm(embed_dim)
-        self.norm2 = nn.SyncBatchNorm(embed_dim)
-        self.norm3 = nn.SyncBatchNorm(embed_dim)
-        self.norm4 = nn.SyncBatchNorm(embed_dim)
+        self.norm1 = nn.BatchNorm2d(embed_dim)
+        self.norm2 = nn.BatchNorm2d(embed_dim)
+        self.norm3 = nn.BatchNorm2d(embed_dim)
+        self.norm4 = nn.BatchNorm2d(embed_dim)
 
         self.up.apply(self._init_weights)
         self.spm.apply(self._init_weights)
@@ -140,7 +176,7 @@ class ViTAdapter(TIMMVisionTransformer):
         c4 = c4 + self.level_embed[2]
         return c2, c3, c4
 
-    def forward(self, x):
+    def forward_feature_pyramid(self, x):
         """Forward function."""
         deform_inputs1, deform_inputs2 = deform_inputs(x)
 
@@ -150,7 +186,11 @@ class ViTAdapter(TIMMVisionTransformer):
         c = torch.cat([c2, c3, c4], dim=1)
 
         # Patch Embedding forward
-        x, H, W = self.patch_embed(x)
+        x = self.patch_embed.proj(x)
+        _, _, H, W = x.shape
+        if self.patch_embed.flatten:
+            x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
+        x = self.patch_embed.norm(x)
         bs, _, dim = x.shape
         cls_token = self.cls_token.expand(bs, -1, -1)
         x = torch.cat((cls_token, x), dim=1)
@@ -159,7 +199,7 @@ class ViTAdapter(TIMMVisionTransformer):
         x = self.pos_drop(x + pos_embed)
 
         # Interaction
-        outs = list()
+        outs = []
         for i, layer in enumerate(self.interactions):
             indexes = self.interaction_indexes[i]
             x, c = layer(x, c, self.blocks[indexes[0]:indexes[-1] + 1],
@@ -203,14 +243,72 @@ class ViTAdapter(TIMMVisionTransformer):
         f4 = self.norm4(c4)
         return [f1, f2, f3, f4]
 
+    def load_state_dict(self, state_dict, **kwargs):
+        """This function is used to load the pretrained weights."""
+        from torch.nn.modules.module import _IncompatibleKeys
+
+        _missing_keys, _unexpected_keys = super().load_state_dict(state_dict, **kwargs)
+        # Remove the ViTAdapter keys.
+        missing_keys = []
+        ignore_keys = ["level_embed", "spm", "interactions", "up", "norm", "fc_summary", "conv"]
+        for k in _missing_keys:
+            if any(k.startswith(ignore_key) for ignore_key in ignore_keys):
+                continue
+            missing_keys.append(k)
+        return _IncompatibleKeys(missing_keys, _unexpected_keys)
+
+    def freeze_backbone(self):
+        """Freeze specific parts of the backbone and batch normalization layers.
+
+        Unfreeze the modules that are not part of the pretrained backbone.
+        """
+        super().freeze_backbone()
+
+        modules = [
+            self.cls_token,
+            self.level_embed,
+            self.spm,
+            self.interactions,
+            self.up,
+            self.norm1,
+            self.norm2,
+            self.norm3,
+            self.norm4,
+        ]
+        if self.add_summary:
+            modules += [self.fc_summary, self.conv1, self.conv2, self.conv3, self.conv4]
+        for m in modules:
+            if isinstance(m, nn.Parameter):
+                m.requires_grad = True
+            elif isinstance(m, nn.Module):
+                for param in m.parameters():
+                    param.requires_grad = True
+                m.train()
+
 
 class CRADIOAdapter(nn.Module):
     """ViT-Adapter from https://arxiv.org/abs/2205.08534."""
 
-    def __init__(self, *args, model_name='vit_huge_patch16_224_mlpnorm', model_cfg=None, conv_inplane=64, n_points=4,
-                 deform_num_heads=6, init_values=0., interaction_indexes=None, with_cffn=True,
-                 cffn_ratio=0.25, deform_ratio=1.0, add_vit_feature=True, pretrained_weight_prefix="base_model",
-                 use_extra_extractor=True, out_indices=[0, 1, 2, 3], activation_checkpoint=False, add_summary=True, **kwargs):
+    def __init__(
+        self,
+        model_name="vit_huge_patch16_224_mlpnorm",
+        model_cfg=None,
+        conv_inplane=64,
+        n_points=4,
+        deform_num_heads=6,
+        init_values=0.0,
+        interaction_indexes=None,
+        with_cffn=True,
+        cffn_ratio=0.25,
+        deform_ratio=1.0,
+        add_vit_feature=True,
+        use_extra_extractor=True,
+        out_indices=[0, 1, 2, 3],
+        activation_checkpoint=False,
+        add_summary=True,
+        export=False,
+        **kwargs,
+    ):
         """ViT-Adapter Constructor.
 
         Args:
@@ -231,24 +329,26 @@ class CRADIOAdapter(nn.Module):
             out_indices (list): List of block indices to return as feature.
             activation_checkpoint (bool): Use activation checkpoint or not.
             add_summary (bool): Use summary token of backbone or not.
+            export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN.
         """
         super().__init__()
 
-        self.radio = CRADIO(
+        self.radio: RADIO = RADIO(
+            num_classes=0,
             backbone=model_name,
+            export=export,
             **model_cfg,
             **kwargs
         )
-        self.pretrained_weight_prefix = pretrained_weight_prefix
-        self.num_block = len(self.radio.model.blocks)
+        self.num_block = len(self.radio.radio.radio.model.blocks)
         self.interaction_indexes = interaction_indexes
         self.add_vit_feature = add_vit_feature
         self.add_summary = add_summary
-        self.num_summary = self.radio.num_summary_tokens
-        embed_dim = self.radio.model.embed_dim
+        self.num_summary = self.radio.radio.radio.num_summary_tokens
+        embed_dim = self.radio.radio.radio.model.embed_dim
         self.level_embed = nn.Parameter(torch.zeros(3, embed_dim))
         self.spm = SpatialPriorModule(in_channel=3,
-                                      patch_size=self.radio.model.patch_generator.patch_size,
+                                      patch_size=self.radio.radio.radio.model.patch_generator.patch_size,
                                       inplanes=conv_inplane,
                                       embed_dim=embed_dim,
                                       out_indices=out_indices)
@@ -262,10 +362,10 @@ class CRADIOAdapter(nn.Module):
             for i in range(len(interaction_indexes))
         ])
         self.up = nn.ConvTranspose2d(embed_dim, embed_dim, 2, 2)
-        self.norm1 = nn.SyncBatchNorm(embed_dim)
-        self.norm2 = nn.SyncBatchNorm(embed_dim)
-        self.norm3 = nn.SyncBatchNorm(embed_dim)
-        self.norm4 = nn.SyncBatchNorm(embed_dim)
+        self.norm1 = nn.BatchNorm2d(embed_dim)
+        self.norm2 = nn.BatchNorm2d(embed_dim)
+        self.norm3 = nn.BatchNorm2d(embed_dim)
+        self.norm4 = nn.BatchNorm2d(embed_dim)
 
         self.up.apply(self._init_weights)
         self.spm.apply(self._init_weights)
@@ -283,6 +383,10 @@ class CRADIOAdapter(nn.Module):
             self.conv2.apply(self._init_weights)
             self.conv3.apply(self._init_weights)
             self.conv4.apply(self._init_weights)
+
+        if export:
+            # Utilize the `_freeze_bn_norm` from `BackboneBase`.
+            self.radio._freeze_bn_norm(self)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -309,7 +413,7 @@ class CRADIOAdapter(nn.Module):
         c4 = c4 + self.level_embed[2]
         return c2, c3, c4
 
-    def forward(self, x):
+    def forward_feature_pyramid(self, x):
         """Forward function."""
         deform_inputs1, deform_inputs2 = deform_inputs(x)
 
@@ -319,16 +423,16 @@ class CRADIOAdapter(nn.Module):
         c = torch.cat([c2, c3, c4], dim=1)
 
         # Patch Embedding forward
-        x = self.radio.model.patch_generator(x)
+        x = self.radio.radio.radio.model.patch_generator(x)
         bs = x.shape[0]
-        dim = self.radio.model.embed_dim
-        H, W = self.radio.model.patch_generator.input_dims
+        dim = self.radio.radio.radio.model.embed_dim
+        H, W = self.radio.radio.radio.model.patch_generator.input_dims
 
         # Interaction
-        outs = list()
+        outs = []
         for i, layer in enumerate(self.interactions):
             indexes = self.interaction_indexes[i]
-            x, c = layer(x, c, self.radio.model.blocks[indexes[0]:indexes[-1] + 1],
+            x, c = layer(x, c, self.radio.radio.radio.model.blocks[indexes[0]:indexes[-1] + 1],
                          deform_inputs1, deform_inputs2, H, W, self.num_summary)
             outs.append(x[:, self.num_summary:].transpose(1, 2).view(bs, dim, H, W).contiguous())
 
@@ -369,16 +473,14 @@ class CRADIOAdapter(nn.Module):
         f4 = self.norm4(c4)
         return [f1, f2, f3, f4]
 
-    def load_state_dict(self, checkpoint, strict=False):
-        """ Load for RADIO"""
-        key_warn = self.radio.model.load_state_dict(get_prefix_state_dict(checkpoint, self.pretrained_weight_prefix), strict=False)
-        if key_warn.missing_keys:
-            print(f"Missing keys in state dict: {key_warn.missing_keys}")
-        if key_warn.unexpected_keys:
-            print(f"Unexpected keys in state dict: {key_warn.unexpected_keys}")
+    def load_state_dict(self, state_dict, **kwargs):
+        """This function is used to load the pretrained weights."""
+        return self.radio.load_state_dict(state_dict, **kwargs)
 
 
-def vit_large_nvdinov2(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def vit_large_nvdinov2(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Large NV-DINOv2 model.
 
     Args:
@@ -388,32 +490,36 @@ def vit_large_nvdinov2(out_indices=[0, 1, 2, 3], resolution=1024, activation_che
     Return:
         model: ViT model.
     """
-    model = ViTAdapter(img_size=resolution,
-                       pretrain_size=resolution,
-                       patch_size=16,
-                       embed_dim=1024,
-                       depth=24,
-                       num_heads=16,
-                       mlp_ratio=5472 / 1024,
-                       drop_path_rate=0.4,
-                       init_values=1e-5,
-                       mlp_layer=SwiGLUPacked,
-                       act_layer=nn.SiLU,
-                       conv_inplane=56,
-                       n_points=4,
-                       deform_num_heads=16,
-                       cffn_ratio=0.25,
-                       deform_ratio=0.5,
-                       interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],
-                       out_indices=out_indices,
-                       with_cp=activation_checkpoint,
-                       add_summary=use_summary_token,
-                       **kwargs)
+    return ViTAdapter(
+        patch_size=16,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        init_values=1e-5,
+        img_size=resolution,
+        drop_path_rate=0.4,
+        mlp_layer=SwiGLUPacked,
+        act_layer=nn.SiLU,
+        mlp_ratio=5472 / 1024,
+        embed_layer=partial(PatchEmbed, strict_img_size=False),
+        global_pool="token",
+        pretrain_size=resolution,
+        conv_inplane=56,
+        n_points=4,
+        deform_num_heads=16,
+        cffn_ratio=0.25,
+        deform_ratio=0.5,
+        interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],
+        out_indices=out_indices,
+        activation_checkpoint=activation_checkpoint,
+        add_summary=use_summary_token,
+        **kwargs,
+    )
 
-    return model
 
-
-def vit_large_dinov2(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def vit_large_dinov2(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Large DINOv2 model.
 
     Args:
@@ -423,29 +529,31 @@ def vit_large_dinov2(out_indices=[0, 1, 2, 3], resolution=1024, activation_check
     Return:
         model: ViT model.
     """
-    model = ViTAdapter(img_size=resolution,
-                       pretrain_size=resolution,
-                       patch_size=16,
-                       embed_dim=1024,
-                       depth=24,
-                       num_heads=16,
-                       drop_path_rate=0.4,
-                       init_values=1e-5,
-                       conv_inplane=56,
-                       n_points=4,
-                       deform_num_heads=16,
-                       cffn_ratio=0.25,
-                       deform_ratio=0.5,
-                       interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],
-                       out_indices=out_indices,
-                       with_cp=activation_checkpoint,
-                       add_summary=use_summary_token,
-                       **kwargs)
+    return ViTAdapter(
+        patch_size=16,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        init_values=1e-5,
+        img_size=resolution,
+        drop_path_rate=0.4,
+        pretrain_size=resolution,
+        conv_inplane=56,
+        n_points=4,
+        deform_num_heads=16,
+        cffn_ratio=0.25,
+        deform_ratio=0.5,
+        interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],
+        out_indices=out_indices,
+        activation_checkpoint=activation_checkpoint,
+        add_summary=use_summary_token,
+        **kwargs,
+    )
 
-    return model
 
-
-def c_radio_p1_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def c_radio_p1_vit_huge_patch16_224_mlpnorm(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Huge C-RADIO model.
 
     Args:
@@ -455,11 +563,15 @@ def c_radio_p1_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution
     Return:
         model: ViT model.
     """
-    model_cfg = radio_model_cfg["c_radio_p1_vit_huge_patch16_224_mlpnorm"]
-
-    model = CRADIOAdapter(
+    model_cfg = {
+        "summary_idxs": [0, 1, 2],
+        "window_size": None,
+        "num_teacher": 3,
+        "cpe_max_size": 2048,
+        "register_multiple": 16,
+    }
+    return CRADIOAdapter(
         model_name="vit_huge_patch16_224_mlpnorm",
-        pretrained_weight_prefix="base_model.",
         model_cfg=model_cfg,
         img_size=resolution,
         drop_path_rate=0.4,
@@ -471,15 +583,15 @@ def c_radio_p1_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution
         deform_ratio=0.5,
         interaction_indexes=[[0, 7], [8, 15], [16, 23], [24, 31]],
         out_indices=out_indices,
-        with_cp=activation_checkpoint,
+        activation_checkpoint=activation_checkpoint,
         add_summary=use_summary_token,
         **kwargs
     )
 
-    return model
 
-
-def c_radio_p2_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def c_radio_p2_vit_huge_patch16_224_mlpnorm(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Huge C-RADIO model.
 
     Args:
@@ -489,11 +601,15 @@ def c_radio_p2_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution
     Return:
         model: ViT model.
     """
-    model_cfg = radio_model_cfg["c_radio_p2_vit_huge_patch16_224_mlpnorm"]
-
-    model = CRADIOAdapter(
+    model_cfg = {
+        "summary_idxs": [0, 1, 2, 3],
+        "window_size": None,
+        "num_teacher": 4,
+        "cpe_max_size": 2048,
+        "register_multiple": 16,
+    }
+    return CRADIOAdapter(
         model_name="vit_huge_patch16_224_mlpnorm",
-        pretrained_weight_prefix="base_model.",
         model_cfg=model_cfg,
         img_size=resolution,
         drop_path_rate=0.4,
@@ -505,15 +621,15 @@ def c_radio_p2_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution
         deform_ratio=0.5,
         interaction_indexes=[[0, 7], [8, 15], [16, 23], [24, 31]],
         out_indices=out_indices,
-        with_cp=activation_checkpoint,
+        activation_checkpoint=activation_checkpoint,
         add_summary=use_summary_token,
         **kwargs
     )
 
-    return model
 
-
-def c_radio_p3_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def c_radio_p3_vit_huge_patch16_224_mlpnorm(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Huge C-RADIO model.
 
     Args:
@@ -523,11 +639,15 @@ def c_radio_p3_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution
     Return:
         model: ViT model.
     """
-    model_cfg = radio_model_cfg["c_radio_p3_vit_huge_patch16_224_mlpnorm"]
-
-    model = CRADIOAdapter(
+    model_cfg = {
+        "summary_idxs": [0, 1, 2],
+        "window_size": None,
+        "num_teacher": 4,
+        "cpe_max_size": 2048,
+        "register_multiple": 16,
+    }
+    return CRADIOAdapter(
         model_name="vit_huge_patch16_224_mlpnorm",
-        pretrained_weight_prefix="base_model.",
         model_cfg=model_cfg,
         img_size=resolution,
         drop_path_rate=0.4,
@@ -539,15 +659,15 @@ def c_radio_p3_vit_huge_patch16_224_mlpnorm(out_indices=[0, 1, 2, 3], resolution
         deform_ratio=0.5,
         interaction_indexes=[[0, 7], [8, 15], [16, 23], [24, 31]],
         out_indices=out_indices,
-        with_cp=activation_checkpoint,
+        activation_checkpoint=activation_checkpoint,
         add_summary=use_summary_token,
-        **kwargs
+        **kwargs,
     )
 
-    return model
 
-
-def c_radio_v2_vit_huge_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def c_radio_v2_vit_huge_patch16_224(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Huge C-RADIO model.
 
     Args:
@@ -557,11 +677,15 @@ def c_radio_v2_vit_huge_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, a
     Return:
         model: ViT model.
     """
-    model_cfg = radio_model_cfg["c_radio_v2_vit_huge_patch16_224"]
-
-    model = CRADIOAdapter(
+    model_cfg = {
+        "summary_idxs": [0, 1, 2],
+        "window_size": None,
+        "num_teacher": 4,
+        "cpe_max_size": 2048,
+        "register_multiple": 8,
+    }
+    return CRADIOAdapter(
         model_name="vit_huge_patch16_224",
-        pretrained_weight_prefix="radio_model.model.",
         model_cfg=model_cfg,
         img_size=resolution,
         drop_path_rate=0,
@@ -573,15 +697,15 @@ def c_radio_v2_vit_huge_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, a
         deform_ratio=0.5,
         interaction_indexes=[[0, 7], [8, 15], [16, 23], [24, 31]],
         out_indices=out_indices,
-        with_cp=activation_checkpoint,
+        activation_checkpoint=activation_checkpoint,
         add_summary=use_summary_token,
-        **kwargs
+        **kwargs,
     )
 
-    return model
 
-
-def c_radio_v2_vit_large_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def c_radio_v2_vit_large_patch16_224(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Huge C-RADIO model.
 
     Args:
@@ -591,11 +715,15 @@ def c_radio_v2_vit_large_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, 
     Return:
         model: ViT model.
     """
-    model_cfg = radio_model_cfg["c_radio_v2_vit_large_patch16_224"]
-
-    model = CRADIOAdapter(
+    model_cfg = {
+        "summary_idxs": [0, 1, 2],
+        "window_size": None,
+        "num_teacher": 4,
+        "cpe_max_size": 2048,
+        "register_multiple": 8,
+    }
+    return CRADIOAdapter(
         model_name="vit_large_patch16_224",
-        pretrained_weight_prefix="radio_model.model.",
         model_cfg=model_cfg,
         img_size=resolution,
         drop_path_rate=0,
@@ -607,15 +735,15 @@ def c_radio_v2_vit_large_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, 
         deform_ratio=0.5,
         interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],
         out_indices=out_indices,
-        with_cp=activation_checkpoint,
+        activation_checkpoint=activation_checkpoint,
         add_summary=use_summary_token,
-        **kwargs
+        **kwargs,
     )
 
-    return model
 
-
-def c_radio_v2_vit_base_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs):
+def c_radio_v2_vit_base_patch16_224(
+    out_indices=[0, 1, 2, 3], resolution=1024, activation_checkpoint=False, use_summary_token=True, **kwargs
+):
     """ViT-Base C-RADIO model.
 
     Args:
@@ -625,11 +753,15 @@ def c_radio_v2_vit_base_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, a
     Return:
         model: ViT model.
     """
-    model_cfg = radio_model_cfg["c_radio_v2_vit_base_patch16_224"]
-
-    model = CRADIOAdapter(
+    model_cfg = {
+        "summary_idxs": [0, 1, 2],
+        "window_size": None,
+        "num_teacher": 4,
+        "cpe_max_size": 2048,
+        "register_multiple": 8,
+    }
+    return CRADIOAdapter(
         model_name="vit_base_patch16_224",
-        pretrained_weight_prefix="radio_model.model.",
         model_cfg=model_cfg,
         img_size=resolution,
         drop_path_rate=0,
@@ -641,21 +773,19 @@ def c_radio_v2_vit_base_patch16_224(out_indices=[0, 1, 2, 3], resolution=1024, a
         deform_ratio=0.5,
         interaction_indexes=[[0, 2], [3, 5], [6, 8], [9, 11]],
         out_indices=out_indices,
-        with_cp=activation_checkpoint,
+        activation_checkpoint=activation_checkpoint,
         add_summary=use_summary_token,
-        **kwargs
+        **kwargs,
     )
-
-    return model
 
 
 vit_adapter_model_dict = {
-    'vit_large_nvdinov2': vit_large_nvdinov2,
-    'vit_large_dinov2': vit_large_dinov2,  # TODO: @zbhat check EVA/dinov2 support
-    'c_radio_p1_vit_huge_patch16_224_mlpnorm': c_radio_p1_vit_huge_patch16_224_mlpnorm,
-    'c_radio_p2_vit_huge_patch16_224_mlpnorm': c_radio_p2_vit_huge_patch16_224_mlpnorm,
-    'c_radio_p3_vit_huge_patch16_224_mlpnorm': c_radio_p3_vit_huge_patch16_224_mlpnorm,
-    'c_radio_v2_vit_huge_patch16_224': c_radio_v2_vit_huge_patch16_224,
-    'c_radio_v2_vit_large_patch16_224': c_radio_v2_vit_large_patch16_224,
-    'c_radio_v2_vit_base_patch16_224': c_radio_v2_vit_base_patch16_224
+    "vit_large_nvdinov2": vit_large_nvdinov2,
+    "vit_large_dinov2": vit_large_dinov2,  # TODO: @zbhat check EVA/dinov2 support
+    "c_radio_p1_vit_huge_patch16_224_mlpnorm": c_radio_p1_vit_huge_patch16_224_mlpnorm,
+    "c_radio_p2_vit_huge_patch16_224_mlpnorm": c_radio_p2_vit_huge_patch16_224_mlpnorm,
+    "c_radio_p3_vit_huge_patch16_224_mlpnorm": c_radio_p3_vit_huge_patch16_224_mlpnorm,
+    "c_radio_v2_vit_huge_patch16_224": c_radio_v2_vit_huge_patch16_224,
+    "c_radio_v2_vit_large_patch16_224": c_radio_v2_vit_large_patch16_224,
+    "c_radio_v2_vit_base_patch16_224": c_radio_v2_vit_base_patch16_224,
 }

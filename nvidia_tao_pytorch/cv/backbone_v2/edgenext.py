@@ -12,7 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EdgeNeXt backbone."""
+"""EdgeNeXt backbone module.
+
+This module provides EdgeNeXt implementations for the TAO PyTorch framework.
+EdgeNeXt is a hybrid CNN-Transformer architecture designed for mobile vision
+applications, combining the efficiency of convolutional layers with the
+representational power of transformer blocks.
+
+The EdgeNeXt architecture introduces Split Depth-wise Transpose Attention (SDTA)
+mechanisms that efficiently capture both local and global information. It uses
+a hierarchical structure with four stages, each containing a mix of convolutional
+and transformer blocks.
+
+Key Features:
+- Hybrid CNN-Transformer architecture for mobile applications
+- Split Depth-wise Transpose Attention (SDTA) for efficient attention
+- Cross-Covariance Attention (XCA) for global information
+- Configurable global blocks for long-range dependencies
+- Support for multiple model sizes (XX-Small, X-Small, Small, Base)
+- BN-HS variants with BatchNorm and Hard Swish activation
+- Integration with TAO backbone framework
+- Support for activation checkpointing and layer freezing
+- Efficient design for mobile and edge devices
+
+Classes:
+    EdgeNeXt: Main EdgeNeXt model with hybrid architecture
+    EdgeNeXtBNHS: EdgeNeXt variant with BatchNorm and Hard Swish
+
+Functions:
+    edgenext_xx_small: EdgeNeXt XX-Small model
+    edgenext_x_small: EdgeNeXt X-Small model
+    edgenext_small: EdgeNeXt Small model
+    edgenext_base: EdgeNeXt Base model
+    edgenext_xx_small_bn_hs: EdgeNeXt XX-Small with BN-HS
+    edgenext_x_small_bn_hs: EdgeNeXt X-Small with BN-HS
+    edgenext_small_bn_hs: EdgeNeXt Small with BN-HS
+
+Example:
+    >>> from nvidia_tao_pytorch.cv.backbone_v2 import edgenext_small
+    >>> model = edgenext_small(num_classes=1000)
+    >>> x = torch.randn(1, 3, 224, 224)
+    >>> output = model(x)
+
+References:
+    - [EdgeNeXt: Efficiently Amalgamated CNN-Transformer Architecture for Mobile Vision Applications](
+      https://arxiv.org/abs/2206.10589)
+    - [https://github.com/mmaaz60/EdgeNeXt](https://github.com/mmaaz60/EdgeNeXt)
+"""
 import torch
 from torch import nn
 from timm.models.layers import trunc_normal_
@@ -233,22 +279,28 @@ class EdgeNeXt(BackboneBase):
         return self.norm(x.mean([-2, -1]))  # Global average pooling, (N, C, H, W) -> (N, C)
 
     def forward_feature_pyramid(self, x: torch.Tensor):
-        """Forward pass to extract multi-scale feature maps.
+        """Forward pass through backbone without classification head.
 
-        This method should return feature maps from multiple stages for tasks
-        like object detection and segmentation that require multi-scale features.
+        Processes input through stem, stages, and global average pooling to produce
+        feature representations before the final classification layer.
 
         Args:
             x (torch.Tensor): Input tensor of shape (N, C, H, W).
 
         Returns:
-            Dict[str, torch.Tensor]: Dictionary of feature maps from different stages.
-
-        Note:
-            This method is not yet implemented and needs to be completed for
-            multi-scale feature extraction tasks.
+            torch.Tensor: Feature tensor of shape (N, num_features) after global average pooling.
         """
-        pass
+        outs = []
+        x = self.downsample_layers[0](x)
+        x = self.stages[0](x)
+        if self.pos_embd:
+            B, _, H, W = x.shape
+            x = x + self.pos_embd(B, H, W)
+        for i in range(1, 4):
+            x = self.downsample_layers[i](x)
+            x = self.stages[i](x)
+            outs.append(x)
+        return outs
 
     def forward(self, x):
         """Forward pass through the complete EdgeNeXt model.
@@ -267,7 +319,7 @@ class EdgeNeXt(BackboneBase):
         return x
 
 
-class EdgeNeXtBNHS(nn.Module):
+class EdgeNeXtBNHS(BackboneBase):
     """EdgeNeXt with Batch Normalization and Hard-Swish activation for mobile deployment.
 
     This is a mobile-optimized variant of EdgeNeXt that replaces Layer Normalization with
@@ -315,17 +367,39 @@ class EdgeNeXtBNHS(nn.Module):
         NotImplementedError: If unsupported global_block_type is specified.
     """
 
-    def __init__(self, in_chans=3, num_classes=1000,
-                 depths=[3, 3, 9, 3], dims=[96, 192, 384, 768],
-                 global_block=[0, 0, 0, 3], global_block_type=['None', 'None', 'None', 'SDTA_BN_HS'],
-                 drop_path_rate=0., layer_scale_init_value=1e-6, head_init_scale=1., expan_ratio=4,
-                 kernel_sizes=[7, 7, 7, 7], heads=[8, 8, 8, 8], use_pos_embd_xca=[False, False, False, False],
-                 use_pos_embd_global=False, d2_scales=[2, 3, 4, 5], **kwargs):
+    def __init__(self, in_chans=3,
+                 num_classes=1000,
+                 depths=[3, 3, 9, 3],
+                 dims=[96, 192, 384, 768],
+                 global_block=[0, 0, 0, 3],
+                 global_block_type=['None', 'None', 'None', 'SDTA_BN_HS'],
+                 drop_path_rate=0.,
+                 layer_scale_init_value=1e-6,
+                 head_init_scale=1.,
+                 expan_ratio=4,
+                 kernel_sizes=[7, 7, 7, 7],
+                 heads=[8, 8, 8, 8],
+                 use_pos_embd_xca=[False, False, False, False],
+                 use_pos_embd_global=False,
+                 d2_scales=[2, 3, 4, 5],
+                 activation_checkpoint=False,
+                 freeze_at=None,
+                 freeze_norm=False,
+                 export=False,
+                 **kwargs):
         """Initialize the EdgeNeXtBNHS backbone model.
 
         See class docstring for detailed parameter descriptions.
         """
-        super().__init__()
+        super().__init__(
+            in_chans=in_chans,
+            num_classes=num_classes,
+            activation_checkpoint=activation_checkpoint,
+            freeze_at=freeze_at,
+            freeze_norm=freeze_norm,
+            export=export,
+        )
+        self.dims = dims
         for g in global_block_type:
             assert g in ['None', 'SDTA_BN_HS']
 

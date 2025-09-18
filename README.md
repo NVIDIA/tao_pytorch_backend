@@ -14,7 +14,6 @@
 		* [Test the newly built base docker](#Testthenewlybuiltbasedocker)
 		* [Update the new docker](#Updatethenewdocker)
 * [Building a release container](#Buildingareleasecontainer)
-* [Prebuilt Wheel](#PrebuiltWheel)
 * [Contribution Guidelines](#ContributionGuidelines)
 * [License](#License)
 
@@ -217,16 +216,8 @@ cd $NV_TAO_PYTORCH_TOP/release/docker
 
 In order to build a new docker, please edit the `deploy.sh` file in `$NV_TAO_PYTORCH_TOP/release/docker` to update the patch version and re-run the steps above.
 
-## <a name='PrebuiltWheel'></a>Prebuilt&nbsp;Wheel
-
-To install the official pre-built wheel, simply run:
-
-```bash
-pip install nvidia-tao-pytorch
-```
-
 ## <a name='ContributionGuidelines'></a>Contribution Guidelines
-TAO Toolkit PyTorch backend is not accepting contributions as part of the TAO 6.25.7 release, but will be open in the future.
+TAO Toolkit PyTorch backend is not accepting contributions as part of the TAO 5.0 release, but will be open in the future.
 
 ## <a name='License'></a>License
 This project is licensed under the [Apache-2.0](./LICENSE) License.

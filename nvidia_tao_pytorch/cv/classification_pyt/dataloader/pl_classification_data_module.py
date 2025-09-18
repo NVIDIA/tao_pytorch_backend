@@ -42,6 +42,8 @@ class CLDataModule(pl.LightningDataModule):
         self.img_size = dataset_config["img_size"]
         self.dataset = dataset_config["dataset"]
         self.augmentation = dataset_config["augmentation"]
+        # Add calibration dataset placeholder
+        self.calib_dataset = None
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -115,6 +117,22 @@ class CLDataModule(pl.LightningDataModule):
                     % self.dataset
                 )
 
+        # Prepare calibration dataset when stage is 'calibration' or None
+        if stage == "calibration" or stage is None:
+            calib_cfg = self.dataset_config.get("quant_calibration_dataset", {})
+            calib_images_dir = calib_cfg.get("images_dir", "") if isinstance(calib_cfg, dict) else getattr(calib_cfg, "images_dir", "")
+            if calib_images_dir:
+                self.calib_dataset = CLDataset(
+                    root_dir=self.root_dir,
+                    augmentation=self.augmentation,
+                    split="val",
+                    img_size=self.img_size,
+                    to_tensor=True,
+                    data_path=calib_images_dir,
+                )
+            else:
+                raise ValueError("quant_calibration_dataset.images_dir must be provided for calibration stage.")
+
     def train_dataloader(self):
         """Build the dataloader for training.
 
@@ -177,3 +195,17 @@ class CLDataModule(pl.LightningDataModule):
             pin_memory=False,
         )
         return predict_loader
+
+    def calib_dataloader(self):
+        """Build the dataloader for quantization calibration."""
+        if self.calib_dataset is None:
+            raise ValueError("Calibration dataset is not initialized. Please ensure quant_calibration_dataset.images_dir is set in the config.")
+        calib_loader = DataLoader(
+            self.calib_dataset,
+            num_workers=self.num_workers,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.calib_dataset.collate_fn,
+        )
+        return calib_loader

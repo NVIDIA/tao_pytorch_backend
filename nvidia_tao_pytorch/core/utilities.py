@@ -169,12 +169,13 @@ def data_to_device(data):
     return cuda_data
 
 
-def write_classes_file(classes_file, class_names):
+def write_classes_file(classes_file, class_names, delimiter=';'):
     """Write the classes file.
 
     Args:
         classes_file (str): Path to the classes file.
         class_names (list): List of class names.
+        delimiter (str): Delimiter to use between class names.
 
     Returns:
         int: Number of classes.
@@ -183,7 +184,7 @@ def write_classes_file(classes_file, class_names):
     if not os.path.exists(classfile_root):
         os.makedirs(classfile_root, exist_ok=True)
     assert isinstance(class_names, list), "class_names must be a list"
-    class_string = ";".join(class_names)
+    class_string = delimiter.join(class_names)
     with open(classes_file, "w", encoding="utf-8") as cf:
         cf.write(f"{class_string}\n")
     num_classes = len(class_names)

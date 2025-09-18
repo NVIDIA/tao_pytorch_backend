@@ -14,6 +14,7 @@
 
 """ViT Adatper backbone."""
 
+from functools import partial
 import math
 
 import torch
@@ -21,22 +22,73 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.init import normal_
 
-from timm.layers import trunc_normal_, SwiGLUPacked
+from timm.layers import trunc_normal_, SwiGLUPacked, to_2tuple
 
+from nvidia_tao_pytorch.cv.backbone_v2.vit import VisionTransformer as TIMMVisionTransformer
 from nvidia_tao_pytorch.cv.deformable_detr.model.ops.modules import MSDeformAttn
-from nvidia_tao_pytorch.cv.dino.model.vision_transformer.vit import TIMMVisionTransformer
 from nvidia_tao_pytorch.cv.dino.model.vision_transformer.adapter_modules import (SpatialPriorModule,
                                                                                  InteractionBlock,
                                                                                  deform_inputs)
 
 
+class PatchEmbed(nn.Module):
+    """2D Image to Patch Embedding. Returns H, W unlike timm for ViT-Adapter."""
+
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768,
+                 norm_layer=None, flatten=True, bias=True):
+        """Initialize PatchEmbed class"""
+        super().__init__()
+        img_size = to_2tuple(img_size)
+        patch_size = to_2tuple(patch_size)
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
+        self.num_patches = self.grid_size[0] * self.grid_size[1]
+        self.flatten = flatten
+
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size,
+                              stride=patch_size, bias=bias)
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+
+    def forward(self, x):
+        """Forward function."""
+        x = self.proj(x)
+        _, _, H, W = x.shape
+        if self.flatten:
+            x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
+        x = self.norm(x)
+        return x, H, W
+
+
 class ViTAdapter(TIMMVisionTransformer):
     """ViT-Adapter from https://arxiv.org/abs/2205.08534."""
 
-    def __init__(self, *args, num_heads=12, conv_inplane=64, n_points=4, deform_num_heads=6,
-                 init_values=0., interaction_indexes=None, with_cffn=True, cffn_ratio=0.25,
-                 deform_ratio=1.0, add_vit_feature=True, use_extra_extractor=True,
-                 out_indices=[0, 1, 2, 3], activation_checkpoint=True, **kwargs):
+    def __init__(self,
+                 img_size=224,
+                 embed_dim=768,
+                 patch_size=16,
+                 in_chans=3,
+                 depth=12,
+                 num_heads=12,
+                 conv_inplane=64,
+                 n_points=4,
+                 deform_num_heads=6,
+                 mlp_ratio=4.0,
+                 qkv_bias=True,
+                 drop_rate=0.0,
+                 drop_path_rate=0.0,
+                 layer_scale=True,
+                 init_values=0.,
+                 interaction_indexes=None,
+                 with_cffn=True,
+                 cffn_ratio=0.25,
+                 deform_ratio=1.0,
+                 add_vit_feature=True,
+                 use_extra_extractor=True,
+                 norm_layer=partial(nn.LayerNorm, eps=1e-6),
+                 out_indices=[0, 1, 2, 3],
+                 activation_checkpoint=True,
+                 **kwargs):
         """ViT-Adapter Constructor.
 
         Args:
@@ -58,23 +110,46 @@ class ViTAdapter(TIMMVisionTransformer):
             out_indices (list): List of block indices to return as feature.
             activation_checkpoint (bool): Use activation checkpoint or not.
         """
-        super().__init__(num_heads=num_heads, init_values=init_values, *args, **kwargs)
+        super().__init__(img_size=img_size,
+                         embed_dim=embed_dim,
+                         patch_size=patch_size,
+                         in_chans=in_chans,
+                         num_classes=0,
+                         depth=depth,
+                         num_heads=num_heads,
+                         mlp_ratio=mlp_ratio,
+                         qkv_bias=qkv_bias,
+                         drop_rate=drop_rate,
+                         drop_path_rate=drop_path_rate,
+                         init_values=init_values,
+                         norm_layer=norm_layer,
+                         activation_checkpoint=activation_checkpoint,
+                         **kwargs)
 
+        # remove self.norm and self.head
+        delattr(self, 'norm')
+        delattr(self, 'head')
+
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size,
+            in_chans=in_chans, embed_dim=embed_dim,
+        )
+        self.norm_layer = partial(nn.LayerNorm, eps=1e-6)
+        self.depth = depth
         self.cls_token = None
         self.num_block = len(self.blocks)
         self.interaction_indexes = interaction_indexes
         self.add_vit_feature = add_vit_feature
-        embed_dim = self.embed_dim
 
-        self.level_embed = nn.Parameter(torch.zeros(3, embed_dim))
+        self.level_embed = nn.Parameter(torch.zeros(3, self.embed_dim))
         self.spm = SpatialPriorModule(in_channel=3,
-                                      patch_size=self.patch_size,
+                                      patch_size=patch_size,
                                       inplanes=conv_inplane,
-                                      embed_dim=embed_dim,
+                                      embed_dim=self.embed_dim,
                                       out_indices=out_indices)
         self.interactions = nn.Sequential(*[
-            InteractionBlock(dim=embed_dim, num_heads=deform_num_heads, n_points=n_points,
-                             init_values=init_values, drop_path=self.drop_path_rate,
+            InteractionBlock(dim=self.embed_dim, num_heads=deform_num_heads, n_points=n_points,
+                             init_values=init_values, drop_path=drop_path_rate,
                              norm_layer=self.norm_layer, with_cffn=with_cffn,
                              cffn_ratio=cffn_ratio, deform_ratio=deform_ratio,
                              extra_extractor=((i == len(interaction_indexes) - 1) and use_extra_extractor),
@@ -83,7 +158,7 @@ class ViTAdapter(TIMMVisionTransformer):
         ])
 
         if 0 in out_indices:
-            self.up = nn.ConvTranspose2d(embed_dim, embed_dim, 2, 2)
+            self.up = nn.ConvTranspose2d(self.embed_dim, self.embed_dim, 2, 2)
             self.up.apply(self._init_weights)
         else:
             self.up = None
@@ -91,7 +166,7 @@ class ViTAdapter(TIMMVisionTransformer):
         self.out_indices = out_indices
 
         for i_layer in self.out_indices:
-            layer = nn.SyncBatchNorm(embed_dim)
+            layer = nn.SyncBatchNorm(self.embed_dim)
             layer_name = f'out_norm{i_layer}'
             self.add_module(layer_name, layer)
 
@@ -132,7 +207,7 @@ class ViTAdapter(TIMMVisionTransformer):
         c4 = c4 + self.level_embed[2]
         return c2, c3, c4
 
-    def forward(self, x):
+    def forward_feature_pyramid(self, x):
         """Forward function."""
         deform_inputs1, deform_inputs2 = deform_inputs(x)
 
@@ -211,7 +286,7 @@ def vit_large_nvdinov2(out_indices=[0, 1, 2, 3], resolution=1024, activation_che
                        deform_ratio=0.5,
                        interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],
                        out_indices=out_indices,
-                       with_cp=activation_checkpoint,
+                       activation_checkpoint=activation_checkpoint,
                        **kwargs)
 
     return model
@@ -241,7 +316,7 @@ def vit_large_dinov2(out_indices=[0, 1, 2, 3], resolution=1024, activation_check
                        deform_ratio=0.5,
                        interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],
                        out_indices=out_indices,
-                       with_cp=activation_checkpoint,
+                       activation_checkpoint=activation_checkpoint,
                        **kwargs)
 
     return model

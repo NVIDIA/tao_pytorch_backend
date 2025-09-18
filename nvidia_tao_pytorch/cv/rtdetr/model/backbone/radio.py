@@ -19,46 +19,16 @@ from typing import Dict, Tuple, Type
 
 import torch
 
-from nvidia_tao_pytorch.cv.backbone_v2.radio import RADIO
-
-
+from nvidia_tao_pytorch.cv.backbone_v2.radio import (
+    RADIO,
+    c_radio_v2_vit_base_patch16,
+    c_radio_v2_vit_large_patch16,
+    c_radio_v2_vit_huge_patch16,
+    c_radio_v3_vit_base_patch16_reg4_dinov2,
+    c_radio_v3_vit_large_patch16_reg4_dinov2,
+    c_radio_v3_vit_huge_patch16_reg4_dinov2
+)
 torch.serialization.add_safe_globals([Namespace])
-
-
-def c_radio_v2_vit_base_patch16(**kwargs):
-    """CRADIOV2 ViT Base Patch16 MLPNorm."""
-    return RADIO(
-        backbone="vit_base_patch16_224",
-        summary_idxs=[0, 1, 2],
-        window_size=None,
-        cpe_max_size=2048,
-        register_multiple=8,
-        **kwargs,
-    )
-
-
-def c_radio_v2_vit_large_patch16(**kwargs):
-    """CRADIOV2 ViT Large Patch16 MLPNorm."""
-    return RADIO(
-        backbone="vit_large_patch16_224",
-        summary_idxs=[0, 1, 2],
-        window_size=None,
-        cpe_max_size=2048,
-        register_multiple=8,
-        **kwargs,
-    )
-
-
-def c_radio_v2_vit_huge_patch16(**kwargs):
-    """CRADIOV2 ViT Huge Patch16 MLPNorm."""
-    return RADIO(
-        backbone="vit_huge_patch16_224",
-        summary_idxs=[0, 1, 2],
-        window_size=None,
-        cpe_max_size=2048,
-        register_multiple=8,
-        **kwargs,
-    )
 
 
 radio_model_dict: Dict[str, Tuple[Type[RADIO], Tuple[int, int]]] = {
@@ -70,4 +40,7 @@ radio_model_dict: Dict[str, Tuple[Type[RADIO], Tuple[int, int]]] = {
     "radio_v2-b": [c_radio_v2_vit_base_patch16, (768, 2304)],
     "radio_v2-l": [c_radio_v2_vit_large_patch16, (1024, 3072)],
     "radio_v2-h": [c_radio_v2_vit_huge_patch16, (1280, 3840)],
+    "radio_v3-b": [c_radio_v3_vit_base_patch16_reg4_dinov2, (768, 2304)],
+    "radio_v3-l": [c_radio_v3_vit_large_patch16_reg4_dinov2, (1024, 3072)],
+    "radio_v3-h": [c_radio_v3_vit_huge_patch16_reg4_dinov2, (1280, 3840)],
 }

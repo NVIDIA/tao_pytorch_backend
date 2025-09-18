@@ -1,21 +1,8 @@
-results_dir: /home/scratch.p2/users/yuw/tao_experiments/classification_pl/swint_from_mgdino_swint
-wandb:
-  enable: false
-  project: TAO Toolkit
-  entity: ''
-  tags:
-  - training
-  - tao-toolkit
-  reinit: false
-  sync_tensorboard: false
-  save_code: false
-  name: TAO Toolkit training experiment
+results_dir: /workspace/res34_to_mit_b0
 model:
   backbone:
-    type: swin_tiny_patch4_window7_224
-    # type: resnet_34
-    # pretrained_backbone_path: /home/scratch.p3/yuw/tlt3_experiments/mae_debug/convnextv2_tiny_224/train/model_epoch_001_step_00464.pth
-    # pretrained_backbone_path:  /home/scratch.p2/users/yuw/tao_experiments/rtdetr_debug/resnet34/train/model_epoch_000.pth
+    type: mit_b0
+    pretrained_backbone_path: ???
     freeze_backbone: false
   head:
     custom_args: null
@@ -26,7 +13,7 @@ model:
     - 1
     - 5
 dataset:
-  root_dir: /home/scratch.p3/yuw/datasets/split/
+  root_dir: /datasets/split/
   dataset: CLDataset
   num_classes: 0
   img_size: 224
@@ -68,11 +55,13 @@ dataset:
     - 0.224
     - 0.225
   train_dataset:
-    images_dir: /home/scratch.p3/yuw/datasets/split/val
+    images_dir: /datasets/split/val
   val_dataset:
-    images_dir: /home/scratch.p3/yuw/datasets/split/val
+    images_dir: /datasets/split/val
   test_dataset:
-    images_dir: /home/scratch.p3/yuw/datasets/split/val
+    images_dir: /datasets/split/val
+  train_nolabel:
+    folder_path: /datasets/coco/test2017/
 train:
   num_gpus: 1
   gpu_ids:
@@ -99,16 +88,9 @@ train:
     infrequent_logging_frequency: 2
   enable_ema: false
 distill:
-  loss_type: "FD"
+  loss_type: "balanced"
   teacher:
     backbone:
-      type: swin_tiny_patch4_window7_224
-      # pretrained_backbone_path: /home/scratch.p2/users/yuw/tao_experiments/classification_pl/gc_vit_large_384/train/model_epoch_000.pth
+      type: resnet_34
       freeze_backbone: True
-  # pretrained_teacher_model_path: /home/scratch.p2/users/yuw/tao_experiments/classification_pl/gc_vit_large_384/train/model_epoch_000.pth
-  # pretrained_teacher_model_path: /home/scratch.p2/users/yuw/tao_experiments/rtdetr_debug/resnet34/train/model_epoch_000.pth
-  # pretrained_teacher_model_path: /home/scratch.p2/users/yuw/tao_experiments/mask2former_kuka/train/model_epoch_000_step_00039.pth
-  # pretrained_teacher_model_path: /home/scratch.p2/users/yuw/tao_experiments/mal/train/model_epoch_000_step_00010.pth
-  pretrained_teacher_model_path: /home/scratch.p2/users/yuw/tao_experiments/mask_gdino_coco/train/model_epoch_000_step_00151.pth
-evaluate:
-  checkpoint: /home/scratch.p3/yuw/tmp/nvdinov2_epoch_10.pth
+  pretrained_teacher_model_path: ???

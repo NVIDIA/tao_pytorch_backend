@@ -68,7 +68,7 @@ class RTDETRModel(nn.Module):
         freeze_norm = False
         if not train_backbone:
             freeze_at = "all"
-        elif pretrained_backbone and train_backbone and "resnet" in backbone_name:
+        elif pretrained_backbone and train_backbone and backbone_name.startswith('resnet'):
             freeze_at = [0]
             freeze_norm = True
         backbone = RTDETR_BACKBONE_REGISTRY.get(backbone_name)(
@@ -76,6 +76,7 @@ class RTDETRModel(nn.Module):
             freeze_at=freeze_at,
             freeze_norm=freeze_norm,
             activation_checkpoint=activation_checkpoint,
+            export=export,
         )
         in_channels = backbone.out_channels
         if pretrained_backbone:
@@ -99,8 +100,10 @@ class RTDETRModel(nn.Module):
                     new_checkpoint[k] = v
                 else:
                     # Skip layers that mismatch
-                    logger.info(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
-                                f"current model layer size: {list(teacher_model_dict[k].size())}")
+                    logger.info(
+                        "skip layer: %s, checkpoint layer size: %s, current model layer size: %s",
+                        k, list(v.size()), list(teacher_model_dict[k].size())
+                    )
                     new_checkpoint[k] = teacher_model_dict[k]
             msg = backbone.load_state_dict(new_checkpoint, strict=False)
             if get_global_rank() == 0:

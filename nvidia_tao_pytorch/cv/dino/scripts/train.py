@@ -24,9 +24,11 @@ from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
-from nvidia_tao_pytorch.cv.dino.model.pl_dino_model import DINOPlModel
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
+
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.pl_od_data_module import ODDataModule
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
+from nvidia_tao_pytorch.cv.dino.model.pl_dino_model import DINOPlModel
+from nvidia_tao_pytorch.cv.dino.model.utils import dino_parser, ptm_adapter
 
 
 def run_experiment(experiment_config,
@@ -57,21 +59,32 @@ def run_experiment(experiment_config,
         experiment_config.model.pretrained_backbone_path = None
         pt_model = lightning_module(experiment_config)
         current_model_dict = pt_model.model.state_dict()
-        checkpoint = load_pretrained_weights(pretrained_path)
+        checkpoint = load_pretrained_weights(
+            pretrained_path,
+            parser=dino_parser,
+            ptm_adapter=ptm_adapter
+        )
+
         new_checkpoint = {}
-        for k, k_ckpt in zip(sorted(current_model_dict.keys()), sorted(checkpoint.keys())):
-            v = checkpoint[k_ckpt]
+        for k in sorted(current_model_dict.keys()):
             # Handle PTL format
-            k = k.replace("model.model.", "model.")
-            if v.size() == current_model_dict[k].size():
-                new_checkpoint[k] = v
+            # k_new = k.replace("model.", "model.model.")
+            v = checkpoint.get(k, None)
+            if v is not None:
+                if v.size() == current_model_dict[k].size():
+                    new_checkpoint[k] = v
+                else:
+                    # Skip layers that mismatch
+                    logging.warning(
+                        "skip layer: %s, checkpoint layer size: %s, current model layer size: %s",
+                        k, list(v.size()), list(current_model_dict[k].size())
+                    )
+                    new_checkpoint[k] = current_model_dict[k]
             else:
-                # Skip layers that mismatch
-                logging.info(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
-                             f"current model layer size: {list(current_model_dict[k].size())}")
-                new_checkpoint[k] = current_model_dict[k]
+                logging.warning("skip layer %s as it doesn't exist in the checkpoint", k)
         # Load pretrained weights
-        pt_model.model.load_state_dict(new_checkpoint, strict=False)
+        m = pt_model.model.load_state_dict(new_checkpoint, strict=False)
+        logging.info("Loading pretrained weights from %s \nm: %s", pretrained_path, m)
     else:
         pt_model = lightning_module(experiment_config)
 

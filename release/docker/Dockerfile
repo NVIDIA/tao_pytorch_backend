@@ -1,4 +1,4 @@
-FROM nvcr.io/nvstaging/tao/tao_pytorch_base_image@sha256:acbcb8bbba7123bd73e608ddc6ecaec998d179881d7260ac5eb5c0efd2b17288
+FROM nvcr.io/nvstaging/tao/tao_pytorch_base_image@sha256:dadacc8b6920ac9008707f90e37e35908c7b935704f2345a6ad788b98ba01bd0
 
 # Installing the TLT packages.
 WORKDIR /opt/nvidia
@@ -18,10 +18,6 @@ RUN apt-get update && \
     apt --only-upgrade install libcurl4-openssl-dev -y && \
     apt --only-upgrade install openssh-client -y
 
-## Install mongodump and mongorestore
-RUN apt update && wget https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2204-$(uname -m)-100.10.0.deb ## Update this when upgrading from Ubuntu 22.04
-RUN apt install ./mongodb-database-tools-*-100.10.0.deb && rm -f mongodb-database-tools-*.deb
-
 RUN rm -rf /opt/nvidia/entrypoint.d/*.txt
 COPY release/docker/entrypoint.d/* /opt/nvidia/entrypoint.d/
 
@@ -31,6 +27,10 @@ RUN cd tao-core && bash release/python/build_wheel.sh && \
     find dist/ -name "nvidia_tao_core*.whl" -type f | xargs -n 1 pip install && \
     cp nvidia_tao_core/microservices/nginx.conf /etc/nginx/ && \
     cd .. && rm -rf tao-core
+
+## Install mongodump and mongorestore
+RUN apt update && wget https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2204-$(uname -m)-100.10.0.deb ## Update this when upgrading from Ubuntu 22.04
+RUN apt install ./mongodb-database-tools-*-100.10.0.deb && rm -f mongodb-database-tools-*.deb
 
 COPY dist/*.whl /opt/nvidia/wheels/
 RUN cd wheels && ls ./*.whl|xargs -I'{}' python -m pip install '{}' \
@@ -46,7 +46,7 @@ RUN cd wheels && ls ./*.whl|xargs -I'{}' python -m pip install '{}' \
 # RUN ln -s tao-converter converter
 
 ENV NVIDIA_PRODUCT_NAME "TAO Toolkit"
-ENV TAO_TOOLKIT_VERSION="6.25.7"
+ENV TAO_TOOLKIT_VERSION="6.25.9"
 ENV NVIDIA_TAO_TOOLKIT_VERSION="${TAO_TOOLKIT_VERSION}-PyTorch"
 ENV CUBLAS_WORKSPACE_CONFIG=":4096:8"
 

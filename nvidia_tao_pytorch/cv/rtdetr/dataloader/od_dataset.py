@@ -21,10 +21,12 @@ from torchvision import tv_tensors
 
 import os
 import glob
+import h5py
 from PIL import Image, ImageOps
 from typing import Any, Tuple, List
 
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.od_dataset import ODDataset, VALID_IMAGE_EXTENSIONS
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import read_h5_image_from_path
 
 
 def build_coco(data_sources, transforms, remap_mscoco_category):
@@ -44,7 +46,7 @@ def build_coco(data_sources, transforms, remap_mscoco_category):
         json_file = data_source.json_file
         dataset_list.append(RTDataset(json_file, image_dir,
                                       transforms=transforms,
-                                      remap_mscoco_category=True))
+                                      remap_mscoco_category=remap_mscoco_category))  # removed hard-coded True
 
         if len(dataset_list) > 1:
             train_dataset = ConcatDataset(dataset_list)
@@ -142,6 +144,7 @@ class ODPredictDataset(Dataset):
             start_from_one (bool): Whether to start the class_mapping index from 1 or not.
             fixed_resolution (tuple): Fixed resolution (h, w) for evaluation.
                 Only needed when we resize with aspect ratio preserved.
+            verbose (bool): Whether to print verbose messages during processing.
 
         Raises:
             FileNotFoundErorr: If provided classmap, sequence, or image extension does not exist.
@@ -159,25 +162,52 @@ class ODPredictDataset(Dataset):
         self.fixed_resolution = fixed_resolution
 
         self.ids = []
+        self.base_dirs = {}
         for seq in dataset_list:
             if not os.path.exists(seq):
                 raise FileNotFoundError(f"Provided inference directory {seq} does not exist!")
 
             for ext in VALID_IMAGE_EXTENSIONS:
-                self.ids.extend(glob.glob(seq + f"/*{ext}"))
+                image_paths = glob.glob(seq + f"/*{ext}")
+                self.ids.extend(image_paths)
+                for img_path in image_paths:
+                    self.base_dirs[img_path] = seq
+
+            h5_files = glob.glob(seq + "/*.h5")
+            for h5_file in h5_files:
+                try:
+                    with h5py.File(h5_file, 'r') as f:
+                        if 'rgb' in f:
+                            rgb_group = f['rgb']
+                            h5_base_name = os.path.splitext(os.path.basename(h5_file))[0]
+                            for image_name in rgb_group.keys():
+                                # Format: h5://<h5 file name without .h5>:<image name>
+                                h5_path = f"h5://{h5_base_name}:{image_name}"
+                                self.ids.append(h5_path)
+                                self.base_dirs[h5_path] = seq
+                        else:
+                            print(f"Warning: No 'rgb' group found in {h5_file}")
+                except Exception as e:
+                    print(f"Warning: Could not read h5 file {h5_file}: {e}")
+
         if len(self.ids) == 0:
-            raise FileNotFoundError(f"No valid image with extensions {VALID_IMAGE_EXTENSIONS} found in the provided directories")
+            raise FileNotFoundError(f"No valid image with extensions {VALID_IMAGE_EXTENSIONS} or h5 files found in the provided directories")
 
     def _load_image(self, img_path: int) -> Image.Image:
         """Load image given image path.
 
         Args:
-            img_path (str): image path to load.
+            img_path (str): image path to load. Can be regular file path or
+                          h5 format: h5://[h5_file_path]:image_file_name
 
         Returns:
             Loaded PIL.Image.
         """
-        img = ImageOps.exif_transpose(Image.open(img_path).convert("RGB"))
+        if img_path.startswith("h5://"):
+            img, img_path = read_h5_image_from_path(img_path, self.base_dirs[img_path])
+        else:
+            img = ImageOps.exif_transpose(Image.open(img_path).convert("RGB"))
+
         return_output = (img, img_path)
 
         return return_output

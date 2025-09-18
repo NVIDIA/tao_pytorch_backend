@@ -5,7 +5,7 @@ set -eo pipefail
 
 registry="nvcr.io"
 pytorch_version="2.1.0"
-tao_version="5.2.0"
+tao_version="6.25.7"
 repository="nvstaging/tao/tao-toolkit-pyt"
 build_id="01"
 tag="v${tao_version}-pyt${pytorch_version}-py3-${build_id}"

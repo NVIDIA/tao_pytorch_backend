@@ -20,7 +20,7 @@
 
 
 __global__ void generateVoxels_kernel(
-        int max_num_points,
+        int max_num_points, int batch_size,
         float *points, unsigned int* points_size,
         float min_x_range, float max_x_range,
         float min_y_range, float max_y_range,
@@ -32,6 +32,7 @@ __global__ void generateVoxels_kernel(
 {
   int point_idx = blockIdx.x * blockDim.x + threadIdx.x;
   int batch_idx = point_idx / max_num_points;
+  if (batch_idx >= batch_size) return;
   int point_idx_in_frame = point_idx % max_num_points;
   if(point_idx_in_frame >= points_size[batch_idx]) return;
   float px = points[num_point_values * point_idx];
@@ -114,7 +115,7 @@ void generateVoxels_launch(
   dim3 blocks((batch_size * max_num_points + threadNum - 1) / threadNum);
   dim3 threads(threadNum);
   generateVoxels_kernel<<<blocks, threads, 0, stream>>>
-      (max_num_points,
+      (max_num_points, batch_size,
         points, points_size,
         min_x_range, max_x_range,
         min_y_range, max_y_range,

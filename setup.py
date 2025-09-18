@@ -47,7 +47,7 @@ setuptools.setup(
         # Pick your license as you wish (should match "license" above)
         'License :: OSI Approved :: Apache Software License',
         'Natural Language :: English',
-        'Operating System :: POSIX',
+        'Operating System :: POSIX :: Linux',
         'Programming Language :: Python :: 3.12',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
     ],
@@ -66,6 +66,7 @@ setuptools.setup(
             'segformer=nvidia_tao_pytorch.cv.segformer.entrypoint.segformer:main',
             'classification_pyt=nvidia_tao_pytorch.cv.classification_pyt.entrypoint.classification:main',
             'deformable_detr=nvidia_tao_pytorch.cv.deformable_detr.entrypoint.deformable_detr:main',
+            'depth_net=nvidia_tao_pytorch.cv.depth_net.entrypoint.depth_net:main',
             'dino=nvidia_tao_pytorch.cv.dino.entrypoint.dino:main',
             'grounding_dino=nvidia_tao_pytorch.cv.grounding_dino.entrypoint.grounding_dino:main',
             'rtdetr=nvidia_tao_pytorch.cv.rtdetr.entrypoint.rtdetr:main',
@@ -77,6 +78,7 @@ setuptools.setup(
             'ocrnet=nvidia_tao_pytorch.cv.ocrnet.entrypoint.ocrnet:main',
             'ocdnet=nvidia_tao_pytorch.cv.ocdnet.entrypoint.ocdnet:main',
             'bevfusion=nvidia_tao_pytorch.cv.bevfusion.entrypoint.bevfusion:main',
+            'sparse4d=nvidia_tao_pytorch.cv.sparse4d.entrypoint.sparse4d:main',
             # Pointpillars entry point
             'optical_inspection=nvidia_tao_pytorch.cv.optical_inspection.entrypoint.optical_inspection:main',
             'pointpillars=nvidia_tao_pytorch.pointcloud.pointpillars.entrypoint.pointpillars:main',
@@ -188,6 +190,17 @@ setuptools.setup(
             include_dirs=['.'],  # Set to the folder containing bias_act.h
             define_macros=[("WITH_CUDA", None)],
             extra_flags={'nvcc': ['--use_fast_math']}
+        ),
+        utils.make_cuda_ext(
+            name='deformable_aggregation_ext',
+            module='nvidia_tao_pytorch.cv.sparse4d.model.ops',
+            sources=[
+                'src/deformable_aggregation.cpp',
+                'src/deformable_aggregation_cuda.cu',
+            ],
+            include_dirs=['src'],
+            define_macros=[("WITH_CUDA", None)],
+            extra_flags = utils.get_extra_compile_args()
         )
     ],
 )

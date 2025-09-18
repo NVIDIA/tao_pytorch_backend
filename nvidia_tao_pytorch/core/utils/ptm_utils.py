@@ -17,6 +17,7 @@ import os
 from typing import Any, Mapping, Union
 
 import torch
+from safetensors.torch import load_file
 from torch.serialization import FILE_LIKE
 
 from nvidia_tao_pytorch.core.cookbooks.tlt_pytorch_cookbook import TLTPyTorchCookbook
@@ -139,7 +140,11 @@ def load_pretrained_weights(path_or_checkpoint: Union[FILE_LIKE, Mapping[str, An
         isinstance(path_or_checkpoint, (str, os.PathLike)) or hasattr(path_or_checkpoint, "read")
     ):
         path = path_or_checkpoint
-        checkpoint = torch.load(path, map_location=map_location, weights_only=weights_only, **kwargs)
+        # Support safetensors files.
+        if isinstance(path, (str, os.PathLike)) and path.endswith(".safetensors"):
+            checkpoint = load_file(path, device=map_location)
+        else:
+            checkpoint = torch.load(path, map_location=map_location, weights_only=weights_only, **kwargs)
     else:
         checkpoint = path_or_checkpoint
 

@@ -28,27 +28,25 @@
 
 """Visual ChangeNet Classification model builder"""
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import logging
-import numpy as np
 
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
-from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import (
-    interpolate_pos_embed, interpolate_patch_embed
-)
-
-from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
-    MLP, conv_diff, resize, count_params,
-)
+from nvidia_tao_pytorch.core.tlt_logging import logger
+from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import interpolate_patch_embed, interpolate_pos_embed
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.dino_v2 import vit_model_dict
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.fan import fan_model_dict
-from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.dinov2_vit import vit_model_dict
-from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.radio import radio_model_dict
-from nvidia_tao_pytorch.cv.visual_changenet.backbone.vision_transformer.vit_adapter import vit_adapter_model_dict
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
-
-logger = logging.getLogger(__name__)
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.radio import radio_model_dict
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.utils import ptm_adapter, visual_changenet_parser
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.vit_adapter import vit_adapter_model_dict
+from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
+    MLP,
+    conv_diff,
+    resize,
+)
 
 
 class SingleHeadAttention(nn.Module):
@@ -382,13 +380,32 @@ class ChangeNetClassify(nn.Module):
         return_interm_indices (list): list of layer indices to reutrn as backbone features.
         use_summary_token (bool): Use summary token of backone.
         num_golden (int): Number of golden sample.
+        export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN.
     """
 
-    def __init__(self, input_nc=3, output_nc=2, embed_dim=256, model='fan_tiny_8_p4_hybrid_256',
-                 embed_dims=[128, 256, 384, 384], feature_strides=[4, 8, 16, 16], in_index=[0, 1, 2, 3],
-                 difference_module='learnable', output_shape=[128, 128], embedding_vectors=5, embed_dec=30,
-                 feat_downsample=False, return_interm_indices=[0, 1, 2, 3], learnable_difference_modules=4, pretrained_backbone_path=None,
-                 activation_checkpoint=False, freeze_backbone=False, use_summary_token=True, num_golden=1):
+    def __init__(
+        self,
+        input_nc=3,
+        output_nc=2,
+        embed_dim=256,
+        model="fan_tiny_8_p4_hybrid_256",
+        embed_dims=[128, 256, 384, 384],
+        feature_strides=[4, 8, 16, 16],
+        in_index=[0, 1, 2, 3],
+        difference_module="learnable",
+        output_shape=[128, 128],
+        embedding_vectors=5,
+        embed_dec=30,
+        feat_downsample=False,
+        return_interm_indices=[0, 1, 2, 3],
+        learnable_difference_modules=4,
+        pretrained_backbone_path=None,
+        activation_checkpoint=False,
+        freeze_backbone=False,
+        use_summary_token=True,
+        num_golden=1,
+        export=False,
+    ):
         """Initialize Visual ChangeNetSegment class"""
         super(ChangeNetClassify, self).__init__()
 
@@ -414,19 +431,23 @@ class ChangeNetClassify(nn.Module):
         self.use_summary_token = use_summary_token
         self.num_golden = num_golden
 
-        logger.info(f"Number of output classes: {output_nc}")
+        freeze_at = None
+        if freeze_backbone:
+            if pretrained_backbone_path is None:
+                raise ValueError("You shouldn't freeze a model without specifying pretrained_backbone_path")
+            freeze_at = "all"
 
-        pretrained_backbone_ckp = load_pretrained_weights(pretrained_backbone_path) if pretrained_backbone_path else None
+        if get_global_rank() == 0:
+            logger.info(f"Number of output classes: {output_nc}")
 
         if 'fan' in self.model_name:
             assert (output_shape[0] % feature_strides[-1] == 0) and (output_shape[1] % feature_strides[-1] == 0), 'Input image size must be a multiple of 16'
             assert num_golden == 1, f"Multiple golden samples is not supported for backbone [{self.model_name}]"
             self.backbone = fan_model_dict[self.model_name](
-                pretrained=False,
-                num_classes=output_nc,
-                checkpoint_path='',
-                feat_downsample=feat_downsample)
-
+                feat_downsample=feat_downsample,
+                freeze_at=freeze_at,
+                export=export,
+            )
         elif 'radio' in self.model_name:
             assert output_shape[0] == output_shape[1], 'ViT Backbones only support square input image where input_width == input_height'
             if self.difference_module == 'learnable':
@@ -434,47 +455,52 @@ class ChangeNetClassify(nn.Module):
                     out_indices=return_interm_indices,
                     resolution=output_shape[0],
                     activation_checkpoint=activation_checkpoint,
-                    use_summary_token=use_summary_token)
-
+                    use_summary_token=use_summary_token,
+                    freeze_at=freeze_at,
+                    export=export,
+                )
             elif self.difference_module == 'euclidean':
-                self.backbone = radio_model_dict[self.model_name](resolution=[224, 224])
-
+                self.backbone = radio_model_dict[self.model_name](
+                    resolution=[224, 224],
+                    freeze_at=freeze_at,
+                    export=export,
+                )
         elif 'vit' in self.model_name:
             assert output_shape[0] == output_shape[1], 'ViT Backbones only support square input image where input_width == input_height'
             if self.difference_module == 'learnable':
                 self.backbone = vit_adapter_model_dict[self.model_name](
                     out_indices=return_interm_indices,
                     resolution=output_shape[0],
-                    activation_checkpoint=activation_checkpoint)
-
-                # do interpolation
-                pretrained_backbone_ckp = interpolate_vit_checkpoint(checkpoint=pretrained_backbone_ckp,
-                                                                     target_patch_size=16,
-                                                                     target_resolution=output_shape[0])
+                    activation_checkpoint=activation_checkpoint,
+                    freeze_at=freeze_at,
+                    export=export,
+                )
             elif self.difference_module == 'euclidean':
-                self.backbone = vit_model_dict[self.model_name]()
-
-                # do interpolation
-                pretrained_backbone_ckp = interpolate_vit_checkpoint(checkpoint=pretrained_backbone_ckp,
-                                                                     target_patch_size=14,
-                                                                     target_resolution=518)
-
+                self.backbone = vit_model_dict[self.model_name](freeze_at=freeze_at, export=export)
         else:
             raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)
 
-        if pretrained_backbone_ckp:
-            _tmp_st_output = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
-
+        if pretrained_backbone_path:
+            pretrained_backbone_ckp = load_pretrained_weights(
+                pretrained_backbone_path,
+                parser=visual_changenet_parser,
+                ptm_adapter=ptm_adapter,
+            )
+            if "vit" in self.model_name and "radio" not in self.model_name:
+                if self.difference_module == "learnable":
+                    pretrained_backbone_ckp = interpolate_vit_checkpoint(
+                        checkpoint=pretrained_backbone_ckp,
+                        target_patch_size=16,
+                        target_resolution=output_shape[0],
+                    )
+                elif self.difference_module == "euclidean":
+                    pretrained_backbone_ckp = interpolate_vit_checkpoint(
+                        checkpoint=pretrained_backbone_ckp, target_patch_size=14, target_resolution=518
+                    )
+            msg = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
             if get_global_rank() == 0:
                 logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
-                logger.info(f"{_tmp_st_output}")
-
-        # Freeze backbone
-        if freeze_backbone:
-            assert pretrained_backbone_path, "You shouldn't freeze a model without specifying pretrained_backbone_path"
-            for _, parameter in self.backbone.named_parameters():
-                parameter.requires_grad_(False)
-                self.backbone.eval()  # TODO: Check if needed??
+                logger.info(f"{msg}")
 
         if self.difference_module == 'learnable':
             # Transformer Decoder
@@ -518,7 +544,7 @@ class ChangeNetClassify(nn.Module):
             torch.Tensor: Embedding vector for the given input image
         """
         if 'fan' in self.model_name:
-            output = self.backbone(x)[-1]
+            output = self.backbone.forward_feature_pyramid(x)[-1]
         elif 'vit' in self.model_name:
             output = self.backbone(x)
         output = output.reshape(output.size()[0], -1)
@@ -549,18 +575,18 @@ class ChangeNetClassify(nn.Module):
 
         elif self.difference_module == 'learnable':
             if self.num_golden == 1:
-                [fx1, fx2] = [self.backbone(x1), self.backbone(x2)]
+                [fx1, fx2] = [self.backbone.forward_feature_pyramid(x1), self.backbone.forward_feature_pyramid(x2)]
                 out_decoder = self.decoder(fx1, fx2)
             else:
-                fx1 = self.backbone(x1)
+                fx1 = self.backbone.forward_feature_pyramid(x1)
                 B, N, C, H, W = x2.shape
 
                 # Only compute the gradient for the first golden sample
-                fx2s = self.backbone(x2[:, 0])
+                fx2s = self.backbone.forward_feature_pyramid(x2[:, 0])
                 with torch.no_grad():
                     x2_no_grad = x2[:, 1:]
                     x2_no_grad = x2_no_grad.permute(1, 0, 2, 3, 4)
-                    fx2s_no_grad = self.backbone(x2_no_grad.reshape((N - 1) * B, C, H, W))
+                    fx2s_no_grad = self.backbone.forward_feature_pyramid(x2_no_grad.reshape((N - 1) * B, C, H, W))
                 for i in range(len(fx2s)):
                     fx2s[i] = torch.cat((fx2s[i].unsqueeze(0), fx2s_no_grad[i].view(N - 1, B, fx2s_no_grad[i].shape[1], fx2s_no_grad[i].shape[2], fx2s_no_grad[i].shape[3])), dim=0)
                     fx2s[i] = fx2s[i].view(N * B, fx2s_no_grad[i].shape[1], fx2s_no_grad[i].shape[2],  fx2s_no_grad[i].shape[3])
@@ -576,8 +602,8 @@ def build_model(experiment_config,
     """ Build Visual ChangeNet classification model according to configuration
 
     Args:
-        experiment_config: experiment configuration
-        export: flag to indicate onnx export
+        experiment_config: experiment configuration.
+        export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN.
 
     Returns:
         model
@@ -635,27 +661,26 @@ def build_model(experiment_config,
     elif concat_type == 'grid':
         output_shape = [image_height * grid_map.y, image_width * grid_map.x]
 
-    model = ChangeNetClassify(embed_dim=embed_dim,
-                              model=backbone,
-                              output_nc=num_classes,
-                              input_nc=3,
-                              embed_dims=embed_dims,
-                              feature_strides=feature_strides,
-                              in_index=in_index,
-                              output_shape=output_shape,
-                              embedding_vectors=embedding_vectors,
-                              embed_dec=embed_dec,
-                              feat_downsample=feat_downsample,
-                              learnable_difference_modules=learnable_difference_modules,
-                              difference_module=difference_module,
-                              pretrained_backbone_path=pretrained_backbone_path,
-                              freeze_backbone=freeze_backbone,
-                              use_summary_token=use_summary_token,
-                              num_golden=num_golden)
-
-    count_params(model)
-
-    return model
+    return ChangeNetClassify(
+        embed_dim=embed_dim,
+        model=backbone,
+        output_nc=num_classes,
+        input_nc=3,
+        embed_dims=embed_dims,
+        feature_strides=feature_strides,
+        in_index=in_index,
+        output_shape=output_shape,
+        embedding_vectors=embedding_vectors,
+        embed_dec=embed_dec,
+        feat_downsample=feat_downsample,
+        learnable_difference_modules=learnable_difference_modules,
+        difference_module=difference_module,
+        pretrained_backbone_path=pretrained_backbone_path,
+        freeze_backbone=freeze_backbone,
+        use_summary_token=use_summary_token,
+        num_golden=num_golden,
+        export=export,
+    )
 
 
 def interpolate_vit_checkpoint(checkpoint, target_patch_size, target_resolution):
@@ -673,7 +698,8 @@ def interpolate_vit_checkpoint(checkpoint, target_patch_size, target_resolution)
     if checkpoint is None:
         return checkpoint
 
-    logger.info("Do ViT pretrained backbone interpolation")
+    if get_global_rank() == 0:
+        logger.info("Do ViT pretrained backbone interpolation")
     # interpolate patch embedding
     checkpoint = interpolate_patch_embed(checkpoint=checkpoint, new_patch_size=target_patch_size)
 

@@ -25,8 +25,12 @@ import torch.nn as nn
 from torch.optim.lr_scheduler import MultiStepLR, StepLR
 from fairscale.optim import OSS
 
+from nvidia_tao_pytorch.core.distillation.distiller import Distiller
+from nvidia_tao_pytorch.core.distillation.utils import Binding, CaptureModule
+from nvidia_tao_pytorch.core.distillation.losses import WeightedCriterion, LPCriterion, KLDivCriterion, FeatureMapCriterion
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.tlt_logging import logging
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.od_dataset import CoCoDataMerge
 from nvidia_tao_pytorch.cv.deformable_detr.model.post_process import PostProcess
@@ -35,16 +39,11 @@ from nvidia_tao_pytorch.cv.deformable_detr.utils.coco_eval import CocoEvaluator
 from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import rgetattr
 
 from nvidia_tao_pytorch.cv.dino.model.build_nn_model import build_model
+from nvidia_tao_pytorch.cv.dino.model.fan import fan_model_dict
 from nvidia_tao_pytorch.cv.dino.model.matcher import HungarianMatcher
 from nvidia_tao_pytorch.cv.dino.model.criterion import SetCriterion
+from nvidia_tao_pytorch.cv.dino.model.utils import dino_parser, ptm_adapter
 from nvidia_tao_pytorch.cv.dino.model.vision_transformer.transformer_modules import get_vit_lr_decay_rate
-
-from nvidia_tao_pytorch.core.distillation.distiller import Distiller
-from nvidia_tao_pytorch.core.distillation.utils import Binding, CaptureModule
-from nvidia_tao_pytorch.core.distillation.losses import WeightedCriterion, LPCriterion, KLDivCriterion, FeatureMapCriterion
-
-from nvidia_tao_pytorch.cv.dino.model.fan import fan_model_dict
-from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import load_pretrained_weights
 
 
 class DINODistiller(Distiller):
@@ -123,7 +122,11 @@ class DINODistiller(Distiller):
 
         if self.experiment_spec.distill.pretrained_teacher_model_path:
             current_model_dict = self.teacher.model.state_dict()
-            checkpoint = load_pretrained_weights(self.experiment_spec.distill.pretrained_teacher_model_path)
+            checkpoint = load_pretrained_weights(
+                self.experiment_spec.distill.pretrained_teacher_model_path,
+                parser=dino_parser,
+                ptm_adapter=ptm_adapter
+            )
             new_checkpoint = {}
             for k, k_ckpt in zip(sorted(current_model_dict.keys()), sorted(checkpoint.keys())):
 
@@ -134,11 +137,14 @@ class DINODistiller(Distiller):
                     new_checkpoint[k] = v
                 else:
                     # Skip layers that mismatch
-                    logging.info(f"skip layer: {k}, checkpoint layer size: {list(v.size())},",
-                                 f"current model layer size: {list(current_model_dict[k].size())}")
+                    logging.info(
+                        "skip layer: %s, checkpoint layer size: %s, current model layer size: %s",
+                        k, list(v.size()), list(current_model_dict[k].size())
+                    )
                     new_checkpoint[k] = current_model_dict[k]
             # Load pretrained weights
-            self.teacher.model.load_state_dict(new_checkpoint, strict=True)
+            m = self.teacher.model.load_state_dict(new_checkpoint, strict=True)
+            logging.info("Loaded teacher weights from %s \n %s", self.experiment_spec.distill.pretrained_teacher_model_path, m)
 
         # Build the student model
         self.model = build_model(experiment_config=self.experiment_spec, export=export)

@@ -22,7 +22,7 @@ from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.cv.deformable_detr.utils.onnx_export import ONNXExporter
 from nvidia_tao_core.config.rtdetr.default_config import ExperimentConfig
-from nvidia_tao_pytorch.cv.rtdetr.model.pl_rtdetr_model import RTDETRPlModel
+from nvidia_tao_pytorch.cv.rtdetr.utils.model import create_model_from_config
 from nvidia_tao_pytorch.cv.rtdetr.types.rtdetr_nvdsinfer import RTDETRNvDSInferConfig
 from nvidia_tao_pytorch.core.utilities import write_classes_file, get_nvdsinfer_yaml
 from nvidia_tao_pytorch.cv.rtdetr.dataloader.pl_od_data_module import ODDataModule
@@ -147,7 +147,7 @@ def run_export(experiment_config):
 
         # Write classes file
         classes_file = os.path.join(output_root, "labels.txt")
-        write_classes_file(classes_file, class_names)
+        write_classes_file(classes_file, class_names, delimiter='\n')
 
         # Generate nvdsinfer yaml
         nvdsinfer_yaml_file = os.path.join(output_root, "nvdsinfer_config.yaml")
@@ -165,11 +165,8 @@ def run_export(experiment_config):
         with open(nvdsinfer_yaml_file, "w") as nvds_file:
             nvds_file.write(nvds_config_str)
 
-    # load model
-    pl_model = RTDETRPlModel.load_from_checkpoint(model_path,
-                                                  map_location='cpu' if on_cpu else 'cuda',
-                                                  experiment_spec=experiment_config,
-                                                  export=True)
+    # load model (supports quantized models)
+    pl_model = create_model_from_config(experiment_config, model_path, task="export")
     model = pl_model.model
     model.eval()
     if not on_cpu:

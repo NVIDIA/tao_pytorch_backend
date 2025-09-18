@@ -12,7 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EdgeNeXt model utils."""
+"""EdgeNeXt model utilities.
+
+This module provides the building blocks for EdgeNeXt architecture, a hybrid
+CNN-Transformer model designed for mobile vision applications. EdgeNeXt combines
+the efficiency of convolutional layers with the representational power of
+transformer blocks through innovative attention mechanisms.
+
+The module includes:
+- PositionalEncodingFourier: Fourier-based positional encoding for vision transformers
+- SDTAEncoder: Split Depth-wise Transpose Attention encoder block
+- SDTAEncoderBNHS: SDTA encoder with BatchNorm and Hard-Swish activation
+- XCA: Cross-Covariance Attention module for efficient attention computation
+- ConvEncoder: Convolutional encoder with inverted bottleneck structure
+- ConvEncoderBNHS: Mobile-optimized convolutional encoder
+
+Key Features:
+- Split depth-wise convolutions for efficient local feature extraction
+- Cross-covariance attention for global information processing
+- Fourier-based positional encodings for spatial awareness
+- Mobile-optimized variants with BatchNorm and Hard-Swish
+- Layer scaling and stochastic depth for improved training
+
+Classes:
+    PositionalEncodingFourier: Fourier-based positional encoding
+    SDTAEncoder: Split Depth-wise Transpose Attention encoder
+    SDTAEncoderBNHS: SDTA encoder with mobile optimizations
+    XCA: Cross-Covariance Attention module
+    ConvEncoder: Convolutional encoder block
+    ConvEncoderBNHS: Mobile-optimized convolutional encoder
+
+Example:
+    ```python
+    # Create an SDTA encoder block
+    encoder = SDTAEncoder(
+        dim=96,
+        drop_path=0.1,
+        expan_ratio=4,
+        num_heads=8
+    )
+
+    # Forward pass
+    x = torch.randn(1, 96, 56, 56)
+    output = encoder(x)
+    ```
+"""
+
 import math
 
 import torch
@@ -30,6 +75,10 @@ class PositionalEncodingFourier(nn.Module):
     commonly used in vision transformers to provide spatial position information
     to the attention mechanism.
 
+    The encoding is computed using sine and cosine functions with different frequencies,
+    providing a rich representation of spatial positions that can be learned by the
+    attention mechanism.
+
     Args:
         hidden_dim (int, optional): Hidden dimension for Fourier features. Defaults to 32.
         dim (int, optional): Output dimension of the positional encoding. Defaults to 768.
@@ -46,7 +95,16 @@ class PositionalEncodingFourier(nn.Module):
         self.dim = dim
 
     def forward(self, B, H, W):
-        """Forward pass for PositionalEncodingFourier."""
+        """Forward pass for PositionalEncodingFourier.
+
+        Args:
+            B (int): Batch size
+            H (int): Height of the feature map
+            W (int): Width of the feature map
+
+        Returns:
+            torch.Tensor: Positional encoding of shape (B, dim, H, W)
+        """
         mask = torch.zeros(B, H, W).bool().to(self.token_projection.weight.device)
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
@@ -76,6 +134,10 @@ class SDTAEncoder(nn.Module):
     This encoder combines split depth-wise convolutions with cross-covariance attention (XCA)
     and an inverted bottleneck structure. It includes optional positional embeddings and
     layer scaling for improved training stability.
+
+    The SDTA mechanism splits the input channels and processes them with different
+    depth-wise convolutions, then combines them with cross-covariance attention for
+    efficient local and global feature processing.
 
     Args:
         dim (int): Input/output channel dimension.
@@ -122,7 +184,14 @@ class SDTAEncoder(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
-        """Forward pass for SDTAEncoder."""
+        """Forward pass for SDTAEncoder.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, C, H, W)
+
+        Returns:
+            torch.Tensor: Output tensor of same shape as input
+        """
         x_in = x
 
         spx = torch.split(x, self.width, 1)
@@ -166,6 +235,11 @@ class SDTAEncoderBNHS(nn.Module):
     This is a variant of SDTAEncoder that uses Batch Normalization instead of Layer Normalization
     and Hard-Swish activation instead of GELU. This combination is often used for mobile-optimized
     architectures to improve inference efficiency.
+
+    The key differences from SDTAEncoder are:
+    - Uses BatchNorm2d instead of LayerNorm for normalization
+    - Uses Hard-Swish activation instead of GELU
+    - Optimized for mobile hardware acceleration
 
     Args:
         dim (int): Input/output channel dimension.
@@ -212,7 +286,14 @@ class SDTAEncoderBNHS(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
-        """Forward pass for SDTAEncoderBNHS."""
+        """Forward pass for SDTAEncoderBNHS.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, C, H, W)
+
+        Returns:
+            torch.Tensor: Output tensor of same shape as input
+        """
         x_in = x
 
         spx = torch.split(x, self.width, 1)
@@ -259,6 +340,10 @@ class XCA(nn.Module):
     the cross-covariance between queries and keys. It uses learnable temperature
     parameters and normalizes the query and key vectors before computing attention.
 
+    This attention mechanism is particularly efficient for vision transformers as it
+    reduces the computational complexity compared to standard self-attention while
+    maintaining the ability to capture global dependencies.
+
     Args:
         dim (int): Input dimension.
         num_heads (int, optional): Number of attention heads. Defaults to 8.
@@ -279,7 +364,14 @@ class XCA(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        """Forward pass for XCA."""
+        """Forward pass for XCA.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, N, C)
+
+        Returns:
+            torch.Tensor: Output tensor of shape (B, N, C)
+        """
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
         qkv = qkv.permute(2, 0, 3, 1, 4)
@@ -306,7 +398,11 @@ class XCA(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        """Return the names of parameters that do not require weight decay."""
+        """Return the names of parameters that do not require weight decay.
+
+        Returns:
+            set: Set of parameter names to exclude from weight decay
+        """
         return {'temperature'}
 
 
@@ -316,6 +412,10 @@ class ConvEncoder(nn.Module):
     This encoder block consists of a depth-wise convolution followed by an inverted
     bottleneck with layer normalization and GELU activation. It includes optional
     layer scaling and stochastic depth for improved training.
+
+    The architecture follows the design principles of modern convolutional networks
+    with depth-wise convolutions for efficient local feature extraction and
+    inverted bottlenecks for channel mixing.
 
     Args:
         dim (int): Input/output channel dimension.
@@ -338,7 +438,14 @@ class ConvEncoder(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
-        """Forward pass for ConvEncoder."""
+        """Forward pass for ConvEncoder.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, C, H, W)
+
+        Returns:
+            torch.Tensor: Output tensor of same shape as input
+        """
         x_in = x
         x = self.dwconv(x)
         x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
@@ -361,6 +468,11 @@ class ConvEncoderBNHS(nn.Module):
     Normalization and Hard-Swish activation instead of GELU. This combination is
     optimized for mobile deployment with improved inference efficiency.
 
+    The key differences from ConvEncoder are:
+    - Uses BatchNorm2d instead of LayerNorm for normalization
+    - Uses Hard-Swish activation instead of GELU
+    - Optimized for mobile hardware acceleration
+
     Args:
         dim (int): Input/output channel dimension.
         drop_path (float, optional): Drop path rate for stochastic depth. Defaults to 0.
@@ -382,7 +494,14 @@ class ConvEncoderBNHS(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
-        """Forward pass for ConvEncoderBNHS."""
+        """Forward pass for ConvEncoderBNHS.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, C, H, W)
+
+        Returns:
+            torch.Tensor: Output tensor of same shape as input
+        """
         x_in = x
         x = self.dwconv(x)
         x = self.norm(x)

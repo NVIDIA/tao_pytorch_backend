@@ -12,7 +12,60 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GCViT backbone."""
+"""GCViT backbone module.
+
+This module provides GCViT (Global Context Vision Transformer) implementations
+for the TAO PyTorch framework. GCViT is a hierarchical vision transformer that
+combines local window attention with global context modeling.
+
+The GCViT architecture introduces a novel attention mechanism that captures both
+local and global information efficiently. It uses window-based attention for local
+feature extraction and global context modeling for capturing long-range dependencies.
+
+Key Features:
+- Hierarchical architecture with multiple stages
+- Window-based local attention for efficiency
+- Global context modeling for long-range dependencies
+- Support for multiple model sizes (XXTiny, XTiny, Tiny, Small, Base, Large)
+- Integration with TAO backbone framework
+- Support for activation checkpointing and layer freezing
+- Efficient design with good accuracy/speed balance
+
+Classes:
+    Mlp: Multi-Layer Perceptron block
+    SqueezeExcitation: Squeeze and excitation block
+    ReduceSize: Feature reduction layer
+    PatchEmbed: Patch embedding layer
+    FeatExtract: Feature extraction layer
+    WindowAttention: Window-based attention mechanism
+    WindowAttentionGlobal: Global window attention
+    GCViTBlock: GCViT transformer block
+    GlobalQueryGen: Global query generator
+    GCViTLayer: GCViT layer with multiple blocks
+    GCViT: Main GCViT model
+
+Functions:
+    window_partition: Partition input into windows
+    window_reverse: Reverse window partitioning
+    gc_vit_xxtiny: GCViT XXTiny model
+    gc_vit_xtiny: GCViT XTiny model
+    gc_vit_tiny: GCViT Tiny model
+    gc_vit_small: GCViT Small model
+    gc_vit_base: GCViT Base model
+    gc_vit_large: GCViT Large model
+    gc_vit_base_384: GCViT Base model for 384x384 images
+    gc_vit_large_384: GCViT Large model for 384x384 images
+
+Example:
+    >>> from nvidia_tao_pytorch.cv.backbone_v2 import gc_vit_tiny
+    >>> model = gc_vit_tiny(num_classes=1000)
+    >>> x = torch.randn(1, 3, 224, 224)
+    >>> output = model(x)
+
+References:
+    - [GCViT: Global Context Vision Transformer](https://arxiv.org/abs/2206.09959)
+    - [https://github.com/NVlabs/GCViT](https://github.com/NVlabs/GCViT)
+"""
 
 import torch
 import torch.nn as nn
@@ -24,12 +77,27 @@ from nvidia_tao_pytorch.cv.backbone_v2.backbone_base import BackboneBase
 
 
 def window_partition(x, window_size, h_w, w_w):
-    """
+    """Partition input tensor into windows for local attention computation.
+
+    This function divides the input tensor into non-overlapping windows to enable
+    efficient local attention computation. Each window is processed independently
+    to reduce computational complexity.
+
     Args:
-        x: (B, H, W, C)
-        window_size: window size
+        x (torch.Tensor): Input tensor of shape (B, H, W, C) where B is batch size,
+            H and W are height and width, and C is the number of channels.
+        window_size (int): Size of each window (assumed to be square).
+        h_w (int): Number of windows in height dimension.
+        w_w (int): Number of windows in width dimension.
+
     Returns:
-        local window features (num_windows*B, window_size, window_size, C)
+        torch.Tensor: Windowed features of shape (num_windows*B, window_size, window_size, C)
+            where num_windows = h_w * w_w.
+
+    Example:
+        >>> x = torch.randn(2, 56, 56, 96)
+        >>> windows = window_partition(x, 7, 8, 8)
+        >>> print(windows.shape)  # torch.Size([128, 7, 7, 96])
     """
     B, _, _, C = x.shape
     x = x.view(B, h_w, window_size, w_w, window_size, C)
@@ -38,14 +106,29 @@ def window_partition(x, window_size, h_w, w_w):
 
 
 def window_reverse(windows, window_size, H, W, h_w, w_w):
-    """
+    """Reverse window partitioning to reconstruct the original tensor.
+
+    This function reconstructs the original tensor from windowed features by
+    reversing the window partitioning operation.
+
     Args:
-        windows: local window features (num_windows*B, window_size, window_size, C)
-        window_size: Window size
-        H: Height of image
-        W: Width of image
+        windows (torch.Tensor): Windowed features of shape (num_windows*B, window_size, window_size, C).
+        window_size (int): Size of each window (assumed to be square).
+        H (int): Height of the original image.
+        W (int): Width of the original image.
+        h_w (int): Number of windows in height dimension.
+        w_w (int): Number of windows in width dimension.
+
     Returns:
-        x: (B, H, W, C)
+        torch.Tensor: Reconstructed tensor of shape (B, H, W, C).
+
+    Example:
+        >>> windows = torch.randn(128, 7, 7, 96)
+        >>> x = window_reverse(windows, 7, 56, 56, 8, 8)
+        >>> print(x.shape)  # torch.Size([2, 56, 56, 96])
+
+    Note:
+        The batch size B is calculated as windows.shape[0] // (H * W // window_size // window_size).
     """
     # Casting to int leads to error
     B = windows.shape[0] // (H * W // window_size // window_size)
@@ -55,18 +138,44 @@ def window_reverse(windows, window_size, H, W, h_w, w_w):
 
 
 class Mlp(nn.Module):
-    """
-    Multi-Layer Perceptron (MLP) block
+    """Multi-Layer Perceptron (MLP) block.
+
+    This class implements a standard MLP block with two linear layers, an activation
+    function, and dropout layers. It is commonly used in transformer architectures
+    as the feed-forward network component.
+
+    Args:
+        in_features (int): Number of input features.
+        hidden_features (int, optional): Number of hidden features. If None, defaults
+            to in_features. Default: `None`.
+        out_features (int, optional): Number of output features. If None, defaults
+            to in_features. Default: `None`.
+        act_layer (nn.Module, optional): Activation function. Default: `nn.GELU`.
+        drop (float, optional): Dropout rate. Default: `0.0`.
+
+    Attributes:
+        fc1 (nn.Linear): First linear layer.
+        act (nn.Module): Activation function.
+        fc2 (nn.Linear): Second linear layer.
+        drop (nn.Dropout): Dropout layer.
+
+    Example:
+        >>> mlp = Mlp(in_features=256, hidden_features=512, out_features=256)
+        >>> x = torch.randn(1, 256)
+        >>> output = mlp(x)  # Shape: (1, 256)
     """
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0):
-        """
+        """Initialize the MLP block.
+
         Args:
-            in_features: input features dimension.
-            hidden_features: hidden features dimension.
-            out_features: output features dimension.
-            act_layer: activation function.
-            drop: dropout rate.
+            in_features (int): Number of input features.
+            hidden_features (int, optional): Number of hidden features. If None, defaults
+                to in_features. Default: `None`.
+            out_features (int, optional): Number of output features. If None, defaults
+                to in_features. Default: `None`.
+            act_layer (nn.Module, optional): Activation function. Default: `nn.GELU`.
+            drop (float, optional): Dropout rate. Default: `0.0`.
         """
         super().__init__()
         out_features = out_features or in_features
@@ -77,7 +186,17 @@ class Mlp(nn.Module):
         self.drop = nn.Dropout(drop)
 
     def forward(self, x):
-        """Forward function."""
+        """Forward pass through the MLP block.
+
+        This method applies the MLP transformation: Linear -> Activation -> Dropout -> Linear -> Dropout.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, N, C) where B is batch size,
+                N is sequence length, and C is feature dimension.
+
+        Returns:
+            torch.Tensor: Output tensor of the same shape as input.
+        """
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
@@ -781,9 +900,17 @@ class GCViT(BackboneBase):
         x = torch.flatten(x, 1)
         return x
 
-    def forward_feature_pyramid(self, *args, **kwargs):
+    def forward_feature_pyramid(self, x):
         """Forward pass through the backbone to extract intermediate feature maps."""
-        raise NotImplementedError("forward_feature_pyramid is not implemented.")
+        outs = []
+        x = self.patch_embed(x)
+        x = self.pos_drop(x)
+
+        for level in self.levels:
+            x = level(x)
+            x_spatial = x.permute(0, 3, 1, 2)  # To channel first.
+            outs.append(x_spatial)
+        return outs
 
     def forward(self, x):
         """Forward."""

@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from nvidia_tao_pytorch.cv.deformable_detr.utils import box_ops
-
+from nvidia_tao_pytorch.cv.deformable_detr.utils.misc import read_h5_image_from_path
 
 # Referenced from mmdet visualization
 METAINFO = {
@@ -129,7 +129,11 @@ def save_inference_prediction(predictions, output_dir, conf_threshold, label_map
         if not os.path.exists(output_annotate_root):
             os.makedirs(output_annotate_root, exist_ok=True)
 
-        pil_input = Image.open(image_name).convert("RGB")
+        if image_name.startswith("h5://"):
+            pil_input, _ = read_h5_image_from_path(image_name)
+        else:
+            pil_input = Image.open(image_name).convert("RGB")
+
         pil_input = ImageOps.exif_transpose(pil_input)
         W, H = pil_input.size
 

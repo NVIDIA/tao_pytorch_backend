@@ -12,7 +12,68 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FasterViT backbone."""
+"""FasterViT backbone module.
+
+This module provides FasterViT implementations for the TAO PyTorch framework.
+FasterViT is a vision transformer architecture designed for high-speed inference
+with competitive accuracy.
+
+The FasterViT architecture introduces several innovations for efficient computation:
+- Hierarchical Attention with Token Propagation (HAT)
+- Carrier Tokens for efficient information flow
+- Multi-scale feature extraction
+- Optimized attention mechanisms
+
+Key Features:
+- High-speed inference with competitive accuracy
+- Hierarchical attention with token propagation
+- Carrier tokens for efficient information flow
+- Support for multiple model sizes (0-6, 21k variants)
+- Integration with TAO backbone framework
+- Support for activation checkpointing and layer freezing
+- Efficient design for real-time applications
+
+Classes:
+    PosEmbMLPSwinv2D: 2D positional embedding for Swin v2
+    PosEmbMLPSwinv1D: 1D positional embedding for Swin v1
+    Mlp: Multi-layer perceptron
+    Downsample: Downsampling layer
+    PatchEmbed: Patch embedding layer
+    ConvBlock: Convolutional block
+    WindowAttention: Window-based attention
+    HAT: Hierarchical Attention with Token Propagation
+    TokenInitializer: Token initialization
+    FasterViTLayer: FasterViT layer
+    FasterViT: Main FasterViT model
+
+Functions:
+    window_partition: Partition input into windows
+    window_reverse: Reverse window partitioning
+    ct_dewindow: De-window carrier tokens
+    ct_window: Window carrier tokens
+    faster_vit_0_224: FasterViT-0 model
+    faster_vit_1_224: FasterViT-1 model
+    faster_vit_2_224: FasterViT-2 model
+    faster_vit_3_224: FasterViT-3 model
+    faster_vit_4_224: FasterViT-4 model
+    faster_vit_5_224: FasterViT-5 model
+    faster_vit_6_224: FasterViT-6 model
+    faster_vit_4_21k_224: FasterViT-4 21k model
+    faster_vit_4_21k_384: FasterViT-4 21k 384 model
+    faster_vit_4_21k_512: FasterViT-4 21k 512 model
+    faster_vit_4_21k_768: FasterViT-4 21k 768 model
+
+Example:
+    >>> from nvidia_tao_pytorch.cv.backbone_v2 import faster_vit_0_224
+    >>> model = faster_vit_0_224(num_classes=1000)
+    >>> x = torch.randn(1, 3, 224, 224)
+    >>> output = model(x)
+
+References:
+    - [FasterViT: Fast Vision Transformers with Hierarchical Attention](
+      https://arxiv.org/abs/2306.06189)
+    - [https://github.com/NVlabs/FasterViT](https://github.com/NVlabs/FasterViT)
+"""
 
 import numpy as np
 import torch
@@ -793,6 +854,7 @@ class FasterViT(BackboneBase):
         activation_checkpoint=False,
         freeze_at=None,
         freeze_norm=False,
+        export=False,
         **kwargs,
     ):
         """Initialize the FasterViT model.
@@ -822,6 +884,7 @@ class FasterViT(BackboneBase):
             freeze_at (list): List of keys corresponding to the stages or layers to freeze. If `None`, no specific
                 layers are frozen. If `"all"`, the entire model is frozen and set to eval mode. Default: `None`.
             freeze_norm (bool): If `True`, all normalization layers in the backbone will be frozen. Default: `False`.
+            export (bool): Whether to enable export mode. If `True`, replace BN with FrozenBN
         """
         super().__init__(
             in_chans=in_chans,
@@ -829,6 +892,7 @@ class FasterViT(BackboneBase):
             activation_checkpoint=activation_checkpoint,
             freeze_at=freeze_at,
             freeze_norm=freeze_norm,
+            export=export,
         )
 
         self.num_features = int(dim * 2 ** (len(depths) - 1))
@@ -918,9 +982,14 @@ class FasterViT(BackboneBase):
         x = torch.flatten(x, 1)
         return x
 
-    def forward_feature_pyramid(self, *args, **kwargs):
+    def forward_feature_pyramid(self, x):
         """Forward pass through the backbone to extract intermediate feature maps."""
-        raise NotImplementedError("forward_feature_pyramid is not implemented.")
+        outs = []
+        x = self.patch_embed(x)
+        for level in self.levels:
+            x = level(x)
+            outs.append(x)
+        return outs
 
     def forward(self, x):
         """Forward."""
@@ -931,7 +1000,37 @@ class FasterViT(BackboneBase):
 
 @BACKBONE_REGISTRY.register()
 def faster_vit_0_224(**kwargs):
-    """FasterViT-0 model."""
+    """Create a FasterViT-0 model.
+
+    This function creates a FasterViT-0 model with the following specifications:
+    - Depths: [2, 3, 6, 5] (number of blocks in each stage)
+    - Number of heads: [2, 4, 8, 16] (attention heads in each stage)
+    - Window size: [7, 7, 7, 7] (window size for each stage)
+    - Carrier token size: 2
+    - Dimension: 64
+    - Input dimension: 64
+    - MLP ratio: 4
+
+    Args:
+        **kwargs: Additional arguments passed to FasterViT constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        FasterViT: Configured FasterViT-0 model.
+
+    Example:
+        >>> model = faster_vit_0_224(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This is the smallest FasterViT model variant with approximately 31M parameters.
+    """
     return FasterViT(
         depths=[2, 3, 6, 5],
         num_heads=[2, 4, 8, 16],
@@ -949,7 +1048,38 @@ def faster_vit_0_224(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def faster_vit_1_224(**kwargs):
-    """FasterViT-1 model."""
+    """Create a FasterViT-1 model.
+
+    This function creates a FasterViT-1 model with the following specifications:
+    - Depths: [1, 3, 8, 5] (number of blocks in each stage)
+    - Number of heads: [2, 4, 8, 16] (attention heads in each stage)
+    - Window size: [7, 7, 7, 7] (window size for each stage)
+    - Carrier token size: 2
+    - Dimension: 80
+    - Input dimension: 32
+    - MLP ratio: 4
+
+    Args:
+        **kwargs: Additional arguments passed to FasterViT constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        FasterViT: Configured FasterViT-1 model.
+
+    Example:
+        >>> model = faster_vit_1_224(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 53M parameters and provides a good balance
+        between accuracy and computational efficiency.
+    """
     return FasterViT(
         depths=[1, 3, 8, 5],
         num_heads=[2, 4, 8, 16],
@@ -967,7 +1097,38 @@ def faster_vit_1_224(**kwargs):
 
 @BACKBONE_REGISTRY.register()
 def faster_vit_2_224(**kwargs):
-    """FasterViT-2 model."""
+    """Create a FasterViT-2 model.
+
+    This function creates a FasterViT-2 model with the following specifications:
+    - Depths: [3, 3, 8, 5] (number of blocks in each stage)
+    - Number of heads: [2, 4, 8, 16] (attention heads in each stage)
+    - Window size: [7, 7, 7, 7] (window size for each stage)
+    - Carrier token size: 2
+    - Dimension: 96
+    - Input dimension: 64
+    - MLP ratio: 4
+
+    Args:
+        **kwargs: Additional arguments passed to FasterViT constructor.
+            Common arguments include:
+            - num_classes (int): Number of output classes. Default: `1000`
+            - in_chans (int): Number of input channels. Default: `3`
+            - activation_checkpoint (bool): Enable activation checkpointing. Default: `False`
+            - freeze_at (list): Layers to freeze. Default: `None`
+            - freeze_norm (bool): Freeze normalization layers. Default: `False`
+
+    Returns:
+        FasterViT: Configured FasterViT-2 model.
+
+    Example:
+        >>> model = faster_vit_2_224(num_classes=1000)
+        >>> x = torch.randn(1, 3, 224, 224)
+        >>> output = model(x)  # Shape: (1, 1000)
+
+    Note:
+        This model has approximately 75M parameters and provides better accuracy
+        than FasterViT-1 with increased computational cost.
+    """
     return FasterViT(
         depths=[3, 3, 8, 5],
         num_heads=[2, 4, 8, 16],
