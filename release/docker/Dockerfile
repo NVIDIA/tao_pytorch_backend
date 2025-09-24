@@ -23,7 +23,7 @@ COPY release/docker/entrypoint.d/* /opt/nvidia/entrypoint.d/
 
 # Installing TAO-Core
 COPY tao-core tao-core
-RUN cd tao-core && bash release/python/build_wheel.sh && \
+RUN cd tao-core && python setup.py bdist_wheel && \
     find dist/ -name "nvidia_tao_core*.whl" -type f | xargs -n 1 pip install && \
     cp nvidia_tao_core/microservices/nginx.conf /etc/nginx/ && \
     cd .. && rm -rf tao-core
