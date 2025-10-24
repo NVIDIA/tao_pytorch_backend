@@ -24,7 +24,7 @@ from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
 from nvidia_tao_pytorch.cv.depth_net.dataloader import build_pl_data_module
-from nvidia_tao_pytorch.cv.depth_net.utils.misc import parse_checkpoint
+from nvidia_tao_pytorch.cv.depth_net.utils.misc import parse_mono_depth_checkpoint
 from nvidia_tao_pytorch.cv.depth_net.model.build_pl_model import build_pl_model, get_pl_module
 
 
@@ -37,37 +37,31 @@ def run_experiment(experiment_config, key):
 
     activation_checkpoint = experiment_config.train.activation_checkpoint
 
-    # Load pretrained model as starting point if pretrained path is provided,
-    pretrained_backbone_path = experiment_config.train.pretrained_backbone_path
+    # build model class.
+    pt_model = build_pl_model(experiment_config)
+    pretrained_path = experiment_config.train.pretrained_model_path
 
-    if pretrained_backbone_path:
-        model_dict = torch.load(pretrained_backbone_path, map_location="cpu")
-        if "metric" in experiment_config.model.model_type.lower():
-            is_strict = False
-        else:
-            is_strict = True
-        if "pytorch-lightning_version" not in model_dict:
+    # Load pretrained model as starting point if pretrained path is provided,
+    if pretrained_path:
+        model_dict = torch.load(pretrained_path, map_location="cpu")
+        if "pytorch-lightning_version" not in model_dict and experiment_config.model.model_type in ['MetricDepthAnything', 'RelativeDepthAnything']:
             # parse public checkpoint
-            modified_dict = parse_checkpoint(model_dict, experiment_config.model.model_type)
-            pt_model = build_pl_model(experiment_config)
-            pt_model.load_state_dict(modified_dict, strict=is_strict)
+            modified_dict = parse_mono_depth_checkpoint(model_dict, experiment_config.model.model_type)
+            pt_model.load_state_dict(modified_dict, strict=True)
         else:
             pt_model = get_pl_module(experiment_config).load_from_checkpoint(
-                pretrained_backbone_path,
+                pretrained_path,
                 map_location="cpu",
                 experiment_spec=experiment_config,
-                strict=is_strict
+                strict=True
             )
-            if not is_strict:
-                logging.info(f"strict loading is disabled for pretrained backbone {pretrained_backbone_path}")
 
-        if not is_strict:
-            logging.info(f"strict loading is disabled for pretrained backbone {pretrained_backbone_path}")
-
+    print('model params', sum(p.numel() for p in pt_model.parameters()), flush=True)
     num_nodes = experiment_config.train.num_nodes
     clip_grad_norm = experiment_config.train.clip_grad_norm
     is_dry_run = experiment_config.train.is_dry_run
     distributed_strategy = experiment_config.train.distributed_strategy
+    log_every_n_steps = experiment_config.train.log_every_n_steps
 
     if experiment_config.train.precision.lower() == 'fp16':
         precision = '16-mixed'
@@ -94,13 +88,14 @@ def run_experiment(experiment_config, key):
 
     trainer = Trainer(
         **trainer_kwargs,
-        log_every_n_steps=9,
         num_nodes=num_nodes,
         strategy=strategy,
         precision=precision,
         gradient_clip_val=clip_grad_norm,
+        gradient_clip_algorithm="value",
         use_distributed_sampler=False,
-        fast_dev_run=is_dry_run
+        fast_dev_run=is_dry_run,
+        log_every_n_steps=log_every_n_steps
     )
     # Overload connector to enable intermediate ckpt encryption & decryption.
     if resume_ckpt and resume_ckpt.endswith('.tlt'):

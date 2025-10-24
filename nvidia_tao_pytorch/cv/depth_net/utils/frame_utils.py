@@ -192,6 +192,27 @@ def read_pfm(file_name, flip_up_down=False):
     return data, scale
 
 
+def write_pfm(file_path, array):
+    """ Write PFM files to disk
+
+    Args:
+        file_path (str):   path to save pfm files
+        array (str):       numpy array to save
+
+    Returns:
+        N/A
+    """
+    assert type(file_path) is str and type(array) is np.ndarray and \
+           os.path.splitext(file_path)[1] == ".pfm"
+    with open(file_path, 'wb') as f:
+        H, W = array.shape
+        headers = ["Pf\n", f"{W} {H}\n", "-1\n"]
+        for header in headers:
+            f.write(str.encode(header))
+        array = np.flip(array, axis=0).astype(np.float32)
+        f.write(array.tobytes())
+
+
 def depth_to_disparity(depth, return_mask=False):
     """Convert a depth map to a disparity map.
 

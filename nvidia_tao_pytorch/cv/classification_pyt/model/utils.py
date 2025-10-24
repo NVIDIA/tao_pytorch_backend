@@ -24,6 +24,10 @@ ptm_adapter.add("mal", "student.backbone.")
 ptm_adapter.add("mask_grounding_dino", "model.model.backbone.0.body.")
 ptm_adapter.add("grounding_dino", "model.model.backbone.0.body.")
 ptm_adapter.add("dino", "model.model.backbone.0.body.")
+ptm_adapter.add("visual_changenet_classify", "model.backbone.")
+ptm_adapter.add("visual_changenet_classify", "model.backbone.radio.", model_type="radio_learnable")
+ptm_adapter.add("visual_changenet_segment", "model.backbone.")
+ptm_adapter.add("visual_changenet_segment", "model.backbone.radio.", model_type="radio")
 
 
 def cls_parser(original):

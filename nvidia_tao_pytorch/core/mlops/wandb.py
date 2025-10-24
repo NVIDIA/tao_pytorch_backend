@@ -68,6 +68,7 @@ def initialize_wandb(project: str = "TAO Toolkit",
                      sync_tensorboard: bool = True,
                      save_code: bool = False,
                      tags: list = None,
+                     run_id: str = None,
                      name: str = "train",
                      config=None,
                      wandb_logged_in: bool = False,
@@ -108,17 +109,31 @@ def initialize_wandb(project: str = "TAO Toolkit",
         # class definition takes kwargs that internally gets routed to wandb.init().
         # So you can add kwargs from wandb.init() as part of this constructor along
         # with it's own args, kwargs.
-        wandb_logger = WandbLogger(
-            name=name,
-            project=project,
-            entity=entity,
-            log_model=False,
-            save_dir=results_dir,
-            sync_tensorboard=sync_tensorboard,
-            save_code=save_code,
-            config=config,
-            tags=tags
-        )
+        if run_id == "":
+            wandb_logger = WandbLogger(
+                name=name,
+                project=project,
+                entity=entity,
+                log_model=False,
+                save_dir=results_dir,
+                sync_tensorboard=sync_tensorboard,
+                save_code=save_code,
+                config=config,
+                tags=tags
+            )
+        else:
+            wandb_logger = WandbLogger(
+                name=name,
+                project=project,
+                entity=entity,
+                log_model=False,
+                save_dir=results_dir,
+                sync_tensorboard=sync_tensorboard,
+                save_code=save_code,
+                config=config,
+                tags=tags,
+                id=run_id
+            )
         global _WANDB_INITIALIZED  # pylint: disable=W0602,W0603
         _WANDB_INITIALIZED = True
         return wandb_logger

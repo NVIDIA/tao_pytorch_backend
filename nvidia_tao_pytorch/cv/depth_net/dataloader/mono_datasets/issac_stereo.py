@@ -14,7 +14,7 @@
 
 """Dataset Class for Issac Stereo data."""
 
-from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import read_gt_issac_stereo
+from nvidia_tao_pytorch.cv.depth_net.dataloader.utils.frame_utils import read_gt_issac_stereo
 from nvidia_tao_pytorch.cv.depth_net.dataloader.mono_datasets.base_relative_mono import BaseRelativeMonoDataset
 
 

@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 
 from nvidia_tao_pytorch.core.distributed.comm import is_dist_avail_and_initialized
 from nvidia_tao_pytorch.cv.depth_net.dataloader.mono_datasets import build_mono_dataset
-from nvidia_tao_pytorch.cv.depth_net.dataloader.mono_transforms import build_mono_transforms
+from nvidia_tao_pytorch.cv.depth_net.dataloader.transforms import build_mono_transforms
 from nvidia_tao_pytorch.cv.depth_net.dataloader.custom_collate_fn import custom_collate_fn
 
 

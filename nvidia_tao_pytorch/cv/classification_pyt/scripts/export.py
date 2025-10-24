@@ -25,7 +25,8 @@ from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.utilities import encrypt_onnx, get_nvdsinfer_yaml, write_classes_file
 from nvidia_tao_pytorch.cv.classification_pyt.utils.onnx_export import ONNXExporter
 from nvidia_tao_pytorch.cv.classification_pyt.types.classification_nvdsinfer import ClassificationNvDSInferConfig
-from nvidia_tao_pytorch.cv.classification_pyt.utils.model import create_model_from_config
+from nvidia_tao_pytorch.core.quantization.utils import create_quantized_model_from_config
+from nvidia_tao_pytorch.cv.classification_pyt.model.classifier_pl_model import ClassifierPlModel
 spec_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -148,7 +149,14 @@ def run_export(experiment_config):
             nvds_file.write(config_str)
 
     # load model
-    sf_model = create_model_from_config(experiment_config, model_path, task="export")
+    if experiment_config.export.is_quantized:
+        sf_model = create_quantized_model_from_config(model_path, ClassifierPlModel, experiment_config=experiment_config)
+    else:
+        sf_model = ClassifierPlModel.load_from_checkpoint(
+            model_path,
+            map_location="cpu",
+            experiment_spec=experiment_config
+        )
 
     model = sf_model.model
     model.eval()

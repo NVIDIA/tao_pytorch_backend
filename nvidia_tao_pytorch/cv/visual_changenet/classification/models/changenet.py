@@ -37,11 +37,12 @@ from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 from nvidia_tao_pytorch.core.tlt_logging import logger
 from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import interpolate_patch_embed, interpolate_pos_embed
 from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
+from nvidia_tao_pytorch.cv.backbone_v2.dino_v2 import DINOV2
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.dino_v2 import vit_model_dict
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.fan import fan_model_dict
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.radio import radio_model_dict
 from nvidia_tao_pytorch.cv.visual_changenet.backbone.utils import ptm_adapter, visual_changenet_parser
-from nvidia_tao_pytorch.cv.visual_changenet.backbone.vit_adapter import vit_adapter_model_dict
+from nvidia_tao_pytorch.cv.visual_changenet.backbone.vit_adapter import vit_adapter_model_dict, ViTAdapter
 from nvidia_tao_pytorch.cv.visual_changenet.segmentation.models.changenet_utils import (
     MLP,
     conv_diff,
@@ -481,23 +482,24 @@ class ChangeNetClassify(nn.Module):
             raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)
 
         if pretrained_backbone_path:
-            pretrained_backbone_ckp = load_pretrained_weights(
+            state_dict = load_pretrained_weights(
                 pretrained_backbone_path,
                 parser=visual_changenet_parser,
                 ptm_adapter=ptm_adapter,
             )
-            if "vit" in self.model_name and "radio" not in self.model_name:
-                if self.difference_module == "learnable":
-                    pretrained_backbone_ckp = interpolate_vit_checkpoint(
-                        checkpoint=pretrained_backbone_ckp,
-                        target_patch_size=16,
-                        target_resolution=output_shape[0],
-                    )
-                elif self.difference_module == "euclidean":
-                    pretrained_backbone_ckp = interpolate_vit_checkpoint(
-                        checkpoint=pretrained_backbone_ckp, target_patch_size=14, target_resolution=518
-                    )
-            msg = self.backbone.load_state_dict(pretrained_backbone_ckp, strict=False)
+            if isinstance(self.backbone, ViTAdapter):
+                state_dict = interpolate_vit_checkpoint(
+                    checkpoint=state_dict,
+                    target_patch_size=16,
+                    target_resolution=output_shape[0],
+                )
+            elif isinstance(self.backbone, DINOV2):
+                state_dict = interpolate_vit_checkpoint(
+                    checkpoint=state_dict,
+                    target_patch_size=14,
+                    target_resolution=518,
+                )
+            msg = self.backbone.load_state_dict(state_dict, strict=False)
             if get_global_rank() == 0:
                 logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
                 logger.info(f"{msg}")

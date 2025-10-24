@@ -16,8 +16,8 @@
 
 import numpy as np
 import torch
-from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import read_gt_nyudv2, read_image
-from nvidia_tao_pytorch.cv.depth_net.utils.misc import apply_3d_mask
+from nvidia_tao_pytorch.cv.depth_net.dataloader.utils.frame_utils import read_gt_nyudv2, read_image
+from nvidia_tao_pytorch.cv.depth_net.dataloader.utils.misc import apply_3d_mask
 from nvidia_tao_pytorch.cv.depth_net.dataloader.mono_datasets.base_metric_mono import BaseMetricMonoDataset
 
 
@@ -71,7 +71,7 @@ class NYUDV2(BaseMetricMonoDataset):
             sample['valid_mask'] = valid_mask.squeeze(0)  # (B, H, W)
             sample['depth'] = apply_3d_mask(depth, valid_mask)
         else:
-            valid_mask = torch.ones(sample['depth'].shape[1], sample['depth'].shape[2]).bool()
+            valid_mask = torch.ones(image_size[0], image_size[1]).bool()
             sample['valid_mask'] = valid_mask  # (B, H, W)
 
         sample['image_path'] = left_img_path

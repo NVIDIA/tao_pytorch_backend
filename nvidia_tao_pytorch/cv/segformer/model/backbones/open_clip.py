@@ -183,6 +183,19 @@ class OpenCLIPAdapter(OpenCLIP):
         if isinstance(m, MSDeformAttn):
             m._reset_parameters()
 
+    def freeze_backbone(self):
+        """Freeze the backbone while keeping adapter components trainable."""
+        super().freeze_backbone()
+
+        # Unfreezes all adapter-specific components to ensure they remain
+        # trainable during fine-tuning.
+        self.level_embed.requires_grad = True
+        modules = [self.spm, self.interactions, self.up, self.norm1, self.norm2, self.norm3, self.norm4]
+        for m in modules:
+            for p in m.parameters():
+                p.requires_grad = True
+            m.train()
+
     def _get_pos_embed(self, pos_embed: torch.Tensor, h: int, w: int):
         """Interpolate position embedding.
 

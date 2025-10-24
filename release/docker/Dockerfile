@@ -1,4 +1,4 @@
-FROM nvcr.io/nvstaging/tao/tao_pytorch_base_image@sha256:dadacc8b6920ac9008707f90e37e35908c7b935704f2345a6ad788b98ba01bd0
+FROM nvcr.io/nvstaging/tao/tao_pytorch_base_image@sha256:e665fa173e1dfcafc211a640f6d642edc64eb1f4120e5b538d177268e69b8457
 
 # Installing the TLT packages.
 WORKDIR /opt/nvidia
@@ -23,7 +23,7 @@ COPY release/docker/entrypoint.d/* /opt/nvidia/entrypoint.d/
 
 # Installing TAO-Core
 COPY tao-core tao-core
-RUN cd tao-core && python setup.py bdist_wheel && \
+RUN cd tao-core && bash release/python/build_wheel.sh && \
     find dist/ -name "nvidia_tao_core*.whl" -type f | xargs -n 1 pip install && \
     cp nvidia_tao_core/microservices/nginx.conf /etc/nginx/ && \
     cd .. && rm -rf tao-core
@@ -46,7 +46,7 @@ RUN cd wheels && ls ./*.whl|xargs -I'{}' python -m pip install '{}' \
 # RUN ln -s tao-converter converter
 
 ENV NVIDIA_PRODUCT_NAME "TAO Toolkit"
-ENV TAO_TOOLKIT_VERSION="6.25.9"
+ENV TAO_TOOLKIT_VERSION="6.25.10"
 ENV NVIDIA_TAO_TOOLKIT_VERSION="${TAO_TOOLKIT_VERSION}-PyTorch"
 ENV CUBLAS_WORKSPACE_CONFIG=":4096:8"
 

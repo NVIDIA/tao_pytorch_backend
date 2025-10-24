@@ -14,10 +14,11 @@
 
 """DepthNet lr scheduler module."""
 
-from torch.optim.lr_scheduler import MultiStepLR, StepLR, LambdaLR
+from torch.optim.lr_scheduler import (MultiStepLR, StepLR, LambdaLR,
+                                      CosineAnnealingLR, PolynomialLR, OneCycleLR,)
 
 
-def build_lr_scheduler(optimizer, scheduler_type, train_config, data_loader_length=None):
+def build_lr_scheduler(optimizer, scheduler_type, train_config, trainer):
     """Build learning rate scheduler given the scheduler type and training configuration.
 
     This function creates and configures a PyTorch learning rate scheduler based on the
@@ -30,6 +31,9 @@ def build_lr_scheduler(optimizer, scheduler_type, train_config, data_loader_leng
             - "MultiStep": Multi-step learning rate scheduler
             - "StepLR": Step learning rate scheduler
             - "LambdaLR": Lambda learning rate scheduler
+            - "CosineAnnealingLR": CosineAnnealing learning rate scheduler
+            - "OneCycleLR": Onecycle learning rate scheduler
+            - "PolynomailLR":Polynomial learning rate scheduler
         train_config (object): Training configuration object containing scheduler parameters.
             Must have the following attributes:
             - optim.lr_steps: List of step numbers for MultiStepLR
@@ -47,27 +51,43 @@ def build_lr_scheduler(optimizer, scheduler_type, train_config, data_loader_leng
         ValueError: If data_loader_length is None when scheduler_type is "LambdaLR".
         NotImplementedError: If the specified scheduler_type is not supported.
     """
-    if scheduler_type == "MultiStep":
+    if scheduler_type == "MultiStepLR":
         lr_scheduler = MultiStepLR(
             optimizer=optimizer,
             milestones=train_config['optim']["lr_steps"],
             gamma=train_config['optim']["lr_decay"],
-            verbose=train_config.verbose
         )
     elif scheduler_type == "StepLR":
         lr_scheduler = StepLR(
             optimizer=optimizer,
             step_size=train_config['optim']["lr_step_size"],
             gamma=train_config['optim']["lr_decay"],
-            verbose=train_config.verbose
         )
     elif scheduler_type == "LambdaLR":
-        if data_loader_length is None:
-            raise ValueError("train_dataloader is required for LambdaLR")
         lr_scheduler = LambdaLR(
             optimizer=optimizer,
-            lr_lambda=lambda x: 1 - x / (train_config['num_epochs'] * data_loader_length),
+            lr_lambda=lambda x: 1 - x / (train_config['num_epochs'] * len(trainer.datamodule.train_dataloader())),
             verbose=train_config.verbose
+        )
+    elif scheduler_type == "OneCycleLR":
+        lr_scheduler = OneCycleLR(
+            optimizer=optimizer,
+            max_lr=train_config["optim"]["lr"],
+            total_steps=trainer.estimated_stepping_batches,
+        )
+    elif scheduler_type == "PolynomialLR":
+        lr_scheduler = PolynomialLR(
+            optimizer=optimizer,
+            total_iters=trainer.estimated_stepping_batches,
+            power=1,
+        )
+    elif scheduler_type == "CosineAnnealingLR":
+        lr_scheduler = CosineAnnealingLR(
+            optimizer=optimizer,
+            T_max=trainer.estimated_stepping_batches,
+            eta_min=train_config["optim"]["min_lr"],
+            last_epoch=-1,
+            verbose=train_config.verbose,
         )
     else:
         raise NotImplementedError("LR Scheduler {} is not implemented".format(scheduler_type))

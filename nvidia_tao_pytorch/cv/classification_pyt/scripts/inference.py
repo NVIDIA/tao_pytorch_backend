@@ -23,7 +23,8 @@ from nvidia_tao_pytorch.core.initialize_experiments import initialize_inference_
 from nvidia_tao_pytorch.core.tlt_logging import obfuscate_logs
 from nvidia_tao_core.config.classification_pyt.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.classification_pyt.dataloader.pl_classification_data_module import CLDataModule
-from nvidia_tao_pytorch.cv.classification_pyt.utils.model import create_model_from_config
+from nvidia_tao_pytorch.core.quantization.utils import create_quantized_model_from_config
+from nvidia_tao_pytorch.cv.classification_pyt.model.classifier_pl_model import ClassifierPlModel
 
 
 def run_experiment(experiment_config, key):
@@ -33,7 +34,14 @@ def run_experiment(experiment_config, key):
     dm = CLDataModule(experiment_config.dataset)
     dm.setup(stage="predict")
 
-    model = create_model_from_config(experiment_config, model_path, task="inference")
+    if experiment_config.inference.is_quantized:
+        model = create_quantized_model_from_config(model_path, ClassifierPlModel, experiment_config=experiment_config)
+    else:
+        model = ClassifierPlModel.load_from_checkpoint(
+            model_path,
+            map_location="cpu",
+            experiment_spec=experiment_config
+        )
 
     trainer = Trainer(
         **trainer_kwargs

@@ -17,7 +17,7 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import read_depth, read_image
+from nvidia_tao_pytorch.cv.depth_net.dataloader.utils.frame_utils import read_depth, read_image
 
 
 class BaseRelativeMonoDataset(Dataset):
@@ -84,19 +84,17 @@ class BaseRelativeMonoDataset(Dataset):
             sample = {'image': left_image, **depth_dict}
 
         sample['image'] = torch.from_numpy(sample['image'])
-        # Height,
         sample['image_size'] = torch.tensor([image_size[0], image_size[1]])
 
         if "disparity" in sample:
             sample['disparity'] = torch.from_numpy(sample['disparity'])  # (1, H, W)
             valid_mask = sample['disparity'] < 1000  # (1, H, W)
             sample['disparity'][valid_mask == 0] = 0
-
-        if "valid_mask" in sample:
             sample['valid_mask'] = valid_mask.squeeze(0)  # (B, H, W)
         else:
-            valid_mask = torch.ones(sample['disparity'].shape[1], sample['disparity'].shape[2]).bool()
-            sample['valid_mask'] = valid_mask  # (B, H, W)
+            # No GT provided, set valid mask to all 1s
+            valid_mask = torch.ones(image_size[0], image_size[1]).bool()
+            sample['valid_mask'] = valid_mask  # (B, H, W)  # (B, H, W)
 
         sample['image_path'] = left_img_path
         return sample

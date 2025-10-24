@@ -16,10 +16,11 @@
 
 from nvidia_tao_pytorch.core.distributed.comm import get_global_rank
 from nvidia_tao_pytorch.core.tlt_logging import logger
+from nvidia_tao_pytorch.core.utils.pos_embed_interpolation import interpolate_patch_embed, interpolate_pos_embed
 from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
-
 from nvidia_tao_pytorch.cv.backbone_v2 import BACKBONE_REGISTRY
-from nvidia_tao_pytorch.cv.classification_pyt.model.utils import ptm_adapter, cls_parser
+from nvidia_tao_pytorch.cv.backbone_v2.dino_v2 import DINOV2
+from nvidia_tao_pytorch.cv.classification_pyt.model.utils import cls_parser, ptm_adapter
 
 
 def build_model(experiment_config,
@@ -63,9 +64,39 @@ def build_model(experiment_config,
     if pretrained_backbone_path:
         logger.info(f"Loading pretrained weights from {pretrained_backbone_path}")
         state_dict = load_pretrained_weights(pretrained_backbone_path, parser=cls_parser, ptm_adapter=ptm_adapter)
+        if isinstance(model, DINOV2):
+            state_dict = interpolate_vit_checkpoint(
+                checkpoint=state_dict,
+                target_patch_size=14,
+                target_resolution=518,
+            )
         msg = model.load_state_dict(state_dict, strict=False)
         if get_global_rank() == 0:
             logger.info(f"Loaded pretrained weights from {pretrained_backbone_path}")
             logger.info(f"{msg}")
 
     return model
+
+
+def interpolate_vit_checkpoint(checkpoint, target_patch_size, target_resolution):
+    """ Interpolate ViT backbone position embedding and patch embedding
+
+    Args:
+        checkpoint: pretrained ViT checkpoint
+        target_patch_size: target patch size to interpolate to. ex: 14, 16, etc
+        target_resolution: target image size to interpolate to. ex: 224, 512, 518, etc
+
+    Returns:
+        interpolated model checkpoints
+
+    """
+    if checkpoint is None:
+        return checkpoint
+
+    if get_global_rank() == 0:
+        logger.info("Do ViT pretrained backbone interpolation")
+    checkpoint = interpolate_patch_embed(checkpoint=checkpoint, new_patch_size=target_patch_size)
+    checkpoint = interpolate_pos_embed(
+        checkpoint_model=checkpoint, new_resolution=target_resolution, new_patch_size=target_patch_size
+    )
+    return checkpoint

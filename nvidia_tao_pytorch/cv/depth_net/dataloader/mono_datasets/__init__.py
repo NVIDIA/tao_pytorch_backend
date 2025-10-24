@@ -83,8 +83,11 @@ def build_mono_dataset(data_sources, transform, min_depth=None, max_depth=None, 
             dataset_list.append(model_cls(data_file, transform=transform,
                                           normalize_depth=normalize_depth))
 
-        if len(dataset_list) > 1:
-            train_dataset = ConcatDataset(dataset_list)
-        else:
-            train_dataset = dataset_list[0]
+    if len(dataset_list) > 1:
+        train_dataset = ConcatDataset(dataset_list)
+    elif len(dataset_list) == 1:
+        train_dataset = dataset_list[0]
+    else:
+        raise ValueError("No dataset found")
+
     return train_dataset

@@ -165,6 +165,19 @@ class DINOV2Adapter(DINOV2):
         if isinstance(m, MSDeformAttn):
             m._reset_parameters()
 
+    def freeze_backbone(self):
+        """Freeze the backbone while keeping adapter components trainable."""
+        super().freeze_backbone()
+
+        # Unfreezes all adapter-specific components to ensure they remain
+        # trainable during fine-tuning.
+        self.level_embed.requires_grad = True
+        modules = [self.spm, self.interactions, self.up, self.norm1, self.norm2, self.norm3, self.norm4]
+        for m in modules:
+            for p in m.parameters():
+                p.requires_grad = True
+            m.train()
+
     def load_state_dict(self, state_dict, **kwargs):
         """Copy parameters and buffers from state_dict into this module and its descendants.
 

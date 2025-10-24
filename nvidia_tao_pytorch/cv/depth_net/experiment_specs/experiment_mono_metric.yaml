@@ -21,19 +21,19 @@ dataset:
     data_sources:
       - dataset_name: NYUDV2
         data_file: /data/splits/nyu_depth_v2_splits/test_files_with_gt.txt
-    batch_size: 10
+    batch_size: 1
   infer_dataset:
     data_sources:
       - dataset_name: NYUDV2
         data_file: /data/splits/nyu_depth_v2_splits/test_files_with_gt.txt
     batch_size: 10
 train:
+  log_every_n_steps: 100
   vis_step_interval: 100
   dataloader_visualize: True
-  pretrained_backbone_path: /models/RelativeDepthAnything/nvclip3.6m_fsdv2_v3_stereo/model_epoch_070_step_277113.pth
-  num_gpus: 4
+  num_gpus: 1
   num_nodes: 1
-  num_epochs: 10
+  num_epochs: 8
   activation_checkpoint: False
   optim:
     lr: 0.000005
@@ -41,9 +41,23 @@ train:
 model:
   model_type: MetricDepthAnything
   encoder: vitl
+  mono_backbone:
+    pretrained_path: /models/nv_releative_depth_anything_v1.pth
+    use_bn: False
+    use_clstoken: False
 evaluate:
   num_gpus: 1
   checkpoint: /results/metric_depth_anything/train/dn_model_latest.pth
 inference:
   num_gpus: 1
   checkpoint: /results/metric_depth_anything/train/dn_model_latest.pth
+  save_raw_pfm: False
+export:
+  gpu_id: 0
+  checkpoint: /results/metric_depth_anything/train/dn_model_latest.pth
+  onnx_file: /results/metric_depth_anything/export/dn_model_latest.onnx
+  input_channel: 3
+  input_width: 924
+  input_height: 518
+  opset_version: 16
+  on_cpu: False

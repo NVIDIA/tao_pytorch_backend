@@ -15,8 +15,10 @@
 """DepthNet dataloader module."""
 
 from nvidia_tao_pytorch.cv.depth_net.dataloader.pl_mono_data_module import MonoDepthNetDataModule
+from nvidia_tao_pytorch.cv.depth_net.dataloader.pl_stereo_data_module import StereoDepthNetDataModule
 
-_pl_data_modules = {'MonoDataset': MonoDepthNetDataModule}
+_pl_data_modules = {'MonoDataset': MonoDepthNetDataModule,
+                    'StereoDataset': StereoDepthNetDataModule}
 
 
 def build_pl_data_module(dataset_config):
