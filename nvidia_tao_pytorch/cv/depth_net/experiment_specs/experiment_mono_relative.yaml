@@ -3,29 +3,29 @@ dataset:
   dataset_name: MonoDataset
   train_dataset:
     data_sources:
-      - dataset_name: Middlebury
-        data_file: /data/Middlebury/test_clean.txt
+      - dataset_name: NYUDV2Relative
+        data_file: /data/splits/nyu_depth_v2_splits/train_files_with_gt.txt
     batch_size: 4
   val_dataset:
     data_sources:
-      - dataset_name: Middlebury
-        data_file: /data/Middlebury/test_clean.txt
+      - dataset_name: NYUDV2Relative
+        data_file: /data/splits/nyu_depth_v2_splits/test_files_with_gt.txt
     batch_size: 1
   test_dataset:
     data_sources:
-      - dataset_name: Middlebury
-        data_file: /data/Middlebury/test_clean.txt
-    batch_size: 10
+      - dataset_name: NYUDV2Relative
+        data_file: /data/splits/nyu_depth_v2_splits/test_files_with_gt.txt
+    batch_size: 1
   infer_dataset:
     data_sources:
-      - dataset_name: Middlebury
-        data_file: /data/Middlebury/test_clean.txt
+      - dataset_name: NYUDV2Relative
+        data_file: /data/splits/nyu_depth_v2_splits/test_files_with_gt.txt
     batch_size: 10
 train:
-  vis_step_interval: 1000
+  log_every_n_steps: 500
+  vis_step_interval: 500
   dataloader_visualize: True
-  pretrained_backbone_path: /models/dinov2_vitl14_pretrain.pth
-  num_gpus: 4
+  num_gpus: 1
   num_nodes: 1
   num_epochs: 10
   activation_checkpoint: False
@@ -35,16 +35,23 @@ train:
 model:
   model_type: RelativeDepthAnything
   encoder: vitl
+  mono_backbone:
+    pretrained_path: /models/dinov2_vitl14_pretrain.pth
+    use_bn: False
+    use_clstoken: False
 evaluate:
   num_gpus: 1
-  checkpoint: /results/relative_depth_anything/train/dn_model_latest.pth
+  checkpoint: /models/nv_releative_depth_anything_v1.pth
 inference:
   num_gpus: 1
-  checkpoint: /results/relative_depth_anything/train/dn_model_latest.pth
+  checkpoint: /nv_releative_depth_anything_v1.pth
+  save_raw_pfm: False
 export:
   gpu_id: 0
-  checkpoint: /results/relative_depth_anything/train/dn_model_latest.pth
-  onnx_file: /results/relative_depth_anything/export/dn_model_latest.onnx
+  checkpoint: /models/nv_releative_depth_anything_v1.pth
+  onnx_file: /results/relative_depth_anything/export/nv_releative_depth_anything_v1.onnx
   input_channel: 3
   input_width: 924
   input_height: 518
+  opset_version: 16
+  on_cpu: False

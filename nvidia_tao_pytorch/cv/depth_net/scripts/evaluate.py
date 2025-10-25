@@ -23,7 +23,7 @@ from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
 from nvidia_tao_pytorch.cv.depth_net.dataloader import build_pl_data_module
-from nvidia_tao_pytorch.cv.depth_net.utils.misc import parse_checkpoint
+from nvidia_tao_pytorch.cv.depth_net.utils.misc import parse_mono_depth_checkpoint
 from nvidia_tao_pytorch.cv.depth_net.model.build_pl_model import build_pl_model, get_pl_module
 
 
@@ -40,9 +40,10 @@ def run_experiment(experiment_config, key):
 
         if "pytorch-lightning_version" not in model_dict:
             # parse public checkpoint
-            modified_dict = parse_checkpoint(model_dict, experiment_config.model.model_type)
+            if experiment_config.model.model_type in ['MetricDepthAnything', 'RelativeDepthAnything']:
+                model_dict = parse_mono_depth_checkpoint(model_dict, experiment_config.model.model_type)
             model = build_pl_model(experiment_config)
-            model.load_state_dict(modified_dict, strict=True)
+            model.load_state_dict(model_dict, strict=True)
         else:
             model = get_pl_module(experiment_config).load_from_checkpoint(
                 model_path,

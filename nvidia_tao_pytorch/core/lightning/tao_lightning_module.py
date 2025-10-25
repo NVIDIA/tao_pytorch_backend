@@ -26,10 +26,40 @@ from nvidia_tao_pytorch.core.utilities import patch_decrypt_checkpoint
 
 
 class TAOLightningModule(pl.LightningModule):
-    """Common PTL module"""
+    """
+    Common PyTorch Lightning module for TAO (Train, Adapt, Optimize) workflows.
+
+    This class provides a standardized interface for training, validation, testing, and inference
+    tasks in the TAO framework. It includes built-in checkpoint management, status logging,
+    and data validation to ensure robust training workflows.
+
+    Attributes:
+        experiment_spec (dict): Complete experiment configuration including dataset, model,
+            training parameters, and results directory.
+        dataset_config (dict): Dataset-specific configuration extracted from experiment_spec.
+        model_config (dict): Model-specific configuration extracted from experiment_spec.
+        checkpoint_filename (str): Base filename for checkpoint files (must be set in subclasses).
+
+    Example:
+        >>> class MyModel(TAOLightningModule):
+        ...     def __init__(self, experiment_spec):
+        ...         super().__init__(experiment_spec)
+        ...         self.checkpoint_filename = "my_model"
+        ...         # Initialize your model components
+    """
 
     def __init__(self, experiment_spec, **kwargs):
-        """Init training"""
+        """
+        Initialize the TAO Lightning module.
+
+        Args:
+            experiment_spec (dict): Complete experiment configuration dictionary containing:
+                - dataset: Dataset configuration
+                - model: Model configuration
+                - train: Training parameters including checkpoint_interval
+                - results_dir: Directory to save results and checkpoints
+            **kwargs: Additional keyword arguments passed to the parent LightningModule
+        """
         super().__init__(**kwargs)
         self.experiment_spec = experiment_spec
         self.dataset_config = experiment_spec["dataset"]
@@ -38,10 +68,28 @@ class TAOLightningModule(pl.LightningModule):
         self.checkpoint_filename = None
 
     def configure_callbacks(self) -> Sequence[Callback] | pl.Callback:
-        """Configures logging and checkpoint-saving callbacks"""
+        """
+        Configure logging and checkpoint-saving callbacks for the training workflow.
+
+        This method is automatically called by PyTorch Lightning when trainer.fit() is invoked.
+        It sets up:
+        - Status logging for training progress
+        - Regular checkpoint saving based on epoch intervals
+        - Exception-based checkpoint saving for error recovery
+
+        Returns:
+            Sequence[Callback]: List of configured callbacks including:
+                - TAOStatusLogger: Logs training status and progress
+                - ModelCheckpoint: Saves model checkpoints at regular intervals
+                - TAOExceptionCheckpoint: Saves checkpoints on exceptions
+
+        Raises:
+            NotImplementedError: If checkpoint_filename is not set in the subclass __init__ method
+        """
         # This is called when trainer.fit() is called
 
         results_dir = self.experiment_spec["results_dir"]
+        checkpoint_interval_unit = self.experiment_spec["train"].get("checkpoint_interval_unit", "epoch")
         checkpoint_interval = self.experiment_spec["train"]["checkpoint_interval"]
 
         status_logger_callback = TAOStatusLogger(
@@ -56,7 +104,8 @@ class TAOLightningModule(pl.LightningModule):
             raise NotImplementedError("checkpoint_filename not set in __init__() of model")
         ModelCheckpoint.CHECKPOINT_NAME_LAST = f"{self.checkpoint_filename}_latest"
 
-        checkpoint_callback = ModelCheckpoint(every_n_epochs=checkpoint_interval,
+        checkpoint_callback = ModelCheckpoint(every_n_epochs=checkpoint_interval if checkpoint_interval_unit == "epoch" else None,
+                                              every_n_train_steps=checkpoint_interval if checkpoint_interval_unit == "step" else None,
                                               dirpath=results_dir,
                                               save_on_train_epoch_end=True,
                                               monitor=None,
@@ -72,11 +121,23 @@ class TAOLightningModule(pl.LightningModule):
 
         return [status_logger_callback, checkpoint_callback, exception_checkpoint_callback]
 
-    # These are necessary because we sometimes have drop_last=True for the dataloaders.
-    # When the dataset is smaller than the batch size, this leads to Lightning not
-    # doing the task since it can't fill up a batch. However, it reports completion,
-    # not failure. So, we do a manaul check and throw an error.
     def _dataloader_batch_check(self, dataloader, task):
+        """
+        Validate that the dataset size is sufficient for the specified batch size.
+
+        This method checks if the dataset contains enough samples to fill at least one batch
+        during training/validation/testing. This is particularly important when using
+        drop_last=True in dataloaders, as Lightning may report completion without actually
+        processing data if the batch cannot be filled.
+
+        Args:
+            dataloader: PyTorch DataLoader instance to validate
+            task (str): Description of the task being performed (e.g., "train", "validation")
+
+        Raises:
+            ValueError: If the dataset size is smaller than the total batch size across all devices
+            AssertionError: If the dataloader doesn't have a batch_sampler when batch_size is None
+        """
         batch_size = dataloader.batch_size
         # Using a BatchSampler
         if not batch_size:
@@ -90,39 +151,68 @@ class TAOLightningModule(pl.LightningModule):
                              f"({total_batch_size}). Not enough data for {task}.")
 
     def on_fit_start(self):
-        """Before training begins."""
+        """
+        Hook called before training begins.
+
+        Performs validation that the training dataloader has sufficient data to begin training.
+        This ensures that training doesn't start with insufficient data, which could lead to
+        silent failures or misleading completion reports.
+        """
         self._dataloader_batch_check(self.trainer.datamodule.train_dataloader(), "train")
 
     def on_validation_start(self):
-        """Before validation begins."""
+        """
+        Hook called before validation begins.
+
+        Performs validation that the validation dataloader has sufficient data to begin validation.
+        This ensures that validation doesn't start with insufficient data.
+        """
         self._dataloader_batch_check(self.trainer.datamodule.val_dataloader(), "validation")
 
     def on_test_start(self):
-        """Before testing begins."""
+        """
+        Hook called before testing begins.
+
+        Performs validation that the test dataloader has sufficient data to begin evaluation.
+        This ensures that testing doesn't start with insufficient data.
+        """
         self._dataloader_batch_check(self.trainer.datamodule.test_dataloader(), "evaluation")
 
     def on_predict_start(self):
-        """Before inference begins."""
+        """
+        Hook called before inference/prediction begins.
+
+        Performs validation that the prediction dataloader has sufficient data to begin inference.
+        This ensures that inference doesn't start with insufficient data.
+        """
         self._dataloader_batch_check(self.trainer.datamodule.predict_dataloader(), "inference")
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """
-        Encrypt the checkpoint. The encryption is done in TLTCheckpointConnector.
+        Hook called when saving a checkpoint.
+
+        In the TAO framework, checkpoint encryption is handled by TLTCheckpointConnector,
+        so this method is intentionally left empty. Subclasses can override this method
+        to add custom checkpoint processing logic if needed.
 
         Args:
-            checkpoint (dict): The checkpoint to save.
+            checkpoint (dict): The checkpoint dictionary to be saved
         """
         pass
 
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """
-        Decrypt the checkpoint.
+        Hook called when loading a checkpoint.
+
+        This method handles checkpoint decryption if the checkpoint is encrypted.
+        It retrieves the encryption key from TLTPyTorchCookbook and decrypts the
+        checkpoint state dict before loading.
 
         Args:
-            checkpoint (dict): The checkpoint to load.
+            checkpoint (dict): The checkpoint dictionary to be loaded
 
         Raises:
-            PermissionError: If the checkpoint is encrypted and the encryption key is not available.
+            PermissionError: If the checkpoint is encrypted and the encryption key is not available
         """
         if checkpoint.get("state_dict_encrypted", False):
             # Retrieve encryption key from TLTPyTorchCookbook.

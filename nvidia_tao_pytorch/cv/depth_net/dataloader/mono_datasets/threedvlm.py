@@ -16,7 +16,7 @@
 
 import numpy as np
 import torch
-from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import read_image, read_gt_3dvlm
+from nvidia_tao_pytorch.cv.depth_net.dataloader.utils.frame_utils import read_image, read_gt_3dvlm
 from nvidia_tao_pytorch.cv.depth_net.dataloader.mono_datasets.base_relative_mono import BaseRelativeMonoDataset
 
 
@@ -64,11 +64,9 @@ class ThreeDVLM(BaseRelativeMonoDataset):
             sample['disparity'] = torch.from_numpy(sample['disparity'])  # (1, H, W)
             valid_mask = sample['disparity'] < 1000  # (1, H, W)
             sample['disparity'][valid_mask == 0] = 0
-
-        if "valid_mask" in sample:
             sample['valid_mask'] = valid_mask.squeeze(0)  # (B, H, W)
         else:
-            valid_mask = torch.ones(sample['disparity'].shape[1], sample['disparity'].shape[2]).bool()
+            valid_mask = torch.ones(image_size[0], image_size[1]).bool()
             sample['valid_mask'] = valid_mask  # (B, H, W)
 
         sample['image_path'] = left_img_path

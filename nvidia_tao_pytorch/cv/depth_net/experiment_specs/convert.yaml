@@ -1,0 +1,60 @@
+
+# NYU-V2
+# results_dir: /datasets/DepthEvaluation/nyuv2/split
+# data_root: /datasets/DepthEvaluation/nyuv2/train
+# image_dir_pattern: [rgb_]
+# right_dir_pattern: []
+# depth_dir_pattern: [depth_]
+# nocc_dir_pattern:  [] 
+# nocc_extension: ''
+# image_extension: ''
+# depth_extension: ''
+# split_ratio: 0.8
+#
+# NV-Clip
+# results_dir: /data/nvclip_sample/split
+# data_root: /data/nvclip_sample/2023-commercial-no-wikimedia
+# image_dir_pattern: [jpg]
+# right_dir_pattern: []
+# depth_dir_pattern: [pfm]
+# nocc_dir_pattern:  [] 
+# nocc_extension: ''
+# image_extension: ''
+# depth_extension: ''
+# split_ratio: 0.8
+#
+# Middlebury
+# results_dir: /datasets/test_split/
+# data_root: /datasets/stereo_evaluation/Middlebury/2014b/MiddEval3/trainingQ
+# image_dir_pattern: [im0, 2014b/, MiddEval3/]
+# right_dir_pattern: [im1, 2014b/, MiddEval3/]
+# depth_dir_pattern: [disp0GT, 2014b/, MiddEval3/]
+# nocc_dir_pattern:  [mask0nocc, 2014b/, MiddEval3/] 
+# nocc_extension: ''
+# image_extension: 'png'
+# depth_extension: ''
+# split_ratio: 0.0
+#
+# Kitti2015
+# results_dir: /datasets/stereo_evaluation/kitti2015/split
+# data_root: /datasets/stereo_evaluation/kitti2015/
+# image_dir_pattern: [training, image_2]
+# right_dir_pattern: [training, image_3]
+# depth_dir_pattern: [training, disp_noc_0]
+# nocc_dir_pattern:  [] 
+# image_extension: '_10.png'
+# depth_extension: '_10.png'
+# nocc_extension: ''
+# split_ratio: 0.0
+#
+# Kitti2012
+# results_dir: /datasets/stereo_evaluation/kitti2012/split
+# data_root: /datasets/stereo_evaluation/kitti2012/
+# image_dir_pattern: [training, colored_0]
+# right_dir_pattern: [training, colored_1]
+# depth_dir_pattern: [training, disp_noc]
+# nocc_dir_pattern:  [] 
+# image_extension: '_10.png'
+# depth_extension: '_10.png'
+# nocc_extension: ''
+# split_ratio: 0.0

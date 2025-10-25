@@ -15,10 +15,12 @@
 """Build PyTorch lightning model module."""
 
 from nvidia_tao_pytorch.cv.depth_net.model.mono_depth.pl_mono_model import MonoDepthNetPlModel
+from nvidia_tao_pytorch.cv.depth_net.model.stereo_depth.pl_stereo_model import StereoDepthNetPlModel
 
 _pl_model_modules = {
     'MetricDepthAnything': MonoDepthNetPlModel,
-    'RelativeDepthAnything': MonoDepthNetPlModel
+    'RelativeDepthAnything': MonoDepthNetPlModel,
+    'FoundationStereo': StereoDepthNetPlModel
 }
 
 

@@ -456,3 +456,9 @@ class ChangeNetPlModel(TAOLightningModule):
     def on_save_checkpoint(self, checkpoint):
         """Save the checkpoint with model identifier."""
         checkpoint["tao_model"] = "visual_changenet_segment"
+
+        # Additional info to help with loading ViTAdapter.
+        model_config = self.experiment_spec.model
+        model_name = model_config.backbone['type']
+        if "radio" in model_name:
+            checkpoint["tao_model_type"] = "radio"

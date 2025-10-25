@@ -101,13 +101,17 @@ class SegFormer(nn.Module):
             self.backbone = cradio_vit_adapter_model_dict[self.model_name](
                 return_idx=return_interm_indices,
                 resolution=(img_size, img_size),
+                freeze_at=freeze_at,
                 activation_checkpoint=activation_checkpoint,
             )
         elif 'vit' in self.model_name:
             assert img_size % 32 == 0, "Input image resolution must be a multiple of 32 for ViT-Adapter"
             freeze_at = "all" if freeze_backbone else None
             self.backbone = vit_adapter_model_dict[self.model_name](
-                return_idx=return_interm_indices, resolution=img_size, activation_checkpoint=activation_checkpoint
+                return_idx=return_interm_indices,
+                resolution=img_size,
+                freeze_at=freeze_at,
+                activation_checkpoint=activation_checkpoint,
             )
         else:
             raise NotImplementedError('Bacbkbone name [%s] is not supported' % self.model_name)

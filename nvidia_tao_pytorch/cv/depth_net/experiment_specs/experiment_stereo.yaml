@@ -1,0 +1,82 @@
+results_dir: /data/result/new-test
+dataset:
+  train_dataset:
+    data_sources:
+      - dataset_name: FSD
+        data_file: /data/datasets/test_datasets/split/train_fsdv3.txt
+      - dataset_name: FSD
+        data_file: /data/datasets/test_datasets/split/train_fsdv2.txt
+      - dataset_name: Crestereo
+        data_file: /data/datasets/test_datasets/split/train_crestereo.txt
+      - dataset_name: IsaacRealDataset
+        data_file: /data/datasets/test_datasets/split/train_real.txt
+    batch_size: 1
+    augmentation:
+      crop_size: [320, 672]
+  val_dataset:
+    data_sources:
+      - dataset_name: FSD
+        data_file: /data/datasets/test_datasets/split/val_fsdv3.txt
+      - dataset_name: FSD
+        data_file: /data/datasets/test_datasets/split/val_fsdv2.txt
+      - dataset_name: Crestereo
+        data_file: /data/datasets/test_datasets/split/val_crestereo.txt
+      - dataset_name: IsaacRealDataset
+        data_file: /data/datasets/test_datasets/split/val_real.txt
+    batch_size: 1
+    augmentation:
+      crop_size: [320, 672]
+  test_dataset:
+    data_sources:
+      - dataset_name: Middlebury
+        data_file: /data/datasets/stereo_evaluation/split/middleburry_test.txt
+    batch_size: 1
+    augmentation:
+      crop_size: [320, 672]
+  infer_dataset:
+    data_sources:
+      - dataset_name: Eth3d
+        data_file: /data/datasets/stereo_evaluation/Eth3d/test.txt
+    batch_size: 1
+    augmentation:
+      crop_size: [320, 672]
+train:
+  num_gpus: 2
+  num_epochs: 6
+  num_nodes: 1
+  log_every_n_steps: 500
+  activation_checkpoint: False
+  vis_step_interval: 500
+  optim:
+    optimizer: AdamW
+    lr_scheduler: PolynomialLR
+    lr: 0.00001
+    lr_decay: 0.90
+    warmup_steps: 20
+    lr_step_size: 1000
+model:
+  model_type: FoundationStereo
+  stereo_backbone:
+    depth_anything_v2_pretrained_path: /data/checkpoints/depth_anything_v2_vits.pth
+    #edgenext_pretrained_path: /data/checkpoints/model_epoch_edgenext.pth
+    use_bn: False
+    use_clstoken: False
+  encoder: vits
+evaluate:
+  num_gpus: 1
+  batch_size: 1
+  checkpoint: /data/checkpoints/model_epoch_003_step_21600.pth
+inference:
+  save_raw_pfm: True
+  num_gpus: 1
+  num_nodes: 1
+  checkpoint: /data/checkpoints/model_epoch_003_step_21600.pth
+export:
+ checkpoint: /data/checkpoints/model_epoch_003_step_21600.pth
+ onnx_file: /data/checkpoints/model_onnx.onnx
+ valid_iters: 22
+ input_channel: 3
+ input_width: 416
+ input_height: 768
+ opset_version: 16
+ on_cpu: False

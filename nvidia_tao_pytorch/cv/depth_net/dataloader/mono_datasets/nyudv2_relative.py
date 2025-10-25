@@ -19,10 +19,25 @@ import torch
 from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import read_gt_nyudv2, read_image
 from nvidia_tao_pytorch.cv.depth_net.utils.misc import apply_3d_mask
 from nvidia_tao_pytorch.cv.depth_net.dataloader.mono_datasets.base_relative_mono import BaseRelativeMonoDataset
+from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import depth_to_disparity
 
 
 class NYUDV2Relative(BaseRelativeMonoDataset):
     """Dataset class for NYUDV2, providing ground truth in Metric Depth format."""
+
+    def __init__(self, data_file, transform, normalize_depth=False):
+        """Initialize the NYUDV2Relative dataset.
+
+        Args:
+            data_file (str): path to the data file.
+            transform (callable): augmentations to apply.
+            normalize_depth (bool): whether to normalize the depth.
+        """
+        super().__init__(data_file, transform, normalize_depth)
+        self.normalize_depth = normalize_depth
+        # hard-coded min,max depth value for NYUDV2 dataset
+        self.min_depth = 1e-3
+        self.max_depth = 10.0
 
     def __getitem__(self, index):
         """Get item from the NYUDV2 dataset.
@@ -48,7 +63,7 @@ class NYUDV2Relative(BaseRelativeMonoDataset):
         image_size = left_image.shape[:2]
 
         if depth_path is not None:
-            depth = np.array(read_gt_nyudv2(depth_path, normalize_depth=self.normalize_depth, return_disparity=True))
+            depth = np.array(read_gt_nyudv2(depth_path, normalize_depth=self.normalize_depth, return_disparity=False))
             depth_dict = {'disparity': depth}
         else:
             depth_dict = {}
@@ -69,9 +84,11 @@ class NYUDV2Relative(BaseRelativeMonoDataset):
             eval_mask = eval_mask.reshape(valid_mask.shape)
             valid_mask = torch.logical_and(valid_mask, eval_mask)
             sample['valid_mask'] = valid_mask.squeeze(0)  # (B, H, W)
-            sample['disparity'] = apply_3d_mask(depth, valid_mask)
+            # convert depth to disparity after applying valid mask
+            sample['disparity'] = depth_to_disparity(apply_3d_mask(depth, valid_mask))
         else:
-            valid_mask = torch.ones(sample['disparity'].shape[1], sample['disparity'].shape[2]).bool()
+            # No GT provided, set valid mask to all 1s
+            valid_mask = torch.ones(image_size[0], image_size[1]).bool()
             sample['valid_mask'] = valid_mask  # (B, H, W)
 
         sample['image_path'] = left_img_path

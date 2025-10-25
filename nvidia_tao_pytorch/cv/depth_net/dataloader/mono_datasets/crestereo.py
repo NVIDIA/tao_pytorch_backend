@@ -14,7 +14,7 @@
 
 """Dataset Class for Crestereo data."""
 
-from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import read_gt_crestereo
+from nvidia_tao_pytorch.cv.depth_net.dataloader.utils.frame_utils import read_gt_crestereo
 from nvidia_tao_pytorch.cv.depth_net.dataloader.mono_datasets.base_relative_mono import BaseRelativeMonoDataset
 
 

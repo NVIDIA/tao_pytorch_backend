@@ -21,6 +21,24 @@ import os
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.core.utilities import update_results_dir
 
+# Import Hydra exception classes for config error handling
+try:
+    from hydra.errors import ConfigCompositionException, MissingConfigException
+    from omegaconf.errors import ConfigKeyError, MissingMandatoryValue, UnsupportedInterpolationType
+except ImportError:
+    # Fallback for older versions or if imports fail
+    ConfigCompositionException = Exception
+    MissingConfigException = Exception
+    ConfigKeyError = Exception
+    MissingMandatoryValue = Exception
+    UnsupportedInterpolationType = Exception
+
+# Import validation error classes
+try:
+    from marshmallow.exceptions import ValidationError as MarshmallowValidationError
+except ImportError:
+    MarshmallowValidationError = Exception
+
 
 def monitor_status(name='module name', mode='train'):
     """Status monitoring decorator."""
@@ -60,13 +78,43 @@ def monitor_status(name='module name', mode='train'):
                     )
             except (KeyboardInterrupt, SystemError):
                 s_logger.write(
-                    message=f"{mode.capitalize()} was interrupted",
+                    message=f"User/System interruption: {mode.capitalize()} was interrupted",
                     verbosity_level=status_logging.Verbosity.INFO,
                     status_level=status_logging.Status.FAILURE
                 )
-            except Exception as e:
+            except (
+                ConfigCompositionException,
+                MissingConfigException,
+                ConfigKeyError,
+                MissingMandatoryValue,
+                UnsupportedInterpolationType,
+            ) as e:
                 s_logger.write(
-                    message=str(e),
+                    message=f"Configuration error: {str(e)}",
+                    status_level=status_logging.Status.FAILURE
+                )
+                raise e
+            except NotImplementedError as e:
+                s_logger.write(
+                    message=f"Feature not implemented: {str(e)}",
+                    status_level=status_logging.Status.FAILURE
+                )
+                raise e
+            except (ValueError, TypeError) as e:
+                s_logger.write(
+                    message=f"Parameter validation error: {str(e)}",
+                    status_level=status_logging.Status.FAILURE
+                )
+                raise e
+            except (FileNotFoundError, PermissionError, OSError, IOError) as e:
+                s_logger.write(
+                    message=f"File system error: {str(e)}",
+                    status_level=status_logging.Status.FAILURE
+                )
+                raise e
+            except MarshmallowValidationError as e:
+                s_logger.write(
+                    message=f"Schema validation error: {str(e)}",
                     status_level=status_logging.Status.FAILURE
                 )
                 raise e

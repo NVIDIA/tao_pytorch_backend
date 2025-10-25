@@ -268,6 +268,7 @@ def launch(args, unknown_args, subtasks, network=None):
         call = "python " + script + script_args + unknown_args_as_str
 
     process_passed = False
+    user_error = False
     start = time()
     progress_bar_pattern = re.compile(r"Epoch \d+: \s*\d+%|\[.*\]")
 
@@ -314,9 +315,18 @@ def launch(args, unknown_args, subtasks, network=None):
     except (KeyboardInterrupt, SystemExit):
         logging.exception("Command was interrupted")
         process_passed = True
-    except subprocess.CalledProcessError as e:
-        if e.output is not None:
-            logging.exception(e.output)
+    except Exception as e:
+        # Check if the exception is a user configuration error
+        error_message = str(e)
+        user_error = any(keyword in error_message for keyword in [
+            "Configuration error",
+            "Feature not implemented",
+            "Parameter validation error",
+            "File system error",
+            "Schema validation error"
+        ])
+
+        logging.exception(e)
         process_passed = False
 
     end = time()
@@ -334,6 +344,7 @@ def launch(args, unknown_args, subtasks, network=None):
             num_gpus=num_gpus,
             time_lapsed=time_lapsed,
             pass_status=process_passed,
+            user_error=user_error
         )
     except Exception as e:
         logging.warning(

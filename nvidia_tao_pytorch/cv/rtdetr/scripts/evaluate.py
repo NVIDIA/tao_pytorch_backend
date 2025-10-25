@@ -22,7 +22,8 @@ from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation
 
 from nvidia_tao_core.config.rtdetr.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.rtdetr.dataloader.pl_od_data_module import ODDataModule
-from nvidia_tao_pytorch.cv.rtdetr.utils.model import create_model_from_config
+from nvidia_tao_pytorch.core.quantization.utils import create_quantized_model_from_config
+from nvidia_tao_pytorch.cv.rtdetr.model.pl_rtdetr_model import RTDETRPlModel
 
 
 def run_experiment(experiment_config):
@@ -35,7 +36,15 @@ def run_experiment(experiment_config):
         dm.setup(stage="test")
 
         # build model and load from the given checkpoint (supports quantized models)
-        model = create_model_from_config(experiment_config, model_path, task="evaluate")
+        if experiment_config.evaluate.is_quantized:
+            model = create_quantized_model_from_config(model_path, RTDETRPlModel, experiment_config=experiment_config)
+        else:
+            model = RTDETRPlModel.load_from_checkpoint(
+                model_path,
+                map_location="cpu",
+                experiment_spec=experiment_config,
+                export=False,
+            )
 
         trainer = Trainer(**trainer_kwargs)
 

@@ -21,6 +21,7 @@ import sys
 import tarfile
 import tempfile
 import urllib
+from typing import Any, Dict, List, Optional
 
 import requests
 import urllib3
@@ -89,19 +90,29 @@ def get_certificates():
     return tmp_dir
 
 
-def send_telemetry_data(network, action, gpu_data, num_gpus=1, time_lapsed=None, pass_status=False):
+def send_telemetry_data(
+    network: str,
+    action: str,
+    gpu_data: List[Dict[str, Any]],
+    num_gpus: int = 1,
+    time_lapsed: Optional[int] = None,
+    pass_status: bool = False,
+    user_error: bool = False
+) -> None:
     """Wrapper to send TAO telemetry data.
 
     Args:
-        network (str): Name of the network being run.
-        action (str): Subtask of the network called.
-        gpu_data (dict): Dictionary containing data about the GPU's in the machine.
-        num_gpus (int): Number of GPUs used in the job.
-        time_lapsed (int): Time lapsed.
-        pass_status (bool): Job passed or failed.
+        network: Name of the network being run.
+        action: Subtask of the network called.
+        gpu_data: List of dictionaries containing data about the GPUs in the machine.
+        num_gpus: Number of GPUs used in the job.
+        time_lapsed: Time lapsed in seconds.
+        pass_status: Job passed or failed.
+        user_error: Whether the error is a user error.
+        error_message: The error message.
 
     Returns:
-        No explicit returns.
+        None
     """
     urllib3.disable_warnings(urllib3.exceptions.SubjectAltNameWarning)
     if os.getenv('TELEMETRY_OPT_OUT', "no").lower() in ["no", "false", "0"]:
@@ -111,7 +122,8 @@ def send_telemetry_data(network, action, gpu_data, num_gpus=1, time_lapsed=None,
             "action": action,
             "network": network,
             "gpu": [device["name"] for device in gpu_data[:num_gpus]],
-            "success": pass_status
+            "success": pass_status,
+            "user_error": user_error
         }
         if time_lapsed is not None:
             data["time_lapsed"] = time_lapsed

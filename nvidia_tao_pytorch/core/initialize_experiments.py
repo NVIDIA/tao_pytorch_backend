@@ -37,11 +37,13 @@ def initialize_train_experiment(cfg, key=None):
     total_epochs = cfg["train"]["num_epochs"]
     validation_interval = cfg["train"]["validation_interval"]
     checkpoint_interval = cfg["train"]["checkpoint_interval"]
+    checkpoint_interval_unit = cfg["train"].get("checkpoint_interval_unit", "epoch")
 
-    assert checkpoint_interval <= total_epochs, (
-        f"Checkpoint interval {checkpoint_interval} > Number of epochs {total_epochs}."
-        f"Please set experiment_config.train.checkpoint_interval <= {total_epochs}"
-    )
+    if checkpoint_interval_unit == "epoch":
+        assert checkpoint_interval <= total_epochs, (
+            f"Checkpoint interval {checkpoint_interval} > Number of epochs {total_epochs}."
+            f"Please set experiment_config.train.checkpoint_interval <= {total_epochs}"
+        )
     assert validation_interval <= total_epochs, (
         f"Validation interval {validation_interval} > Number of epochs {total_epochs}."
         f"Please set experiment_config.train.validation_interval <= {total_epochs}"
@@ -79,6 +81,7 @@ def initialize_train_experiment(cfg, key=None):
                 project=wandb_config.project,
                 entity=wandb_config.entity,
                 name=wandb_config.name,
+                run_id=wandb_config.run_id,
                 results_dir=results_dir,
                 wandb_logged_in=wandb_logged_in,
                 tags=wandb_config.tags,

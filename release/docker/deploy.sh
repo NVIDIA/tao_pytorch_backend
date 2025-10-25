@@ -5,7 +5,7 @@ set -eo pipefail
 
 registry="nvcr.io"
 pytorch_version="2.1.0"
-tao_version="6.25.9"
+tao_version="6.25.7"
 repository="nvstaging/tao/tao-toolkit-pyt"
 build_id="01"
 tag="v${tao_version}-pyt${pytorch_version}-py3-${build_id}"
@@ -16,7 +16,6 @@ BUILD_DOCKER="0"
 BUILD_WHEEL="0"
 PUSH_DOCKER="0"
 FORCE="0"
-CUSTOM_TAG_ARG=""
 
 # Required for tao-core and tao-converter since they are submodules.
 if [ $SKIP_SUBMODULE_INIT = "0" ]; then
@@ -60,11 +59,6 @@ while [[ $# -gt 0 ]]
         PUSH_DOCKER="0"
         shift # past argument
         ;;
-        --tag)
-        CUSTOM_TAG_ARG="$2"
-        shift # past argument
-        shift # past value
-        ;;
         --default)
         BUILD_DOCKER="0"
         RUN_DOCKER="1"
@@ -79,11 +73,6 @@ while [[ $# -gt 0 ]]
     esac
 done
 
-# Prepare the tag option for the tao_pt command
-TAG_OPTION=""
-if [ -n "$CUSTOM_TAG_ARG" ]; then
-    TAG_OPTION="--tag $CUSTOM_TAG_ARG"
-fi
 
 if [ $BUILD_DOCKER = "1" ]; then
     echo "Building base docker ..."
@@ -99,12 +88,12 @@ if [ $BUILD_DOCKER = "1" ]; then
         fi
         echo "Building source code wheel ..."
         # tao_pt --env 'TORCH_CUDA_ARCH_LIST="5.3 6.0 6.1 7.0 7.5 8.0 8.6 9.0"' -- bash /tao-pt/release/docker/build_wheel.sh
-        tao_pt $TAG_OPTION -- python setup.py bdist_wheel
+        tao_pt -- python setup.py bdist_wheel
     else
         echo "Skipping wheel builds ..."
     fi
     
-    docker build -f $NV_TAO_PYTORCH_TOP/release/docker/Dockerfile -t $registry/$repository:$tag $NO_CACHE --network=host $NV_TAO_PYTORCH_TOP/.
+    docker build --pull -f $NV_TAO_PYTORCH_TOP/release/docker/Dockerfile -t $registry/$repository:$tag $NO_CACHE --network=host $NV_TAO_PYTORCH_TOP/.
 
     if [ $PUSH_DOCKER = "1" ]; then
         echo "Pusing docker ..."
@@ -116,8 +105,8 @@ if [ $BUILD_DOCKER = "1" ]; then
     if [ $BUILD_WHEEL = "1" ]; then
         echo "Cleaning wheels ..."
         # running cleanup
-        tao_pt $TAG_OPTION -- bash -c "'rm -rf *.egg-info'"
-        tao_pt $TAG_OPTION -- bash -c "'rm -rf build/ dist/ *_build '"
+        tao_pt -- bash -c "'rm -rf *.egg-info'"
+        tao_pt -- bash -c "'rm -rf build/ dist/ *_build '"
     else
         echo "Skipping wheel cleaning ..."
     fi

@@ -37,44 +37,58 @@ class StateDictAdapter:
     appropriate prefixes from keys.
 
     Attributes:
-        supported (dict): Dictionary mapping model names to their prefixes.
+        supported (dict): Dictionary mapping model names (and optional model
+            types) to their prefixes.
 
     Example:
         >>> adapter = StateDictAdapter()
         >>> adapter.add("mae", "model.encoder.")
         >>> adapter.add("classification", "model.")
+        >>> adapter.add("visual_changenet_classify", "model.backbone.radio.", model_type="radio_learnable")
         >>>
         >>> # Process a state dict
         >>> state_dict = {"model.encoder.layer1.weight": tensor, "other.weight": tensor}
         >>> cleaned_dict = adapter("mae", state_dict)
         >>> # Result: {"layer1.weight": tensor, "other.weight": tensor}
+        >>>
+        >>> # Process a state dict with the provided model type.
+        >>> state_dict = {"model.backbone.radio.radio.model.blocks.0.attn.qkv.weight": tensor, "other.weight": tensor}
+        >>> cleaned_dict = adapter("visual_changenet_classify", state_dict, model_type="radio_learnable")
+        >>> # Result: {"radio.model.blocks.0.attn.qkv.weight": tensor, "other.weight": tensor}
     """
 
     def __init__(self):
         """Initialize the PTM adapter with an empty registry."""
-        self.supported = {}
+        self.supported = {}  # Key: (model_name, model_type).
 
-    def add(self, model_name, prefix):
+    def add(self, model_name, prefix, model_type=None):
         """Add a model and its corresponding prefix to the supported registry.
 
         Args:
             model_name (str): Name of the model to add support for.
             prefix (str): The prefix string that should be stripped from
                 state dictionary keys for this model.
+            model_type (str): Optional name of the model type to add support
+                for. This is useful when providing `model_name` is not
+                sufficient to uniquely identify the model.
 
         Raises:
             ValueError: If the model_name is already registered.
         """
-        if model_name not in self.supported:
-            self.supported[model_name] = prefix
+        model_name = str(model_name)
+        model_type = str(model_type) if model_type is not None else None
+        if (model_name, model_type) not in self.supported:
+            self.supported[(model_name, model_type)] = prefix
         else:
-            raise ValueError(f"{model_name} is already supported")
+            raise ValueError(f"{(model_name, model_type)} is already supported")
 
-    def get(self, model_name):
+    def get(self, model_name, model_type=None):
         """Get the prefix for a specific model.
 
         Args:
             model_name (str): Name of the model to get the prefix for.
+            model_type (str): Optional name of the model type to get the prefix
+                for.
 
         Returns:
             str: The prefix string for the specified model.
@@ -82,11 +96,11 @@ class StateDictAdapter:
         Raises:
             ValueError: If the model_name is not registered.
         """
-        if model_name not in self.supported:
-            raise ValueError(f"{model_name} is not supported")
-        return self.supported[model_name]
+        if (model_name, model_type) not in self.supported:
+            raise ValueError(f"{(model_name, model_type)} is not supported")
+        return self.supported[(model_name, model_type)]
 
-    def __call__(self, model_name, state_dict):
+    def __call__(self, model_name, state_dict, model_type=None):
         """Process a state dictionary by removing model-specific prefixes.
 
         This method removes the registered prefix from all keys in the state
@@ -97,6 +111,7 @@ class StateDictAdapter:
             model_name (str): Name of the model whose prefix should be removed.
             state_dict (dict): The state dictionary to process, typically
                 containing model weights and parameters.
+            model_type (str): Optional name of the model type.
 
         Returns:
             dict: A new state dictionary with prefixes removed from applicable keys.
@@ -105,7 +120,7 @@ class StateDictAdapter:
         Raises:
             ValueError: If the model_name is not registered.
         """
-        prefix = self.get(model_name)
+        prefix = self.get(model_name, model_type=model_type)
         keys = list(state_dict.keys())
         for k in keys:
             v = state_dict.pop(k)
@@ -156,8 +171,9 @@ def load_pretrained_weights(path_or_checkpoint: Union[FILE_LIKE, Mapping[str, An
         checkpoint = patch_decrypt_checkpoint(checkpoint, key)
 
     tao_model = checkpoint.get("tao_model", None)
+    tao_model_type = checkpoint.get("tao_model_type", None)
     if tao_model is not None:  # for TAO models
-        state_dict = ptm_adapter(tao_model, checkpoint["state_dict"])
+        state_dict = ptm_adapter(tao_model, checkpoint["state_dict"], model_type=tao_model_type)
     else:  # for public models
         if 'state_dict' in checkpoint:
             state_dict = checkpoint['state_dict']

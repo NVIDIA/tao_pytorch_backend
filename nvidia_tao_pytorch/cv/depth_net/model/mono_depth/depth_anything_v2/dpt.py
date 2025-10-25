@@ -20,6 +20,7 @@ import torch.nn.functional as F
 
 from nvidia_tao_pytorch.cv.depth_net.model.mono_depth.depth_anything_v2.dinov2 import DINOV2
 from nvidia_tao_pytorch.cv.depth_net.model.mono_depth.depth_anything_v2.blocks import _make_fusion_block, _make_scratch
+from nvidia_tao_pytorch.cv.depth_net.utils.misc import parse_lighting_checkpoint_to_backbone, parse_public_checkpoint_to_backbone
 
 
 class MetricDPTHead(nn.Module):
@@ -250,7 +251,7 @@ class DPTHead(nn.Module):
             nn.Identity(),
         )
 
-    def forward(self, out_features, patch_h, patch_w):
+    def forward(self, out_features, patch_h, patch_w, normalize_output=False):
         """
         Forward pass for relative depth prediction head.
 
@@ -292,7 +293,15 @@ class DPTHead(nn.Module):
 
         out = self.scratch.output_conv1(path_1)
         out = F.interpolate(out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True)
-        out = self.scratch.output_conv2(out)
+        if normalize_output:
+            depth = self.scratch.output_conv2(out)
+            depth = F.relu(depth)
+            disp = 1 / depth
+            disp[depth == 0] = 0
+            disp = disp / disp.max()
+            return out, path_1, path_2, path_3, path_4, disp
+        else:
+            out = self.scratch.output_conv2(out)
 
         return out
 
@@ -315,9 +324,8 @@ class RelativeDepthAnythingV2(nn.Module):
         """
         super(RelativeDepthAnythingV2, self).__init__()
         encoder = model_config['encoder']
-        use_bn = model_config['use_bn']
-        use_clstoken = model_config['use_clstoken']
-
+        use_bn = model_config['mono_backbone']['use_bn']
+        use_clstoken = model_config['mono_backbone']['use_clstoken']
         self.encoder = encoder
         self.max_depth = max_depth
 
@@ -332,6 +340,23 @@ class RelativeDepthAnythingV2(nn.Module):
         out_channels = self.model_configs[self.encoder]['out_channels']
 
         self.pretrained = DINOV2(model_name=encoder, export=export)
+
+        if model_config['mono_backbone']['pretrained_path']:
+            model_dict = torch.load(model_config['mono_backbone']['pretrained_path'], map_location='cpu')
+            if "pytorch-lightning_version" in model_dict:
+                # parse pytorch lightning checkpoint for relative/metric depth
+                parsed_model_dict = parse_lighting_checkpoint_to_backbone(model_dict['state_dict'])
+                self.pretrained.load_state_dict(parsed_model_dict, strict=True)
+            else:
+                # parse public checkpoint for relative depth
+                if model_config['model_type'] == 'RelativeDepthAnything':
+                    self.pretrained.load_state_dict(model_dict, strict=True)
+                elif model_config['model_type'] == 'MetricDepthAnything':
+                    # parse public checkpoint for metric depth
+                    parsed_model_dict = parse_public_checkpoint_to_backbone(model_dict)
+                    self.pretrained.load_state_dict(parsed_model_dict, strict=True)
+                else:
+                    raise NotImplementedError(f"Model type {model_config['model_type']} not implemented")
 
         self.depth_head = DPTHead(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken)
 
@@ -380,9 +405,11 @@ class MetricDepthAnythingV2(RelativeDepthAnythingV2):
         super().__init__(model_config, max_depth, export=export)
         features = self.model_configs[self.encoder]['features']
         out_channels = self.model_configs[self.encoder]['out_channels']
-        use_bn = model_config['use_bn']
-        use_clstoken = model_config['use_clstoken']
+        use_bn = model_config['mono_backbone']['use_bn']
+        use_clstoken = model_config['mono_backbone']['use_clstoken']
 
+        # remove depth_head attribute from parent class and create metric_depth_head attribute.
+        delattr(self, 'depth_head')
         self.metric_depth_head = MetricDPTHead(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken)
 
     def forward(self, x):

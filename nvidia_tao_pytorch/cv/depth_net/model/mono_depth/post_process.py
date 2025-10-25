@@ -93,7 +93,10 @@ class PostProcess(nn.Module):
             # interpolate depth_pred to original size
             depth_pred = F.interpolate(depth_pred[None, None, ...], (image_size[i][0], image_size[i][1]), mode='bilinear', align_corners=True).squeeze(0).squeeze(0)
             input_image = F.interpolate(input_image[None, ...], (image_size[i][0], image_size[i][1]), mode='bilinear', align_corners=True).squeeze(0)
-            gt = gt_depth[i].squeeze(0)
+            if gt_depth is not None:
+                gt = gt_depth[i].squeeze(0)
+            else:
+                gt = None
 
             pred_dict = {"depth_pred": depth_pred, "image": input_image, "image_names": image_names[i], "image_size": image_size[i], "disp_gt": gt, "valid_mask": valid_mask[i]}
             pred_results.append(pred_dict)

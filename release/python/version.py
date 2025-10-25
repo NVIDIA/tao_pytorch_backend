@@ -17,7 +17,7 @@
 
 MAJOR = "6"
 MINOR = "25"
-PATCH = "9"
+PATCH = "10"
 PRE_RELEASE = ''
 
 

@@ -23,7 +23,7 @@ import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 
 from nvidia_tao_pytorch.cv.depth_net.model.mono_depth import get_model_loss_class
 from nvidia_tao_pytorch.cv.depth_net.model.mono_depth.post_process import PostProcess
-from nvidia_tao_pytorch.cv.depth_net.evaluation.evaluator import DepthMetric
+from nvidia_tao_pytorch.cv.depth_net.evaluation.mono_evaluator import MonoDepthEvaluator
 from nvidia_tao_pytorch.cv.depth_net.utils.misc import save_inference_batch, vis_mono
 from nvidia_tao_pytorch.cv.depth_net.model.lr_scheduler import build_lr_scheduler
 
@@ -39,8 +39,8 @@ class MonoDepthNetPlModel(TAOLightningModule):
         model (nn.Module): The depth prediction model.
         criterion (nn.Module): Loss function for training.
         post_processors (PostProcess): Post-processing utilities for depth maps.
-        val_evaluator (DepthMetric): Validation metrics evaluator.
-        test_evaluator (DepthMetric): Test metrics evaluator.
+        val_evaluator (MonoDepthEvaluator): Validation metrics evaluator.
+        test_evaluator (MonoDepthEvaluator): Test metrics evaluator.
     """
 
     def __init__(self, experiment_spec, export=False):
@@ -132,7 +132,7 @@ class MonoDepthNetPlModel(TAOLightningModule):
         optim_dict = {}
         optim_dict["optimizer"] = optim
         scheduler_type = self.train_config['optim']['lr_scheduler']
-        lr_scheduler = build_lr_scheduler(optim, scheduler_type, self.train_config, len(self.trainer.datamodule.train_dataloader()))
+        lr_scheduler = build_lr_scheduler(optim, scheduler_type, self.train_config, self.trainer)
 
         optim_dict["lr_scheduler"] = {'scheduler': lr_scheduler, 'interval': 'step'}
         optim_dict['monitor'] = self.train_config['optim']['monitor_name']
@@ -219,7 +219,10 @@ class MonoDepthNetPlModel(TAOLightningModule):
         augmentation configuration for the current epoch.
         """
         self.val_aug_config = self.dataset_config["val_dataset"]["augmentation"]
-        self.val_evaluator = DepthMetric(align_gt=self.align_gt, min_depth=self.min_depth, max_depth=self.max_depth, sync_on_compute=False).to(self.device)
+        self.val_evaluator = MonoDepthEvaluator(align_gt=self.align_gt,
+                                                min_depth=self.min_depth,
+                                                max_depth=self.max_depth,
+                                                sync_on_compute=False).to(self.device)
 
     def validation_step(self, batch, batch_idx):
         """
@@ -258,7 +261,7 @@ class MonoDepthNetPlModel(TAOLightningModule):
         disp_pred = self.model(image1.contiguous())
         post_processed_results = self.post_processors(image1, disp_pred, image_size, valid,
                                                       resized_size=None, gt_depth=disp_gt, image_names=image_names)
-        self.val_evaluator.update(post_processed_results)
+        self.val_evaluator.update(post_processed_results=post_processed_results)
 
         # disp_pred (B, 1, W, H), dist_gt (B, 1, H, W)
         disp_pred = F.interpolate(disp_pred[:, None], disp_gt.shape[-2:], mode='bilinear', align_corners=True)
@@ -293,6 +296,8 @@ class MonoDepthNetPlModel(TAOLightningModule):
         if not self.trainer.sanity_checking:
             self.status_logging_dict = {}
             self.status_logging_dict["val/loss"] = average_val_loss
+            for name, metric in results_metric.items():
+                self.status_logging_dict[f"val/{name}"] = metric
             status_logging.get_status_logger().kpi = self.status_logging_dict
             status_logging.get_status_logger().write(
                 message="Eval metrics generated.",
@@ -362,7 +367,9 @@ class MonoDepthNetPlModel(TAOLightningModule):
         output_dir = os.path.join(self.experiment_spec.results_dir, 'inference_images')
         os.makedirs(output_dir, exist_ok=True)
         self.infer_aug_config = self.dataset_config["infer_dataset"]["augmentation"]
-        save_inference_batch(outputs, output_dir, aug_config=self.infer_aug_config, normalize_depth=self.dataset_config["normalize_depth"])
+        save_inference_batch(outputs, output_dir, aug_config=self.infer_aug_config,
+                             normalize_depth=self.dataset_config["normalize_depth"],
+                             save_raw_pfm=self.experiment_spec["inference"]["save_raw_pfm"])
 
     def on_test_epoch_start(self) -> None:
         """
@@ -370,7 +377,10 @@ class MonoDepthNetPlModel(TAOLightningModule):
         configuration for the current epoch.
         """
         self.test_aug_config = self.dataset_config["test_dataset"]["augmentation"]
-        self.test_evaluator = DepthMetric(align_gt=self.align_gt, min_depth=self.min_depth, max_depth=self.max_depth, sync_on_compute=False).to(self.device)
+        self.test_evaluator = MonoDepthEvaluator(align_gt=self.align_gt,
+                                                 min_depth=self.min_depth,
+                                                 max_depth=self.max_depth,
+                                                 sync_on_compute=False).to(self.device)
 
     def test_step(self, batch, batch_idx):
         """
@@ -412,7 +422,7 @@ class MonoDepthNetPlModel(TAOLightningModule):
         resized_size = torch.stack(resized_size, dim=0)
         post_processed_results = self.post_processors(image1, disp_pred, image_size, valid_mask, resized_size=resized_size, gt_depth=disp_gt, image_names=image_names)
 
-        self.test_evaluator.update(post_processed_results)
+        self.test_evaluator.update(post_processed_results=post_processed_results)
 
     def on_test_epoch_end(self):
         """
@@ -425,6 +435,8 @@ class MonoDepthNetPlModel(TAOLightningModule):
 
         if not self.trainer.sanity_checking:
             self.status_logging_dict = {}
+            for name, metric in results_metric.items():
+                self.status_logging_dict[f"val/{name}"] = metric
             status_logging.get_status_logger().kpi = self.status_logging_dict
             status_logging.get_status_logger().write(
                 message="Test metrics generated.",

@@ -161,7 +161,11 @@ class ViTAdapter(VisionTransformer):
 
     def _get_pos_embed(self, pos_embed, H, W):
         pos_embed = pos_embed.reshape(
-            1, self.pretrain_size[0] // 16, self.pretrain_size[1] // 16, -1).permute(0, 3, 1, 2)
+            1,
+            self.pretrain_size[0] // self.patch_size,
+            self.pretrain_size[1] // self.patch_size,
+            -1,
+        ).permute(0, 3, 1, 2)
         pos_embed = F.interpolate(pos_embed, size=(H, W), mode='bicubic', align_corners=False).\
             reshape(1, -1, H * W).permute(0, 2, 1)
         return pos_embed

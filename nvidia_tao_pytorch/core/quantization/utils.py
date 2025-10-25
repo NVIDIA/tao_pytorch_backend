@@ -15,11 +15,13 @@
 """Utility functions for quantization.
 
 Provides helper routines shared across backends, such as matching modules against user-specified
-patterns.
+patterns and unified model creation for quantized models.
 """
 
 import fnmatch
+import torch
 import torch.nn as nn
+from nvidia_tao_pytorch.core.tlt_logging import logging
 
 
 def match_layer(module: nn.Module, module_name_in_graph: str, pattern: str) -> bool:
@@ -86,3 +88,54 @@ def match_layer(module: nn.Module, module_name_in_graph: str, pattern: str) -> b
         return True
 
     return False
+
+
+def create_quantized_model_from_config(model_path: str, model_class, **model_kwargs):
+    """Create a quantized model from configuration using a unified approach.
+
+    This function provides a generic boilerplate for creating quantized models that works
+    across different model types (classification, RT-DETR, etc.) by accepting the model
+    class as a parameter.
+
+    Parameters
+    ----------
+    model_path : str
+        Filesystem path to the quantized model artifact (e.g., ``.pth``). For ModelOpt
+        artifacts, the state dict is expected under the key ``"model_state_dict"``.
+    model_class : type
+        The Lightning model class to instantiate (e.g., ClassifierPlModel, RTDETRPlModel).
+    **model_kwargs
+        Keyword arguments to pass to the model class constructor, including experiment_config.
+
+    Returns
+    -------
+    LightningModule
+        Quantized LightningModule instance with loaded state dict.
+    """
+    logging.info(f"Creating quantized model from config, model_path: {model_path}")
+
+    # Extract experiment_config from model_kwargs
+    experiment_config = model_kwargs.pop('experiment_config')
+
+    # Import ModelQuantizer here to avoid circular import
+    from nvidia_tao_pytorch.core.quantization.quantizer import ModelQuantizer
+
+    # Build quantized model
+    model = model_class(experiment_config, **model_kwargs)
+    quantizer = ModelQuantizer(experiment_config.quantize)
+    model = quantizer.quantize_model(model)
+
+    # Load quantized state dict
+    state_dict = torch.load(model_path, map_location="cpu")
+
+    # Handle ModelOpt backend artifacts
+    backend = getattr(experiment_config.quantize, 'backend', None)
+    if backend == "modelopt" and isinstance(state_dict, dict) and "model_state_dict" in state_dict:
+        state_dict = state_dict["model_state_dict"]
+
+    # Prefix keys with "model." to match Lightning module structure
+    state_dict = {f"model.{k}": v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
+    logging.info("Quantized model loaded successfully.")
+
+    return model

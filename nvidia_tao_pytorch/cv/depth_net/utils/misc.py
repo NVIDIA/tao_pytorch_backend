@@ -19,6 +19,7 @@ import numpy as np
 import cv2
 import os
 import torch
+from nvidia_tao_pytorch.cv.depth_net.utils.frame_utils import write_pfm
 
 
 def apply_3d_mask(tensor, mask, value=0):
@@ -75,7 +76,7 @@ def sanity_check_data_model(gt_depth, model_type):
         return False
 
 
-def save_inference_batch(predictions, output_dir, aug_config,  normalize_depth=False):
+def save_inference_batch(predictions, output_dir, aug_config,  normalize_depth=False, save_raw_pfm=False):
     """Save batched inference in format.
 
     Args:
@@ -112,11 +113,18 @@ def save_inference_batch(predictions, output_dir, aug_config,  normalize_depth=F
         os.makedirs(output_annotate_root, exist_ok=True)
         output_image_name = os.path.join(output_annotate_root, basename + extension)
         disp_vis = vis_disparity(pred_depth.data.cpu().numpy(), normalize_depth=normalize_depth, valid_mask=valid_mask.data.cpu().numpy())
+
+        if save_raw_pfm:
+            output_pfm_name = output_image_name.replace('png', 'pfm').replace('jpg', 'pfm').replace('jpeg', 'pfm').replace("inference_images", "inference_pfm")
+            os.makedirs(os.path.dirname(output_pfm_name), exist_ok=True)
+            write_pfm(output_pfm_name, pred_depth.data.cpu().numpy())
+
         if disp_gt is not None:
             gt_vis = vis_disparity(disp_gt.data.cpu().numpy(), normalize_depth=normalize_depth, valid_mask=valid_mask.data.cpu().numpy())
             concat_img = np.concatenate([img1, gt_vis, disp_vis], axis=1).astype(np.uint8)
         else:
             concat_img = np.concatenate([img1, disp_vis], axis=1).astype(np.uint8)
+
         scale = 0.5
         concat_img = cv2.resize(concat_img, fx=scale, fy=scale, dsize=None)
         concat_img = cv2.cvtColor(concat_img, cv2.COLOR_RGB2BGR)
@@ -195,7 +203,7 @@ def vis_disparity(depth, normalize_depth=False, valid_mask=None):
     return vis
 
 
-def parse_checkpoint(model_dict, model_type):
+def parse_mono_depth_checkpoint(model_dict, model_type):
     """
     Parse public DepthAnythingV2 checkpoints.
     Public checkpoints are available from https://github.com/DepthAnything/Depth-Anything-V2
@@ -211,8 +219,45 @@ def parse_checkpoint(model_dict, model_type):
 
     final = {}
     for k, v in model_dict.items():
+        # append model prefix for public checkpoints to be compatible with our model definition
         k = f"model.{k}"
         if is_metric and "depth_head" in k:
             k = k.replace("depth_head", "metric_depth_head")
         final[k] = v
+    return final
+
+
+def parse_lighting_checkpoint_to_backbone(model_dict):
+    """
+    Parse PyTorch Lightning checkpoint to backbone dictionary.
+
+    Args:
+        model_dict (dict): Model dictionary.
+
+    Returns:
+        final (dict): Parsed model dictionary.
+    """
+    final = {}
+    for k, v in model_dict.items():
+        if 'pretrained.' in k:
+            k = k.replace("model.pretrained.", "")
+            final[k] = v
+    return final
+
+
+def parse_public_checkpoint_to_backbone(model_dict):
+    """
+    Parse public checkpoint to backbone dictionary.
+
+    Args:
+        model_dict (dict): Model dictionary.
+
+    Returns:
+        final (dict): Parsed model dictionary.
+    """
+    final = {}
+    for k, v in model_dict.items():
+        if 'pretrained.' in k:
+            k = k.replace("pretrained.", "")
+            final[k] = v
     return final
