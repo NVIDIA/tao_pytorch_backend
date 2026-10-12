@@ -176,14 +176,21 @@ class CoDETRPlModel(TAOLightningModule):
         param_dicts = []
         backbone_name = self.model_config.backbone
 
+        if backbone_name.startswith("vit"):
+            body = self.model.model.model.backbone[0].body
+            # ViTDetBackbone (vit_large_codetr) has no `depth` attribute.
+            num_layers = getattr(body, "depth", None) or len(body.blocks)
+
         for n, p in self.model.named_parameters():
             if not p.requires_grad:
                 continue
             if "backbone" not in n:
                 param_dicts.append({"params": [p]})
             elif backbone_name.startswith("vit"):
-                num_layers = self.model.model.model.backbone[0].body.depth
-                scale = get_vit_lr_decay_rate(n, lr_decay_rate=train_config.optim.layer_decay_rate,
+                # get_vit_lr_decay_rate expects DINO-level names ("model.backbone..."); the
+                # CoDETRModel wrapper adds one more "model." prefix.
+                scale = get_vit_lr_decay_rate(n[len("model."):],
+                                              lr_decay_rate=train_config.optim.layer_decay_rate,
                                               num_layers=num_layers)
                 param_dicts.append({"params": [p], "lr": train_config.optim.lr * scale})
             else:

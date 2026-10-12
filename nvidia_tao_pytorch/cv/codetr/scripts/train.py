@@ -18,7 +18,7 @@ from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.pl_od_data_module import ODDataModule
 from nvidia_tao_pytorch.cv.codetr.model.pl_codetr_model import CoDETRPlModel
-from nvidia_tao_pytorch.cv.codetr.model.utils import codetr_parser, ptm_adapter
+from nvidia_tao_pytorch.cv.codetr.model.utils import load_codetr_state_dict
 
 
 @experimental("CoDETR training is not extensively tested.")
@@ -42,24 +42,10 @@ def run_experiment(experiment_config, key, lightning_module=CoDETRPlModel):
     if pretrained_path:
         experiment_config.model.pretrained_backbone_path = None
         pt_model = lightning_module(experiment_config)
-        current_sd = pt_model.model.state_dict()
-        checkpoint = load_pretrained_weights(pretrained_path,
-                                             parser=codetr_parser,
-                                             ptm_adapter=ptm_adapter)
-        new_sd = {}
-        for k in sorted(current_sd.keys()):
-            v = checkpoint.get(k, None)
-            if v is not None and v.size() == current_sd[k].size():
-                new_sd[k] = v
-            else:
-                if v is not None:
-                    logging.warning("Skip layer %s: size mismatch %s vs %s",
-                                    k, list(v.size()), list(current_sd[k].size()))
-                else:
-                    logging.warning("Skip layer %s: not in checkpoint", k)
-                new_sd[k] = current_sd[k]
-        m = pt_model.model.load_state_dict(new_sd, strict=False)
-        logging.info("Loaded pretrained weights from %s\n%s", pretrained_path, m)
+        # Accepts TAO checkpoints and the reference Co-DETR release (mapped to TAO keys).
+        checkpoint = load_pretrained_weights(pretrained_path)
+        load_codetr_state_dict(pt_model, checkpoint, dec_layers=experiment_config.model.dec_layers)
+        logging.info("Loaded pretrained weights from %s", pretrained_path)
     else:
         pt_model = lightning_module(experiment_config)
 

@@ -4,47 +4,29 @@
 """Utility functions for CoDETR weight loading."""
 
 import re
-import logging
 
-logger = logging.getLogger(__name__)
+import torch
 
+from nvidia_tao_pytorch.core.tlt_logging import logging as logger
 
-def codetr_parser(state_dict):
-    """Strip common checkpoint wrappers from state dict.
+# Key prefixes that identify a reference (MMDetection) Co-DETR checkpoint.
+REFERENCE_KEY_PREFIXES = ("backbone.", "query_head.", "neck.", "bbox_head.")
 
-    Handles keys prefixed with 'model.', 'module.', or 'state_dict.'.
-
-    Args:
-        state_dict (dict): raw checkpoint dict.
-
-    Returns:
-        dict: cleaned state dict.
-    """
-    new_sd = {}
-    for k, v in state_dict.items():
-        # Strip Lightning PTL prefix
-        if k.startswith("model.model."):
-            k = k[len("model.model."):]
-        elif k.startswith("model."):
-            k = k[len("model."):]
-        elif k.startswith("module."):
-            k = k[len("module."):]
-        new_sd[k] = v
-    return new_sd
-
-
-def ptm_adapter(state_dict):
-    """Adapter for pretrained model keys — identity by default.
-
-    Override here if converting from a non-TAO checkpoint format.
-
-    Args:
-        state_dict (dict): state dict from codetr_parser.
-
-    Returns:
-        dict: adapted state dict.
-    """
-    return state_dict
+# Missing keys that are expected after loading a checkpoint: collab heads and
+# the downsample conv that the checkpoint does not provide, buffers, and
+# decoder heads that are tied to the loaded top-level heads.
+_EXPECTED_MISSING_PREFIXES = (
+    "model.collab_heads.",
+    "model.downsample.",
+)
+_EXPECTED_MISSING_SUBSTR = (
+    "rope_win.freqs",
+    "rope_glb.freqs",
+    "label_enc.weight",
+    "num_batches_tracked",
+    "transformer.decoder.bbox_embed",
+    "transformer.decoder.class_embed",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -302,3 +284,86 @@ def _map_single_key(key, num_backbone_stages, dec_layers):  # pylint: disable=R0
 
     # Unmapped — return as-is (will be caught by strict=False)
     return key
+
+
+def is_reference_codetr_checkpoint(state_dict):
+    """Return True if ``state_dict`` uses the reference (MMDetection) Co-DETR layout."""
+    return any(k.startswith(REFERENCE_KEY_PREFIXES) for k in state_dict)
+
+
+def load_codetr_state_dict(model, state_dict, dec_layers=6):
+    """Load a TAO or reference Co-DETR state dict into a ``CoDETRPlModel``.
+
+    Reference checkpoints (e.g. the Co-DETR authors' release on Hugging Face)
+    are detected by key prefix and mapped to TAO names. EMA keys are dropped,
+    ``label_enc`` is padded for the background token, and size-mismatched keys
+    (e.g. classification layers when ``num_classes`` changes) are skipped so
+    they keep their initialization.
+
+    Args:
+        model (CoDETRPlModel): model to load the weights into.
+        state_dict (dict): TAO (``model.model.model.*``) or reference
+            (``backbone.*``, ``query_head.*``, ...) state dict.
+        dec_layers (int): number of decoder layers, used to map reference heads.
+
+    Returns:
+        torch.nn.modules.module._IncompatibleKeys: missing and unexpected keys.
+    """
+    # EMA keys are flattened with underscores and are not usable directly.
+    ema_keys = [k for k in state_dict if k.startswith("ema_")]
+    if ema_keys:
+        logger.info("Dropping %d EMA keys from checkpoint.", len(ema_keys))
+        state_dict = {k: v for k, v in state_dict.items() if not k.startswith("ema_")}
+
+    if is_reference_codetr_checkpoint(state_dict):
+        logger.info("Detected reference Co-DETR checkpoint - mapping keys to TAO format.")
+        # num_backbone_stages: for FPN-style necks derive from neck.convs;
+        # for SFP-style necks (ViT) this is unused (SFP maps to backbone).
+        num_backbone_stages = len({
+            k.split('.')[2] for k in state_dict if k.startswith('neck.convs.')
+        })
+        state_dict = map_codetr_checkpoint(
+            state_dict,
+            num_backbone_stages=num_backbone_stages,
+            dec_layers=dec_layers,
+        )
+
+    model_sd = model.state_dict()
+
+    # Pad label_enc from num_classes to num_classes+1 (background token)
+    label_key = "model.model.model.label_enc.weight"
+    if label_key in state_dict and label_key in model_sd:
+        ckpt_w = state_dict[label_key]
+        if ckpt_w.shape[0] == model_sd[label_key].shape[0] - 1:
+            state_dict[label_key] = torch.cat(
+                [ckpt_w, torch.zeros(1, ckpt_w.shape[1], dtype=ckpt_w.dtype, device=ckpt_w.device)], dim=0
+            )
+
+    # Skip size-mismatched keys (e.g. class heads for a different num_classes)
+    mismatched = [k for k, v in state_dict.items() if k in model_sd and v.shape != model_sd[k].shape]
+    for k in mismatched:
+        logger.info("Skipping size-mismatched key %s: ckpt %s vs model %s",
+                    k, list(state_dict[k].shape), list(model_sd[k].shape))
+    state_dict = {k: v for k, v in state_dict.items() if k not in mismatched}
+
+    result = model.load_state_dict(state_dict, strict=False)
+    if result.missing_keys:
+        # Collab/aux heads and buffers are expected to be missing;
+        # decoder/encoder/backbone parameters are NOT and indicate a mapping bug.
+        unexpected_missing = [
+            k for k in result.missing_keys
+            if not k.startswith(_EXPECTED_MISSING_PREFIXES) and
+            not any(s in k for s in _EXPECTED_MISSING_SUBSTR)
+        ]
+        logger.info(
+            "Missing keys: %d total (%d expected for collab heads / buffers, %d unexpected)",
+            len(result.missing_keys), len(result.missing_keys) - len(unexpected_missing),
+            len(unexpected_missing),
+        )
+        if unexpected_missing:
+            logger.warning("UNEXPECTED missing keys (mapping bug?): %s", unexpected_missing[:20])
+    if result.unexpected_keys:
+        logger.warning("Unexpected keys (in checkpoint, not in model): %s", result.unexpected_keys[:10])
+    logger.info("Loaded %d of %d model keys from checkpoint (%d size-mismatched keys skipped).",
+                len(state_dict) - len(result.unexpected_keys), len(model_sd), len(mismatched))
+    return result
