@@ -6,7 +6,7 @@ model:
   num_feature_levels: 5
   return_interm_indices: [0, 1, 2, 3, 4]
   two_stage_type: standard
-  num_co_heads: 2
+  num_co_heads: 1
   co_head_num_convs: 1
   hidden_dim: 256
   nheads: 8

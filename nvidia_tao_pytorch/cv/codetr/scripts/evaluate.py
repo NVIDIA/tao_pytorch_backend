@@ -12,11 +12,10 @@ from nvidia_tao_pytorch.config.codetr.default_config import ExperimentConfig
 from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_evaluation_experiment
-from nvidia_tao_pytorch.core.tlt_logging import logging
 
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.pl_od_data_module import ODDataModule
 from nvidia_tao_pytorch.cv.codetr.model.pl_codetr_model import CoDETRPlModel
-from nvidia_tao_pytorch.cv.codetr.model.utils import map_codetr_checkpoint
+from nvidia_tao_pytorch.cv.codetr.model.utils import load_codetr_state_dict
 
 
 def run_experiment(experiment_config, key):
@@ -28,64 +27,11 @@ def run_experiment(experiment_config, key):
     dm.setup(stage="test")
 
     if model_path.endswith('.tlt') or model_path.endswith('.pth'):
-        # Build model and load checkpoint with key mapping
+        # Build model and load checkpoint (TAO or reference Co-DETR layout)
         model = CoDETRPlModel(experiment_spec=experiment_config)
         checkpoint = torch.load(model_path, map_location="cpu")
         state_dict = checkpoint.get("state_dict", checkpoint)
-
-        # Filter out EMA keys (flattened with underscores; not usable directly)
-        ema_keys = [k for k in state_dict if k.startswith("ema_")]
-        if ema_keys:
-            logging.info("Dropping %d EMA keys from checkpoint.", len(ema_keys))
-            for k in ema_keys:
-                del state_dict[k]
-
-        # Detect checkpoint format: TAO checkpoints already have the model.
-        # prefix; reference Co-DETR checkpoints start with backbone./query_head.
-        is_reference_ckpt = any(
-            k.startswith(("backbone.", "query_head.", "neck.", "bbox_head."))
-            for k in state_dict
-        )
-        if is_reference_ckpt:
-            logging.info("Detected reference Co-DETR checkpoint — mapping keys to TAO format.")
-            dec_layers = experiment_config.model.dec_layers
-            # num_backbone_stages: for FPN-style necks derive from neck.convs;
-            # for SFP-style necks (ViT) this is unused (SFP maps to backbone).
-            num_backbone_stages = len({
-                k.split('.')[2] for k in state_dict if k.startswith('neck.convs.')
-            })
-            state_dict = map_codetr_checkpoint(
-                state_dict,
-                num_backbone_stages=num_backbone_stages,
-                dec_layers=dec_layers,
-            )
-
-        # Pad label_enc from num_classes to num_classes+1 (background token)
-        label_key = "model.model.model.label_enc.weight"
-        if label_key in state_dict and label_key in model.state_dict():
-            ckpt_w = state_dict[label_key]
-            model_w = model.state_dict()[label_key]
-            if ckpt_w.shape[0] == model_w.shape[0] - 1:
-                state_dict[label_key] = torch.cat(
-                    [ckpt_w, torch.zeros(1, ckpt_w.shape[1], device=ckpt_w.device)], dim=0
-                )
-
-        # Filter out size-mismatched keys (e.g. collab head conv differences)
-        model_sd = model.state_dict()
-        to_remove = []
-        for k, v in state_dict.items():
-            if k in model_sd and v.shape != model_sd[k].shape:
-                logging.info("Skipping size-mismatched key %s: ckpt %s vs model %s",
-                             k, list(v.shape), list(model_sd[k].shape))
-                to_remove.append(k)
-        for k in to_remove:
-            del state_dict[k]
-
-        result = model.load_state_dict(state_dict, strict=False)
-        if result.missing_keys:
-            logging.info("Missing keys (expected for collab heads / buffers): %d", len(result.missing_keys))
-        if result.unexpected_keys:
-            logging.warning("Unexpected keys: %s", result.unexpected_keys[:10])
+        load_codetr_state_dict(model, state_dict, dec_layers=experiment_config.model.dec_layers)
 
     trainer = Trainer(**trainer_kwargs)
     trainer.test(model, datamodule=dm)
