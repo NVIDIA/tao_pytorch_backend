@@ -13,7 +13,7 @@ dataset:
   dataset_type: default
   num_classes: ???
   batch_size: 2
-  eval_batch_size: 2
+  # eval_batch_size: 2
   augmentation:
     fixed_random_crop: null
     input_mean: [0.485, 0.456, 0.406]
