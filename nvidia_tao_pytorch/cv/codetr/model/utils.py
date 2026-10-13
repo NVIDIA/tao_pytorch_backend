@@ -8,6 +8,7 @@ import re
 import torch
 
 from nvidia_tao_pytorch.core.tlt_logging import logging as logger
+from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 
 # Key prefixes that identify a reference (MMDetection) Co-DETR checkpoint.
 REFERENCE_KEY_PREFIXES = ("backbone.", "query_head.", "neck.", "bbox_head.")
@@ -27,6 +28,8 @@ _EXPECTED_MISSING_SUBSTR = (
     "transformer.decoder.bbox_embed",
     "transformer.decoder.class_embed",
 )
+# Layers sized by num_classes; skipping them on a num_classes change is expected.
+_CLASS_SIZED_SUBSTR = ("class_embed", "label_enc", "cls_pred")
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +294,22 @@ def is_reference_codetr_checkpoint(state_dict):
     return any(k.startswith(REFERENCE_KEY_PREFIXES) for k in state_dict)
 
 
-def load_codetr_state_dict(model, state_dict, dec_layers=6):
+def load_codetr_checkpoint(path):
+    """Read a TAO or reference Co-DETR checkpoint file and return its state dict.
+
+    TAO checkpoints carry ``tao_model: codetr`` and are returned unchanged;
+    key mapping happens in :func:`load_codetr_state_dict`.
+
+    Args:
+        path (str): path to a ``.pth``, ``.tlt`` or ``.safetensors`` checkpoint.
+
+    Returns:
+        dict: the checkpoint's state dict.
+    """
+    return load_pretrained_weights(path, ptm_adapter=lambda _name, state_dict, model_type=None: state_dict)
+
+
+def load_codetr_state_dict(model, state_dict, dec_layers=6, strict=False):
     """Load a TAO or reference Co-DETR state dict into a ``CoDETRPlModel``.
 
     Reference checkpoints (e.g. the Co-DETR authors' release on Hugging Face)
@@ -305,10 +323,16 @@ def load_codetr_state_dict(model, state_dict, dec_layers=6):
         state_dict (dict): TAO (``model.model.model.*``) or reference
             (``backbone.*``, ``query_head.*``, ...) state dict.
         dec_layers (int): number of decoder layers, used to map reference heads.
+        strict (bool): raise if any weight other than collab heads, tied
+            aliases, buffers or class-sized layers is left uninitialized.
 
     Returns:
         torch.nn.modules.module._IncompatibleKeys: missing and unexpected keys.
+
+    Raises:
+        ValueError: if ``strict`` and the checkpoint does not cover the model.
     """
+    state_dict = dict(state_dict)
     # EMA keys are flattened with underscores and are not usable directly.
     ema_keys = [k for k in state_dict if k.startswith("ema_")]
     if ema_keys:
@@ -342,28 +366,35 @@ def load_codetr_state_dict(model, state_dict, dec_layers=6):
     # Skip size-mismatched keys (e.g. class heads for a different num_classes)
     mismatched = [k for k, v in state_dict.items() if k in model_sd and v.shape != model_sd[k].shape]
     for k in mismatched:
-        logger.info("Skipping size-mismatched key %s: ckpt %s vs model %s",
-                    k, list(state_dict[k].shape), list(model_sd[k].shape))
+        log = logger.info if any(s in k for s in _CLASS_SIZED_SUBSTR) else logger.warning
+        log("Skipping size-mismatched key %s: ckpt %s vs model %s",
+            k, list(state_dict[k].shape), list(model_sd[k].shape))
     state_dict = {k: v for k, v in state_dict.items() if k not in mismatched}
 
     result = model.load_state_dict(state_dict, strict=False)
     if result.missing_keys:
-        # Collab/aux heads and buffers are expected to be missing;
-        # decoder/encoder/backbone parameters are NOT and indicate a mapping bug.
+        # Collab/aux heads, tied aliases, buffers and resized class layers are
+        # expected to be missing; any other parameter indicates a spec mismatch.
+        class_sized = {k for k in mismatched if any(s in k for s in _CLASS_SIZED_SUBSTR)}
         unexpected_missing = [
             k for k in result.missing_keys
             if not k.startswith(_EXPECTED_MISSING_PREFIXES) and
-            not any(s in k for s in _EXPECTED_MISSING_SUBSTR)
+            not any(s in k for s in _EXPECTED_MISSING_SUBSTR) and
+            k not in class_sized
         ]
         logger.info(
-            "Missing keys: %d total (%d expected for collab heads / buffers, %d unexpected)",
+            "Missing keys: %d total (%d expected for collab heads / buffers / class layers, %d unexpected)",
             len(result.missing_keys), len(result.missing_keys) - len(unexpected_missing),
             len(unexpected_missing),
         )
         if unexpected_missing:
-            logger.warning("UNEXPECTED missing keys (mapping bug?): %s", unexpected_missing[:20])
+            msg = (f"{len(unexpected_missing)} model weights were not found in the checkpoint; check that "
+                   f"the spec (backbone, feature levels, layers) matches it: {unexpected_missing[:20]}")
+            if strict:
+                raise ValueError(msg)
+            logger.error(msg)
     if result.unexpected_keys:
         logger.warning("Unexpected keys (in checkpoint, not in model): %s", result.unexpected_keys[:10])
-    logger.info("Loaded %d of %d model keys from checkpoint (%d size-mismatched keys skipped).",
+    logger.info("Matched %d of %d model keys from checkpoint (%d size-mismatched keys skipped).",
                 len(state_dict) - len(result.unexpected_keys), len(model_sd), len(mismatched))
     return result

@@ -14,11 +14,10 @@ from nvidia_tao_pytorch.core.decorators.workflow import monitor_status
 from nvidia_tao_pytorch.core.hydra.hydra_runner import hydra_runner
 from nvidia_tao_pytorch.core.tlt_logging import logging
 from nvidia_tao_pytorch.core.initialize_experiments import initialize_train_experiment
-from nvidia_tao_pytorch.core.utils.ptm_utils import load_pretrained_weights
 
 from nvidia_tao_pytorch.cv.deformable_detr.dataloader.pl_od_data_module import ODDataModule
 from nvidia_tao_pytorch.cv.codetr.model.pl_codetr_model import CoDETRPlModel
-from nvidia_tao_pytorch.cv.codetr.model.utils import load_codetr_state_dict
+from nvidia_tao_pytorch.cv.codetr.model.utils import load_codetr_checkpoint, load_codetr_state_dict
 
 
 @experimental("CoDETR training is not extensively tested.")
@@ -43,8 +42,8 @@ def run_experiment(experiment_config, key, lightning_module=CoDETRPlModel):
         experiment_config.model.pretrained_backbone_path = None
         pt_model = lightning_module(experiment_config)
         # Accepts TAO checkpoints and the reference Co-DETR release (mapped to TAO keys).
-        checkpoint = load_pretrained_weights(pretrained_path)
-        load_codetr_state_dict(pt_model, checkpoint, dec_layers=experiment_config.model.dec_layers)
+        load_codetr_state_dict(pt_model, load_codetr_checkpoint(pretrained_path),
+                               dec_layers=experiment_config.model.dec_layers, strict=True)
         logging.info("Loaded pretrained weights from %s", pretrained_path)
     else:
         pt_model = lightning_module(experiment_config)

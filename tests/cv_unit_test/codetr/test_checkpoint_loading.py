@@ -13,6 +13,7 @@ from nvidia_tao_pytorch.config.codetr.default_config import ExperimentConfig
 from nvidia_tao_pytorch.cv.codetr.model.pl_codetr_model import CoDETRPlModel
 from nvidia_tao_pytorch.cv.codetr.model.utils import (
     is_reference_codetr_checkpoint,
+    load_codetr_checkpoint,
     load_codetr_state_dict,
 )
 
@@ -27,11 +28,11 @@ _DEC_INV = [("self_attn.", "attentions.0.attn."), ("cross_attn.", "attentions.1.
 _ATSS_INV = {"cls_pred": "atss_cls", "reg_pred": "atss_reg", "centerness_pred": "atss_centerness"}
 
 
-def _build_model(num_classes=4, num_co_heads=2):
+def _build_model(num_classes=4, num_co_heads=2, num_feature_levels=2):
     cfg = OmegaConf.structured(ExperimentConfig())
     cfg.model.backbone = "resnet_50"
-    cfg.model.num_feature_levels = 2
-    cfg.model.return_interm_indices = [1, 2]
+    cfg.model.num_feature_levels = num_feature_levels
+    cfg.model.return_interm_indices = [1, 2, 3][:num_feature_levels]
     cfg.model.num_queries = 100
     cfg.model.num_co_heads = num_co_heads
     cfg.model.co_head_num_convs = 1
@@ -115,7 +116,7 @@ def test_load_reference_checkpoint():
     ref = _reference_state_dict(src, dec_layers)
     assert is_reference_codetr_checkpoint(ref)
 
-    result = load_codetr_state_dict(dst, ref, dec_layers=dec_layers)
+    result = load_codetr_state_dict(dst, ref, dec_layers=dec_layers, strict=True)
 
     assert result.unexpected_keys == []
     unexplained = [k for k in result.missing_keys
@@ -130,15 +131,22 @@ def test_load_reference_checkpoint():
 
 
 @pytest.mark.cv_unit
-def test_load_tao_checkpoint():
-    """A TAO checkpoint (Lightning state_dict) round-trips without missing keys."""
+def test_load_tao_checkpoint(tmp_path):
+    """A checkpoint saved by a TAO Co-DETR run round-trips without missing keys."""
     src = _build_model()
     dst = _build_model()
-    state_dict = src.state_dict()
+    path = tmp_path / "codetr.pth"
+    checkpoint = {"state_dict": src.state_dict()}
+    src.on_save_checkpoint(checkpoint)
+    assert checkpoint["tao_model"] == "codetr"
+    torch.save(checkpoint, path)
+
+    state_dict = load_codetr_checkpoint(str(path))
     assert not is_reference_codetr_checkpoint(state_dict)
+    keys_before = list(state_dict)
+    result = load_codetr_state_dict(dst, state_dict, dec_layers=dst.experiment_spec.model.dec_layers, strict=True)
 
-    result = load_codetr_state_dict(dst, dict(state_dict), dec_layers=dst.experiment_spec.model.dec_layers)
-
+    assert list(state_dict) == keys_before
     assert result.missing_keys == [] and result.unexpected_keys == []
     for k, v in dst.state_dict().items():
         assert torch.equal(v, state_dict[k]), k
@@ -152,7 +160,8 @@ def test_load_reference_checkpoint_new_num_classes():
     dec_layers = dst.experiment_spec.model.dec_layers
     init_sd = {k: v.clone() for k, v in dst.state_dict().items()}
 
-    result = load_codetr_state_dict(dst, _reference_state_dict(src, dec_layers), dec_layers=dec_layers)
+    result = load_codetr_state_dict(dst, _reference_state_dict(src, dec_layers), dec_layers=dec_layers,
+                                    strict=True)
 
     assert result.unexpected_keys == []
     dst_sd, src_sd = dst.state_dict(), src.state_dict()
@@ -161,3 +170,16 @@ def test_load_reference_checkpoint_new_num_classes():
             assert torch.equal(v, init_sd[k]), k
     backbone_key = next(k for k in dst_sd if k.startswith(DINO + "backbone.0.body."))
     assert torch.equal(dst_sd[backbone_key], src_sd[backbone_key])
+
+
+@pytest.mark.cv_unit
+def test_strict_rejects_mismatched_spec():
+    """A spec the checkpoint does not cover fails instead of training from random init."""
+    src = _build_model(num_feature_levels=2)
+    dst = _build_model(num_feature_levels=3)
+    dec_layers = dst.experiment_spec.model.dec_layers
+
+    with pytest.raises(ValueError, match="not found in the checkpoint"):
+        load_codetr_state_dict(dst, src.state_dict(), dec_layers=dec_layers, strict=True)
+    result = load_codetr_state_dict(dst, src.state_dict(), dec_layers=dec_layers)
+    assert any(k.startswith(DINO + "input_proj.2.") for k in result.missing_keys)
