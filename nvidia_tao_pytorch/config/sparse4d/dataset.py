@@ -361,8 +361,8 @@ class Omniverse3DDetTrackDatasetConfig:
         display_name="Maximum cameras per frame",
     )
     eval_dist_fcn: str = STR_FIELD(
-        value="center_distance",
-        default_value="center_distance",
+        value="iou_3d",
+        default_value="iou_3d",
         description="Evaluation distance function",
         display_name="Evaluation distance function",
         valid_options="center_distance,iou_3d,both",

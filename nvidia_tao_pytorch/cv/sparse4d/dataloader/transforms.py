@@ -290,14 +290,38 @@ class LoadLooseToTight2DGT:
             self._cache.popitem(last=False)
         return index
 
+    def _warn_once(self, scene, message):
+        """Report an unusable sidecar join once per scene and worker."""
+        if self.warn_on_miss and scene not in self._warned:
+            self._warned.add(scene)
+            warnings.warn(message, stacklevel=3)
+
     def __call__(self, results: Dict) -> Dict:
         """Attach sidecar targets to one dataset sample."""
         scene = results.get("scene_name")
         camera_names = results.get("cam_names")
         image_files = results.get("img_filename")
         instance_ids = results.get("instance_inds")
-        if scene is None or not camera_names or not image_files or instance_ids is None:
+        if scene is None or not camera_names or not image_files:
             return results
+
+        if instance_ids is None or len(instance_ids) == 0:
+            gt_boxes = results.get("gt_bboxes_3d")
+            if (
+                results.get("has_3d_gt", True) and
+                gt_boxes is not None and
+                len(gt_boxes) > 0 and
+                os.path.isfile(self._sidecar_path(scene))
+            ):
+                self._warn_once(
+                    scene,
+                    "LoadLooseToTight2DGT cannot attach 2D targets for "
+                    f"scene={scene!r}: nonempty 3D ground truth has no "
+                    "instance_inds. Match the dataset instance_inds to the "
+                    "sidecar instance_id values.",
+                )
+            if instance_ids is None:
+                return results
 
         num_gt, num_cameras = len(instance_ids), len(camera_names)
         boxes = np.zeros((num_gt, num_cameras, 4), dtype=np.float32)
@@ -319,13 +343,15 @@ class LoadLooseToTight2DGT:
                     boxes[gt_idx, camera_idx] = record[0]
                     occlusion[gt_idx, camera_idx] = record[1]
                     hits += 1
-            if hits == 0 and self.warn_on_miss and scene not in self._warned:
-                self._warned.add(scene)
-                warnings.warn(
+            if hits == 0:
+                self._warn_once(
+                    scene,
                     "LoadLooseToTight2DGT matched no rows for "
-                    f"scene={scene!r}, frame_id={frame_id}. Check frame and "
-                    "camera naming between the annotation and sidecar.",
-                    stacklevel=2,
+                    f"scene={scene!r}, frame_id={frame_id}. Check frame IDs, "
+                    "camera names, and instance IDs between the annotation "
+                    "and sidecar. Sidecar instance_id values must match the "
+                    "dataset instance_inds; -1 from an omitted object ID "
+                    "does not identify a labeled object.",
                 )
 
         results["gt_boxes_2d_visible"] = boxes

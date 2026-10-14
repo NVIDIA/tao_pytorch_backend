@@ -67,3 +67,14 @@ def test_data_path_options_merge_into_structured_schema():
     assert merged.canonical_2d_width == 1280
     assert merged.real_scene_keywords == ["Zanker", "BuildingK"]
     assert merged.scene_switch_iters == 16
+
+
+def test_evaluation_defaults_and_explicit_protocol_overrides():
+    """IoU3D is the default while distance matching and HOTA remain selectable."""
+    schema = OmegaConf.structured(Omniverse3DDetTrackDatasetConfig)
+    assert schema.eval_dist_fcn == "iou_3d"
+    assert schema.eval_hota is False
+    for protocol in ("center_distance", "iou_3d", "both"):
+        merged = OmegaConf.merge(schema, {"eval_dist_fcn": protocol, "eval_hota": True})
+        assert merged.eval_dist_fcn == protocol
+        assert merged.eval_hota is True

@@ -178,7 +178,7 @@ class Sparse4DDataModule(pl.LightningDataModule):
         self.max_cameras = self.dataset_config.get("max_cameras", -1)
 
         # Evaluation settings
-        self.eval_dist_fcn = self.dataset_config.get("eval_dist_fcn", "center_distance")
+        self.eval_dist_fcn = self.dataset_config.get("eval_dist_fcn", "iou_3d")
         self.eval_hota = self.dataset_config.get("eval_hota", False)
 
         # Optional LTT / RT-DETR / SV2D data transforms. Empty paths and the
