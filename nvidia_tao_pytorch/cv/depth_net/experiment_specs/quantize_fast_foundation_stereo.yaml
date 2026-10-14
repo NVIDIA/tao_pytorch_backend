@@ -1,11 +1,12 @@
 # FastFoundationStereo (bp2) — FP8 post-training quantization of the exported ONNX graph.
 #
 # Runs `depth_net quantize` with the ModelOpt ONNX backend on the static-H/W (480x736),
-# dynamic-batch ONNX produced by `depth_net export`. Q/DQ pairs are inserted on the 2-D
-# Conv / MatMul / Gemm paths (EdgeNeXt backbone, feature extractor, projections); the
-# 3-D cost aggregation, GRU update block, convex upsampler and classifier stay in high
-# precision via `skip_names`. The resulting Q/DQ ONNX is consumed unchanged by
-# `tao-deploy depth_net gen_trt_engine` (strongly-typed FP8 engine; needs Hopper or newer).
+# dynamic-batch ONNX produced by `depth_net export`. FP8 (E4M3) Q/DQ pairs are inserted on
+# every eligible Conv / MatMul / Gemm (419 pairs on the bp2 graph); non-quantized tensors stay
+# fp32 so TensorRT picks fp16 for them at build time. The resulting Q/DQ ONNX is consumed
+# unchanged by `tao-deploy depth_net gen_trt_engine` (FP8 needs Hopper or newer; on H100 /
+# TensorRT 10.16 the gain is accuracy — EPE 0.919 vs 0.947 fp16 — not throughput).
+# INT8 variant of the same recipe: quantize_fast_foundation_stereo_int8.yaml.
 #
 # The `model:` block is the bp2 reference from experiment_fast_foundation_stereo.yaml and
 # must not be edited. Override `results_dir`, `quantize.model_path` and the calibration

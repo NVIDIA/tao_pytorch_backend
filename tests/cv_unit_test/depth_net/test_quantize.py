@@ -3,6 +3,8 @@
 
 """Test cases for DepthNet quantization functionality."""
 
+from pathlib import Path
+
 import pytest
 
 from nvidia_tao_pytorch.config.depth_net.dataset import (
@@ -336,3 +338,62 @@ def test_stereo_data_module_calibration_falls_back_to_test_dataset(tmp_path, mon
     dataset_cfg.test_dataset.data_sources = None
     with pytest.raises(ValueError, match="data_sources"):
         module.StereoDepthNetDataModule(dataset_cfg).setup(stage="calibration")
+
+
+# ---------------------------------------------------------------------------
+# Shipped FastFoundationStereo quantize specs (FP8 and INT8)
+# ---------------------------------------------------------------------------
+
+_FFS_SPEC_DIR = Path(__file__).resolve().parents[3] / "nvidia_tao_pytorch" / "cv" / "depth_net" / "experiment_specs"
+_FFS_FP8_SPEC = "quantize_fast_foundation_stereo.yaml"
+_FFS_INT8_SPEC = "quantize_fast_foundation_stereo_int8.yaml"
+
+
+@pytest.mark.cv_unit
+@pytest.mark.parametrize(
+    "spec_name, expected_mode",
+    [(_FFS_FP8_SPEC, "fp8"), (_FFS_INT8_SPEC, "int8")],
+)
+def test_ffs_quantize_specs_resolve_to_modelopt_onnx_mode(spec_name, expected_mode, tmp_path):
+    """Both shipped FFS specs go through the same ONNX backend; only the global quantize_mode differs."""
+    from omegaconf import OmegaConf
+
+    from nvidia_tao_pytorch.core.quantization.backends.modelopt_onnx.utils import convert_tao_to_modelopt_onnx_params
+    from nvidia_tao_pytorch.core.quantization.utils import build_model_quant_config_from_omegaconf
+
+    cfg = OmegaConf.load(_FFS_SPEC_DIR / spec_name)
+    cfg.results_dir = str(tmp_path)
+    cfg.quantize.model_path = "model.onnx"
+    assert cfg.quantize.backend == "modelopt.onnx"
+
+    qcfg = build_model_quant_config_from_omegaconf(cfg.quantize)
+    params = convert_tao_to_modelopt_onnx_params(
+        qcfg, None, "model.onnx", output_path="quantized.onnx", backend_kwargs=qcfg.backend_kwargs
+    )
+    assert params["quantize_mode"] == expected_mode
+    assert sorted(params["op_types_to_quantize"]) == ["Conv", "Gemm", "MatMul"]
+    assert params["calibration_method"] == "max"
+    assert params["nodes_to_exclude"] is None  # full-graph specs: no skip_names
+    # backend_kwargs reach ModelOpt unchanged (CUDA-first calibration, fp32 for non-quantized tensors)
+    assert params["high_precision_dtype"] == "fp32"
+    assert params["calibration_eps"] == ["cuda:0", "cpu"]
+
+
+@pytest.mark.cv_unit
+def test_ffs_int8_spec_differs_from_fp8_spec_only_in_dtype():
+    """The INT8 spec is the FP8 spec with int8 dtypes: identical model / dataset blocks and quantize settings."""
+    from omegaconf import OmegaConf
+
+    fp8 = OmegaConf.to_container(OmegaConf.load(_FFS_SPEC_DIR / _FFS_FP8_SPEC))
+    int8 = OmegaConf.to_container(OmegaConf.load(_FFS_SPEC_DIR / _FFS_INT8_SPEC))
+    assert fp8["model"] == int8["model"]
+    assert fp8["dataset"] == int8["dataset"]
+
+    fp8_layers = fp8["quantize"].pop("layers")
+    int8_layers = int8["quantize"].pop("layers")
+    assert fp8["quantize"] == int8["quantize"]
+    assert [layer["module_name"] for layer in fp8_layers] == [layer["module_name"] for layer in int8_layers]
+    for layer in fp8_layers:
+        assert layer["weights"]["dtype"] == layer["activations"]["dtype"] == "fp8_e4m3fn"
+    for layer in int8_layers:
+        assert layer["weights"]["dtype"] == layer["activations"]["dtype"] == "int8"
