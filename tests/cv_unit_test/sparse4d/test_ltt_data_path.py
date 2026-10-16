@@ -435,3 +435,90 @@ def test_instance_filter_keeps_ltt_rows_aligned():
         output["gt_boxes_2d_visible"], np.arange(4).reshape(1, 1, 4)
     )
     np.testing.assert_allclose(output["gt_occ_weight"], [[0.5]])
+
+
+@pytest.fixture
+def ltt_join_sample(tmp_path):
+    """Provide one labeled object and a matching per-scene sidecar."""
+    np.savez(
+        tmp_path / "SceneA__ltt2dgt.npz",
+        _meta=_encoded_metadata(cam_names=["cam0"]),
+        frame_id=np.array([42]),
+        instance_id=np.array([7]),
+        cam=np.array([0]),
+        box3=np.array([[1, 2, 11, 12]], np.float32),
+        occ=np.array([1.0], np.float32),
+    )
+    return {
+        "scene_name": "SceneA",
+        "cam_names": ["cam0"],
+        "img_filename": ["frame_000042.jpg"],
+        "has_3d_gt": True,
+        "gt_bboxes_3d": np.zeros((1, 9), np.float32),
+        "instance_inds": np.array([7]),
+    }
+
+
+@pytest.mark.parametrize("instance_ids", [None, []])
+def test_ltt_missing_labeled_ids_warns_once(tmp_path, ltt_join_sample, instance_ids):
+    """Configured sidecars cannot attach to nonempty 3D labels without IDs."""
+    sample = ltt_join_sample
+    sample["instance_inds"] = instance_ids
+    transform = LoadLooseToTight2DGT(tmp_path)
+    with pytest.warns(UserWarning, match="nonempty 3D ground truth has no instance_inds"):
+        transform(sample)
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        transform(sample)
+    assert not recorded
+
+
+@pytest.mark.parametrize("sidecar_id", [-1, 99])
+def test_ltt_unmatched_ids_warns_about_instance_join(tmp_path, ltt_join_sample, sidecar_id):
+    """Omitted or mismatched sidecar IDs never fabricate 2D targets."""
+    path = tmp_path / "SceneA__ltt2dgt.npz"
+    with np.load(path, allow_pickle=False) as data:
+        arrays = dict(data)
+    arrays["instance_id"] = np.array([sidecar_id])
+    np.savez(path, **arrays)
+    transform = LoadLooseToTight2DGT(tmp_path)
+    with pytest.warns(UserWarning, match="instance IDs.*instance_id.*instance_inds"):
+        output = transform(ltt_join_sample)
+    np.testing.assert_array_equal(output["gt_boxes_2d_visible"], np.zeros((1, 1, 4)))
+    np.testing.assert_array_equal(output["gt_occ_weight"], np.zeros((1, 1)))
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        transform(ltt_join_sample)
+    assert not recorded
+
+
+@pytest.mark.parametrize("has_3d_gt", [False, True])
+def test_ltt_empty_targets_do_not_warn(tmp_path, ltt_join_sample, has_3d_gt):
+    """Empty labeled frames and the ID-free 2D route do not need sidecar joins."""
+    sample = ltt_join_sample
+    sample.update(has_3d_gt=has_3d_gt, gt_bboxes_3d=np.zeros((0, 9)), instance_inds=[])
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        output = LoadLooseToTight2DGT(tmp_path)(sample)
+    assert not recorded
+    assert output["gt_boxes_2d_visible"].shape == (0, 1, 4)
+
+
+@pytest.mark.parametrize("missing_ids", [False, True])
+def test_ltt_join_warnings_can_be_disabled(tmp_path, ltt_join_sample, missing_ids):
+    """The existing warning switch also controls the missing-ID diagnostic."""
+    ltt_join_sample["instance_inds"] = None if missing_ids else np.array([99])
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        LoadLooseToTight2DGT(tmp_path, warn_on_miss=False)(ltt_join_sample)
+    assert not recorded
+
+
+def test_ltt_absent_sidecar_does_not_warn_about_missing_ids(tmp_path, ltt_join_sample):
+    """Scenes without optional sidecars do not acquire an ID requirement."""
+    (tmp_path / "SceneA__ltt2dgt.npz").unlink()
+    ltt_join_sample["instance_inds"] = None
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        LoadLooseToTight2DGT(tmp_path)(ltt_join_sample)
+    assert not recorded

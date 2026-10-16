@@ -31,6 +31,19 @@ unchanged:
 - `dataset.real_block_prob` accepts exactly `-1` for automatic weighting or
   values in `[0, 1]`. Fractional negative values are invalid.
 
+## TAO 7.3.0 evaluation defaults
+
+The PyTorch CLI, shipped specification, and Core-generated schema default to
+`dataset.eval_dist_fcn: iou_3d` and `dataset.eval_hota: false`. Default detection
+metrics use `img_bbox_IoU3D/...`. Explicit `center_distance`, `iou_3d`, and `both`
+settings remain supported.
+
+TAO 7.2.0 PyTorch CLI defaults were `center_distance` and `false`; set those
+values explicitly to retain that protocol and its `img_bbox_NuScenes/...`
+metrics. TAO 7.2.0 Core defaults were `iou_3d` and `true`; to retain that tracking
+recipe, explicitly enable HOTA and include `tracking` in `evaluate.metrics`.
+Compare checkpoints only under the same evaluation protocol.
+
 ## Companion data preparation and service schema
 
 Core's generated Sparse4D schema must ship with a runtime image containing this
@@ -49,6 +62,14 @@ data-services uses `rtdetr_2d.class_map`. Scene names must not contain the reser
 `+` BEV-group separator. LTT geometry requires separate camera intrinsics and
 rigid world-to-camera extrinsics; projection-only `cameraMatrix` is rejected.
 The two LTT producers share frame ordering and duplicate-ID validation.
+Supervised `ltt_2dgt` sidecars join `instance_id` to the labeled PKL's
+`instance_inds`, together with frame IDs and camera names. File generation
+accepts omitted object IDs and writes `-1`; usable supervised targets require
+IDs that identify the corresponding labeled objects. With
+`ltt_2dgt_warn_on_miss` enabled, the loader warns once per scene and worker for
+missing IDs on nonempty labeled samples or for a sidecar with no matching rows.
+Empty and 2D-only samples do not trigger the missing-ID warning. The separate
+RT-DETR cache route uses geometric matching and does not require instance IDs.
 
 ## Temporal state and deployment
 
